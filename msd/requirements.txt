@@ -1,0 +1,6 @@
+numpy
+scipy
+matplotlib
+numba
+triangle
+sympy   # only for verify/verify_pde_residual.py

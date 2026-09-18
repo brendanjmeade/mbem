@@ -21,7 +21,8 @@ documented by its `README.md`. This file only maps the territory.
 | dir | what it is |
 |---|---|
 | `clq/` | **Sept 2026.** Closed-form mollified kernels on one flat triangle for **constant, linear and quadratic nodal density** (Lagrange P0/P1/P2, one API), for two source types: a **dislocation** (slip) source with exact finite-triangle eigenstress, and a **force** source (Kelvin single layer, force per unit area) added 2026-09-17 for the equivalent-body-force formulation — including `eps = 0` evaluated ON the element, which the dislocation kernels cannot do. PASS/FAIL `verify/`, equilateral-triangle figures. See `clq/CLAUDE.md` and `clq/docs/derivation.md`. Not yet used by the paper. |
-| `fbem/` | **Newest (2026-09-17).** Force-element (equivalent body force) BEM built on `clq`'s Kelvin single layer: one force density per boundary triangle in a single uniform medium, so a material contrast needs no matching BCs and no `(u, t)` pair — 3 unknowns per triangle, not 6, and no displacement equation on an interface. Re-solves `medt_paper/topo_inclusion` (22 545 unknowns vs 31 194, 20x better conditioned, corr +0.998). **Verdict: cheaper but not yet as accurate.** `verify/run_all.py` is 3/4 — L2, the head-to-head against `msd`'s direct BIE, FAILS: the indirect single layer stalls at O(h^0.32) on free-traction rows over a polyhedron vs O(h^0.90), so the error ratio grows under refinement. With Dirichlet rows alone it is 4-8x BETTER. Read `fbem/RESULTS.md` before building on it. |
+| `ddbem/` | **Newest (2026-09-18).** The DD collocation BEM the program builds on: constant, linear and quadratic (P0/P1/P2) displacement-discontinuity elements on `clq`'s kernels, with its own PASS/FAIL `verify/` gated entrywise against `msd/mbem` at P0. Under construction. |
+| `fbem/` | **Closed line, 2026-09-18 — findings only, no code.** The force-element (equivalent body force) BEM: one force density per triangle in a single uniform medium, so a material contrast needed no matching BCs. Built, verified and measured, then dropped: it stalls at O(h^0.31) on free-traction rows over a polyhedron against the direct BIE's O(h^0.90), higher order does not fix it, graded meshes do not rescue it, and its one economy (the interface) inverts under unequal Poisson ratios. `fbem/FINDINGS.md` is the record; the code is at `47e00ff`. **Do not rebuild it without reading FINDINGS.md.** |
 | `medt_paper/` | (mirrors the public `github.com/brendanjmeade/medt_paper`, Zenodo DOI) Reproducibility package for the paper: one script per figure, cached heavy results, and copies of the library code it needs (`mollified_kernel/` from `moss`, `mhf/` from the former top-level half-space package, `topo_inclusion/` from `moss2`). The manuscript source is **not** in this repo. Figures are written to `medt_paper/figures/`; see its `README.md`. |
 | `msd/` | Clean, self-contained mollified BEM for 3-D full-space elasticity (July 2026): frozen legacy oracles + the rebuilt `mbem/` solver stack, eigenstress subtraction for on-fault stress, `verify/` PASS/FAIL scripts, `examples/`. No half-space, no viscoelasticity, no LaTeX. See `msd/CLAUDE.md`. |
 | `moss/` | The original research repo: spherical whole-Earth + local-box BEM, viscoelastic Laplace extension, half-space Mindlin work (`mh/`, `mhf/`, `mh_deploy/`, `MINDLIN_STATUS.md`), and **the paper**: `moss/manuscript/main.tex` (the current MEDT draft; `manuscript.tex` there is the older long draft). See `moss/CLAUDE.md` and `moss/manuscript/README.md`. |
@@ -48,14 +49,15 @@ directories (e.g. `../moss2`, `../mhf`) are dead in this folder.
   `moss/manuscript/main.tex` + `moss/manuscript/scripts/`, then carry any change
   to the public copy in `medt_paper/`. Higher-order (linear/quadratic) slip on a
   triangle → `clq/`. Material contrasts by equivalent body force, or anything
-  about force elements → `fbem/`. New full-space solver/kernel work → `msd/`. Sphere/box/
+  about DD collocation, higher-order shape functions or new BEM work → `ddbem/`.
+  New full-space solver/kernel work → `msd/`. Sphere/box/
   viscoelastic work → `moss/` (the `moss2` successor is only in the zip).
   Half-space Mindlin → `moss/mhf/` (research copy, has the Route-1 analytic
   correction) or `medt_paper/mhf/` (older fork used for Figure 9).
 - **Git: the whole of `moss-org` is ONE local repo.** Created 2026-09-17
   (single commit `72c2840 "Initial commit"`, branch `main`, **no remote**).
   The sub-projects no longer have their own `.git` — `moss/`, `msd/`,
-  `medt_paper/`, `clq/` and `fbem/` are all just directories in it. Two
+  `medt_paper/`, `clq/`, `ddbem/` and `fbem/` are all just directories in it. Two
   consequences: a commit here spans every sub-project at once, so keep commits
   scoped by path; and `medt_paper/` is **no longer a clone** of its public
   GitHub repo, so publishing there is now a manual export, not a `git push`.
@@ -83,10 +85,9 @@ directories (e.g. `../moss2`, `../mhf`) are dead in this folder.
 - `msd` (and the archived `moss2`) share a core architectural rule: **legacy flat
   modules are frozen validation oracles** — never "improve" them; new code lives
   in `mbem/` and is gated by entrywise parity against the legacy output.
-- Correctness gates differ per project: `msd`, `clq` and `fbem` use `verify/*.py`
+- Correctness gates differ per project: `msd`, `clq` and `ddbem` use `verify/*.py`
   scripts that print PASS/FAIL (`clq/verify/run_all.py` and
-  `fbem/verify/run_all.py` run all of them; `fbem`'s L2 is a known, documented
-  FAIL — do not "fix" it by loosening the gate),
+  `ddbem/verify/run_all.py` run all of them),
   `moss` has PASS/FAIL gates in `mollified_kernel/verify_*.py` but otherwise
   validation scripts inspected visually, and `mhf` has `python -m mhf.validate`
   (needs `cutde`).

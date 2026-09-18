@@ -87,6 +87,7 @@ python verify/verify_pde_residual.py               # regularized Kelvin satisfie
 python verify/verify_dd_pairing.py                 # lambda/mu pairing of the DD displacement kernel (closure, nu sweep; fixed 2026-09-04)
 python verify/verify_evaluate_stress.py            # mbem stress == classical TDE (cutde); on-fault elastic stays finite
 python verify/verify_stress_assembler.py           # numba batched stress assemblers == scalar oracle (machine precision)
+python verify/verify_eigenstress_exact.py           # EXACT finite-triangle eigenstress == moss/clq oracles; sign; rim disagreement with anelastic.py
 python verify/verify_disp_contract.py              # matrix-free displacement evaluation == dense matrices == legacy oracle
 python verify/verify_dense_backend.py              # dense assembly invariants (calibration cache bit-identity, rebuilds)
 python verify/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, BJ rung)

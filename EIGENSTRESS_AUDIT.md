@@ -118,3 +118,41 @@ sweep above:
   invisible at ν = 1/4.
 - The interpreter path in "Verification gates" above does not exist on the
   current machine; use `/Users/meade/micromamba/bin/python`.
+
+## Addendum (2026-09-18) — msd switched to the EXACT eigenstress
+
+The "Fixes applied" table above records `msd/` as **no changes — already
+compliant**.  That was true of the *policy* (it subtracted, by default, gated)
+but not of the *value*: `msd/mbem/evaluate.py` took `C:ε*` from
+`anelastic.py`, whose nearest-triangle assignment and infinite-plane marginal
+`ρ = 0.75ε⁴/(d²+ε²)^2.5` are the `d/L → 0` limit of the finite-triangle
+integral.  Measured on a planar 10×6 km fault, 1 m strike slip, μ = 30 GPa,
+ν = 0.30, at element centroids, at msd's own default ε/h = 1.25: the
+approximation is up to **1.93× too large at rim elements** (≈2.00× exactly on
+a free patch edge, where the blob only sees a half plane), 33–49 % of peak
+`C:ε*`, on 56–98 % of elements depending on refinement — and because
+`C:ε* ~ 1/ε`, the ABSOLUTE error grows under refinement.  Deep inside an
+element the two agree to ~1e-6 (it *is* the infinite-plane limit there).
+
+- **Fix:** `msd/mbem/kernels/tri_kernels.py::eigenstress_contract` — the exact
+  finite-triangle form `Φ_ε = (15ε⁴/8π)·I₇` per element, summed over ALL fault
+  elements, each with its OWN ε; numba, parallel over observation points;
+  reached via `_stress_from_source(..., kernel="eigen")`.  Machine-identical to
+  `moss/mollified_kernel::analytical_eigenstress_kernel` / `eigenstress_batch`
+  and to `clq.eigenstress`.
+- `msd/anelastic.py` is **unchanged** (frozen oracle, per msd's two-layer
+  rule), and remains the reference for the infinite-plane limit.  `msd`'s
+  `examples/demo_*` still call it directly and inherit the rim error.
+- **Sign preserved:** msd's fault term is `−Sdd@slip`, so `evaluate_stress`
+  still *adds* `+C:ε*`.
+- The former "eigenstress subtraction needs a near-uniform fault ε" restriction
+  (`evaluate_stress` raised on a graded fault ε) is **lifted**: a per-element
+  sum has no such requirement.
+- **Gate:** `msd/verify/verify_eigenstress_exact.py` (38 checks) — moss and clq
+  entrywise parity at ν = 0.25/0.30/0.45, deep-interior agreement with the
+  frozen `anelastic.py`, near-edge *disagreement* (so the gate discriminates
+  against the old wiring), the sign pinned by an ε-sweep finiteness test with a
+  wrong-sign tripwire, and graded-ε parity.  `verify_evaluate_stress.py`
+  check 4 was repointed at the exact form.
+- Not touched: `moss/`, `medt_paper/`, `clq/`, and the other vendored
+  `anelastic.py` copies — the same substitution is still available to them.

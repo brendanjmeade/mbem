@@ -26,6 +26,7 @@ python verify/verify_arbitrary_triangle.py          # arbitrary-triangle / rigid
 python verify/verify_batch_vs_scalar.py             # vectorized == scalar
 python verify/verify_pde_residual.py                # regularized Kelvin satisfies the PDE (needs sympy)
 python verify/verify_dd_pairing.py                  # lambda/mu pairing of the DD displacement kernel (nu sweep)
+python verify/verify_eigenstress_exact.py            # exact finite-triangle eigenstress (moss/clq parity, sign, rim)
 
 # Demos — run from repo root; each writes fig_*.png/.pdf into the repo root
 python examples/demo_fault_only.py                  # fault-only BEM (displacement + elastic stress)
@@ -64,6 +65,14 @@ new code is tested for entrywise parity against them:
   like `1/eps`. The corrected interior on-fault stress *converges to a constant*
   (`eps^2`) as `eps -> 0` — validated against the classical-TDE finite part
   (`tde_reference.py`, a `cutde` full/half-space reference).
+  **It is the APPROXIMATE (infinite-plane) form** — nearest-triangle assignment
+  plus the Cortez marginal `rho = 0.75 eps^4/(d^2+eps^2)^2.5` — i.e. the
+  `d/L -> 0` limit. Frozen and still an oracle *where it is valid*: deep inside
+  a large element it agrees with the exact form to ~1e-6 (gated). Near element
+  EDGES it is up to 2x too large, so the live path
+  (`mbem/kernels/tri_kernels.py::eigenstress_contract`, since 2026-09-18)
+  uses the EXACT finite-triangle form instead; `examples/demo_*` still call
+  `anelastic.py` directly and inherit the rim error.
 - `tde_reference.py` — `classical_tde_stress(...)`: independent classical
   triangular-dislocation stress (`cutde`, full- or half-space) for the SAME
   triangulated fault, the validation oracle for on-fault stress. cutde uses a
@@ -80,7 +89,20 @@ term there is `-Sdd@slip` (mirroring the `-H@slip` displacement), so its diverge
 part is `-C:eps_star` and removing it *adds* the eigenstress — verified by the
 fact that on-fault elastic stress stays finite as `eps -> 0` (the
 `verify/verify_evaluate_stress.py` finiteness gate, which a self-consistency check
-alone would miss).
+alone would miss, and `verify/verify_eigenstress_exact.py` check `[e]`, which
+also shows the opposite sign diverging).
+
+**The eigenstress is the EXACT finite-triangle form** (2026-09-18):
+`tri_kernels.eigenstress_contract` — `Phi_eps = (15 eps^4/8pi) I7` per element
+(the same `I7` the DD stress kernel already computes), contracted with
+`lam d_mn (n.Du) + mu (Du_m n_n + Du_n n_m)` and summed over **all** fault
+elements, each with its **own** eps. Reached through
+`_stress_from_source(..., kernel="eigen")`. It is machine-identical to
+`moss/mollified_kernel::analytical_eigenstress_kernel` / `eigenstress_batch`
+and to `clq.eigenstress`. It replaced the frozen `anelastic.py`
+approximation, which was ~2x too large over the whole fault RIM (measured:
+19.6 vs 5.6 MPa mean rim `sigma_xy` on a 750-element 10x6 km fault at
+eps/h = 1.25) while agreeing to 0.1% deep inside an element.
 
 **`mbem/` is the rebuilt solver stack** — geometry-general, faster, and the
 place to do new work.
@@ -132,7 +154,8 @@ The flow is `RegionModel -> generate_system -> Backend.assemble -> solve`:
    legacy oracle; 250k obs x 1.4k src = 9 s / 0.4 GB where dense needed 49 GB)
    and `evaluate_stress` via `dd_stress_contract`/`kelvin_stress_contract`
    (order-7 / rank-4 moment recursion — `I7`, `T2[5]`, `T2[7]`, `T4[7]`;
-   `verify_stress_assembler.py`, ~5000x over the scalar loop). For REPEATED
+   `verify_stress_assembler.py`, ~5000x over the scalar loop) plus
+   `eigenstress_contract` (the same `I7`, alone) for the anelastic term. For REPEATED
    evaluation on a fixed grid (sweeps, time series) `DisplacementEvaluator`
    compresses the obs-grid influence once (`PointCloud` adapter + ACA) and
    applies it per solution at matvec cost. Both evaluators warn when obs
@@ -168,8 +191,10 @@ The flow is `RegionModel -> generate_system -> Backend.assemble -> solve`:
   a `{patch_name: eps}` dict. `eps="auto"` (opt-in) resolves per element to
   `EPS_OVER_H * mean-edge-length`, keeping eps/h fixed under grading and
   h-refinement (order-2 convergence gate: `verify_eps_auto.py`). The
-  eigenstress subtraction needs a near-uniform FAULT eps (a scalar is safest;
-  `evaluate_stress` raises on a graded fault eps).
+  eigenstress subtraction is a per-element sum, so a **graded fault eps is
+  fine** (the near-uniform-eps restriction `evaluate_stress` used to raise was
+  a limitation of the scalar-eps `anelastic.py` approximation and was lifted
+  2026-09-18; gate: `verify_eigenstress_exact.py` check `[f]`).
 - **`mbem/la/`** — the linear-algebra layer for `HBackend`: `cluster` (cluster
   trees / admissibility; `MAX_ADMISSIBLE_BLOCK=2048` caps the block side — the
   dense-fallback bomb of a failed 4096 block is ~7 GB and 4x slower, measured),

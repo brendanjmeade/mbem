@@ -14,8 +14,11 @@ Four checks, each PASS/FAIL:
      ON the fault it removes the divergent eigenstress so the corrected
      stress stays bounded as eps -> 0 while the raw total grows ~ 1/eps.
   4. Public evaluate_stress end to end on a small fault box: runs, returns
-     finite symmetric tensors, and (total - elastic) equals the fault
-     eigenstress at the fault centroids.
+     finite symmetric tensors, and (elastic - total) equals the fault
+     eigenstress at the fault centroids.  Since 2026-09-18 that eigenstress is
+     the EXACT finite-triangle form (`_stress_from_source(..., "eigen")`), not
+     the infinite-plane / nearest-triangle approximation of the frozen
+     `anelastic.py` -- see `verify/verify_eigenstress_exact.py`.
 """
 import pathlib
 import sys
@@ -152,7 +155,11 @@ def check_evaluate_stress_endtoend():
                               subtract_anelastic=False)
     sig_el = evaluate_stress(model, region, sol, obs, eps,
                              subtract_anelastic=True)
-    star = eigenstress_at_points(obs, meshes["fault"], slip, mat.mu, mat.nu, eps)
+    # the EXACT finite-triangle eigenstress -- what evaluate_stress subtracts
+    nt_f = meshes["fault"].n_triangles
+    star = _stress_from_source(obs, meshes["fault"],
+                               np.broadcast_to(slip, (nt_f, 3)), "eigen",
+                               mat.mu, mat.nu, np.full(nt_f, eps))
     finite = np.all(np.isfinite(sig_el))
     symm = float(np.max(np.abs(sig_el - np.transpose(sig_el, (0, 2, 1)))))
     # elastic = total + eigenstress (the fault term is -Sdd@slip), so

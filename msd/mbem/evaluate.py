@@ -25,9 +25,18 @@ kernel that maps a fault slip to stress. Inside the ~eps fault zone the
 slip term returns the TOTAL stress (elastic + the anelastic eigenstress
 C:eps_star, which peaks at (3/4) mu s / eps and diverges as eps -> 0);
 with ``subtract_anelastic`` the eigenstress of each region fault is
-removed (anelastic.py), leaving the genuine ELASTIC stress -- the
-on-fault, Coulomb-relevant field. The subtraction is a no-op away from a
-fault, so it is safe to apply for off-fault observation points too.
+removed, leaving the genuine ELASTIC stress -- the on-fault,
+Coulomb-relevant field. The subtraction is a no-op away from a fault, so
+it is safe to apply for off-fault observation points too.
+
+The eigenstress used here is the EXACT finite-triangle form
+(``tri_kernels.eigenstress_contract``: (15 eps^4/8pi) I7 per element,
+summed over every fault element, each with its own eps), NOT the
+infinite-plane / nearest-triangle approximation of the frozen
+``anelastic.py``. The two agree deep inside a large element (the
+d/L -> 0 limit) and differ by up to ~2x near element edges -- i.e. over
+the whole fault RIM, where crack-tip stress and stress-drop diagnostics
+live. Gate: ``verify/verify_eigenstress_exact.py``.
 """
 
 from __future__ import annotations
@@ -142,14 +151,21 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
 
     ``kernel="dd"`` uses the displacement-discontinuity stress kernel
     (slip / boundary displacement -> stress); ``kernel="force"`` uses the
-    Kelvin force-stress kernel (boundary traction -> stress). Both route
-    through the numba parallel stress assemblers
-    (``dd_stress_contract`` / ``kelvin_stress_contract``), which reproduce
-    the scalar ``analytical_stress_kernel`` / ``analytical_kelvin_stress``
-    oracles to machine precision (see ``verify/verify_stress_assembler.py``)
-    while parallelising over observation points.
+    Kelvin force-stress kernel (boundary traction -> stress); ``kernel="eigen"``
+    returns the EXACT finite-triangle anelastic eigenstress +C:eps_star of
+    the smeared slip (the divergent on-fault part of the "dd" term), summed
+    over ALL source elements. All three route through the numba parallel
+    stress assemblers (``dd_stress_contract`` / ``kelvin_stress_contract`` /
+    ``eigenstress_contract``), which reproduce the scalar
+    ``analytical_stress_kernel`` / ``analytical_kelvin_stress`` /
+    ``analytical_eigenstress_kernel`` oracles to machine precision (see
+    ``verify/verify_stress_assembler.py``,
+    ``verify/verify_eigenstress_exact.py``) while parallelising over
+    observation points. All three take a PER-ELEMENT ``eps_arr``.
     """
-    from .kernels.tri_kernels import dd_stress_contract, kelvin_stress_contract
+    from .kernels.tri_kernels import (dd_stress_contract,
+                                      eigenstress_contract,
+                                      kelvin_stress_contract)
 
     verts = np.ascontiguousarray(
         np.asarray(src_mesh.vertices, float)[np.asarray(src_mesh.triangles)])
@@ -157,9 +173,12 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
     points = np.ascontiguousarray(np.asarray(points, float))
     eps_arr = np.ascontiguousarray(np.asarray(eps_arr, float))
 
-    if kernel == "dd":
+    if kernel in ("dd", "eigen"):
         normals, _ = src_mesh.normals_and_areas()
         normals = np.ascontiguousarray(np.asarray(normals, float))
+        if kernel == "eigen":
+            return eigenstress_contract(points, verts, normals, eps_arr,
+                                        density, mu, nu)
         return dd_stress_contract(points, verts, normals, eps_arr,
                                   density, mu, nu)
     return kelvin_stress_contract(points, verts, eps_arr, density, mu, nu)
@@ -267,15 +286,17 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     """Stress tensor (N,3,3) at ``points`` of ``region``.
 
     Mirrors :func:`evaluate_displacement` with the stress operator applied
-    to every term. With ``subtract_anelastic`` (default) the eigenstress of
-    each region fault is removed, so the returned field is the ELASTIC
-    stress -- finite and eps-independent on the fault. Set it False to get
-    the raw TOTAL stress (which diverges like 1/eps on the fault).
+    to every term. With ``subtract_anelastic`` (default) the EXACT
+    finite-triangle eigenstress of each region fault is removed, so the
+    returned field is the ELASTIC stress -- finite and eps-independent on
+    the fault. Set it False to get the raw TOTAL stress (which diverges
+    like 1/eps on the fault). A graded / per-element fault eps is fine:
+    the eigenstress is summed element by element with each element's own
+    eps (this restriction existed only for the frozen scalar-eps
+    ``anelastic.py`` approximation).
 
     ``solution`` is the slot dict returned by a backend solve.
     """
-    from anelastic import eigenstress_at_points
-
     if isinstance(region, str):
         region = next(r for r in model.regions if r.name == region)
     points = np.asarray(points, dtype=float)
@@ -317,21 +338,21 @@ def evaluate_stress(model: RegionModel, region: Region | str,
                 # The fault stress term above is -Sdd@slip (mirroring the
                 # -H@slip displacement term), so its divergent on-fault part
                 # is MINUS the eigenstress C:eps_star; removing it ADDS the
-                # eigenstress. (eigenstress_at_points returns +C:eps_star,
-                # the divergent part of +Sdd@slip.) Off a fault this is a
-                # no-op. Sign verified by finiteness as eps->0.
-                # eigenstress_at_points (frozen) takes a SCALAR eps: for
-                # per-element specs ("auto" / arrays) pass the mean, but
-                # only when the fault's eps is near-uniform -- a graded
-                # fault eps would mis-shape the subtracted marginal.
-                e_arr = eps_for(f)
-                e = float(e_arr.mean())
-                spread = float(e_arr.max() - e_arr.min())
-                if spread > 0.05 * e:
-                    raise ValueError(
-                        f"fault '{f.name}': eigenstress subtraction needs "
-                        f"a near-uniform fault eps (spread {spread:.3g} vs "
-                        f"mean {e:.3g}); use a scalar eps for the fault")
-                sig += eigenstress_at_points(points, f.mesh, slip, mu, nu, e)
+                # eigenstress. (kernel="eigen" returns +C:eps_star, the
+                # divergent part of +Sdd@slip.) Off a fault this is a no-op.
+                # Sign verified by finiteness as eps->0
+                # (verify/verify_eigenstress_exact.py, check [e]).
+                #
+                # EXACT finite-triangle eigenstress: the Cortez blob is
+                # integrated over each actual triangle ((15 eps^4/8pi) I7)
+                # and summed over ALL fault elements, with each element's
+                # OWN eps. This replaces the frozen anelastic.py
+                # approximation (nearest-triangle assignment + the
+                # infinite-plane marginal), which is the d/L -> 0 limit --
+                # right deep inside a large element, ~2x too large over the
+                # whole fault rim. A per-element sum has no near-uniform-eps
+                # restriction, so the former graded-eps raise is gone.
+                sig += _stress_from_source(points, f.mesh, slip, "eigen",
+                                           mu, nu, eps_for(f))
 
     return sig

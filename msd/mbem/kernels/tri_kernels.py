@@ -1150,3 +1150,109 @@ def dd_stress_contract(x_field, tri_verts, normals, eps_arr, density, mu, nu):
         sig[f, 1, 0] = a10; sig[f, 1, 1] = a11; sig[f, 1, 2] = a12
         sig[f, 2, 0] = a20; sig[f, 2, 1] = a21; sig[f, 2, 2] = a22
     return sig
+
+
+# =====================================================================
+# Anelastic (eigenstress) kernel of the mollified slip source.
+#
+# A mollified slip element is a smeared slip, i.e. an ANELASTIC
+# (eigen-) strain
+#
+#     eps*_kl(x) = 1/2 (Du_k n_l + Du_l n_k) Phi_eps(x),
+#     Phi_eps(x) = int int_T phi_eps(x - y) dA(y),
+#
+# with the Cortez blob phi_eps(r) = 15 eps^4 / (8 pi (r^2+eps^2)^(7/2)).
+# Phi_eps is EXACTLY the seventh-order moment I7 already computed by
+# `_stress_2d_moments` behind its need7 flag, so
+#
+#     Phi_eps = (15 eps^4 / 8 pi) * I7,
+#
+# and the eigenstress sigma* = C : eps* is
+#
+#     sigma*_mn = lam d_mn (n . Du) Phi_eps
+#               + mu (Du_m n_n + Du_n n_m) Phi_eps
+#               = H*[m,n,k] Du_k.
+#
+# This is the EXACT FINITE-TRIANGLE form: the blob is integrated over the
+# actual triangle and summed over ALL elements. It replaces the
+# infinite-plane / nearest-triangle approximation of the frozen
+# `anelastic.py` (rho = 0.75 eps^4 / (d^2+eps^2)^2.5, one triangle per
+# obs point), which is the d/L -> 0 limit of this integral: the two agree
+# deep inside a large element and differ by up to ~2x near element edges
+# (i.e. over the whole fault RIM). Parity oracles:
+# moss/mollified_kernel/analytical_kernels.py::analytical_eigenstress_kernel,
+# analytical_batch.py::eigenstress_batch, and clq.eigenstress; gate:
+# verify/verify_eigenstress_exact.py.
+#
+# `eps` is per source element, like every other contraction driver here --
+# nothing in the finite-triangle sum requires a uniform fault eps.
+# =====================================================================
+
+
+@njit(cache=True)
+def _eigenstress_pair(tv, ex, ey, nhat, nrm, obs, eps, mu, lam,
+                      Hout, M3, M5, M7):
+    """Eigenstress H*[m,n,k] (sigma*_mn = H*[m,n,k] slip_k) for one pair."""
+    if eps <= 0.0:
+        for m in range(3):
+            for n in range(3):
+                for k in range(3):
+                    Hout[m, n, k] = 0.0
+        return
+    I3, I5, I7, z = _stress_2d_moments(tv, ex, ey, nhat, obs, eps,
+                                       M3, M5, M7, True)
+    phi = (15.0 * eps * eps * eps * eps / (8.0 * np.pi)) * I7
+    for m in range(3):
+        for n in range(3):
+            dmn = 1.0 if m == n else 0.0
+            for k in range(3):
+                dmk = 1.0 if m == k else 0.0
+                dnk = 1.0 if n == k else 0.0
+                Hout[m, n, k] = phi * (lam * dmn * nrm[k]
+                                       + mu * (dmk * nrm[n] + dnk * nrm[m]))
+
+
+@njit(cache=True, parallel=True)
+def eigenstress_contract(x_field, tri_verts, normals, eps_arr, density,
+                         mu, nu):
+    """Eigenstress +C:eps* (N_f,3,3) of a triangulated SLIP source.
+
+    sigma*(obs) = sum_s H*[obs,s][:,:,k] density[s,k], summed over ALL
+    source elements (no nearest-triangle assignment). Parallel over obs
+    points, per-element `eps_arr`; the twin of `dd_stress_contract`, whose
+    divergent on-fault part this is. Returns +C:eps*, so
+    sigma_elastic = dd_stress_contract(...) - eigenstress_contract(...).
+    """
+    N_f = x_field.shape[0]
+    N_s = tri_verts.shape[0]
+    EX, EY, NH, OK = _precompute_frames(tri_verts)
+    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    sig = np.zeros((N_f, 3, 3))
+    for f in prange(N_f):
+        M3 = np.zeros((3, 3)); M5 = np.zeros((4, 4)); M7 = np.zeros((5, 5))
+        H = np.empty((3, 3, 3))
+        obs = x_field[f]
+        a00 = 0.0; a01 = 0.0; a02 = 0.0
+        a10 = 0.0; a11 = 0.0; a12 = 0.0
+        a20 = 0.0; a21 = 0.0; a22 = 0.0
+        for s in range(N_s):
+            if not OK[s]:
+                continue
+            d0 = density[s, 0]; d1 = density[s, 1]; d2 = density[s, 2]
+            if d0 == 0.0 and d1 == 0.0 and d2 == 0.0:
+                continue
+            _eigenstress_pair(tri_verts[s], EX[s], EY[s], NH[s], normals[s],
+                              obs, eps_arr[s], mu, lam, H, M3, M5, M7)
+            a00 += H[0, 0, 0] * d0 + H[0, 0, 1] * d1 + H[0, 0, 2] * d2
+            a01 += H[0, 1, 0] * d0 + H[0, 1, 1] * d1 + H[0, 1, 2] * d2
+            a02 += H[0, 2, 0] * d0 + H[0, 2, 1] * d1 + H[0, 2, 2] * d2
+            a10 += H[1, 0, 0] * d0 + H[1, 0, 1] * d1 + H[1, 0, 2] * d2
+            a11 += H[1, 1, 0] * d0 + H[1, 1, 1] * d1 + H[1, 1, 2] * d2
+            a12 += H[1, 2, 0] * d0 + H[1, 2, 1] * d1 + H[1, 2, 2] * d2
+            a20 += H[2, 0, 0] * d0 + H[2, 0, 1] * d1 + H[2, 0, 2] * d2
+            a21 += H[2, 1, 0] * d0 + H[2, 1, 1] * d1 + H[2, 1, 2] * d2
+            a22 += H[2, 2, 0] * d0 + H[2, 2, 1] * d1 + H[2, 2, 2] * d2
+        sig[f, 0, 0] = a00; sig[f, 0, 1] = a01; sig[f, 0, 2] = a02
+        sig[f, 1, 0] = a10; sig[f, 1, 1] = a11; sig[f, 1, 2] = a12
+        sig[f, 2, 0] = a20; sig[f, 2, 1] = a21; sig[f, 2, 2] = a22
+    return sig

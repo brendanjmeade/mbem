@@ -1,0 +1,11 @@
+# Python / numba build output
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+
+# macOS
+.DS_Store
+
+# fbem: every .npz here is regenerable solver output or a mesh cache
+fbem/cache/

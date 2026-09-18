@@ -220,6 +220,49 @@ def check_internal_identity(rep):
                   relmax(lhs, rhs), 1.0e-12)
 
 
+def check_mixed_batch(rep):
+    """A batch that MIXES on-plane and off-plane observers.
+
+    The eps = 0 relaxation applies a degree floor, which leaves the sub-floor
+    table slots NaN; that is correct on-plane (z is exactly 0, so `lift` masks
+    them) and WRONG off-plane, where a nonzero z^c would multiply the NaN.
+    Building one floored table for the whole near-set therefore returned NaN
+    for every off-plane row of a mixed batch -- silently, with no warning and
+    no raise.  Every check here was written after that bug, so it exists only
+    to keep it fixed: each row of a mixed batch must equal the value the same
+    point gets on its own, BITWISE.
+    """
+    for name in ("tilted", "axis", "sliver"):
+        tri = TRIS[name]
+        nh = local_frame(tri).nhat
+        c = tri.mean(0)
+        on = [c, 0.5 * (tri[0] + tri[1]), tri[2]]            # centroid, midpoint, vertex
+        off = [c + d * nh for d in (0.05, 0.37, -0.22, 2.5)]
+        f = np.array([0.3, -0.7, 0.5])
+
+        pts = []
+        for i in range(max(len(on), len(off))):              # interleaved, not blocked
+            if i < len(on):
+                pts.append(on[i])
+            if i < len(off):
+                pts.append(off[i])
+        pts = np.array(pts)
+
+        batch = clq.force_displacement(pts, tri, f, MU, NU, 0.0)
+        solo = np.array([clq.force_displacement(x, tri, f, MU, NU, 0.0) for x in pts])
+
+        rep.check_bool(f"{name}: mixed on/off-plane batch is finite",
+                       bool(np.all(np.isfinite(batch))))
+        rep.check_bool(f"{name}: mixed batch == one-at-a-time, bitwise",
+                       bool(np.array_equal(batch, solo)))
+        # and the ordering must not matter
+        perm = np.array([5, 0, 6, 2, 1, 4, 3])[:len(pts)]
+        rep.check_bool(f"{name}: mixed batch is order-independent",
+                       bool(np.array_equal(
+                           clq.force_displacement(pts[perm], tri, f, MU, NU, 0.0),
+                           solo[perm])))
+
+
 def check_guards(rep):
     tri = TRIS["tilted"]
     x = tri.mean(0)[None, :]
@@ -253,6 +296,7 @@ def main():
     check_eps_ladder(rep)
     check_no_free_term(rep)
     check_internal_identity(rep)
+    check_mixed_batch(rep)
     check_guards(rep)
     rep.finish()
 

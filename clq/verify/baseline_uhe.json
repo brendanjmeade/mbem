@@ -1,0 +1,4328 @@
+{
+ "baseline_commit": "72c2840",
+ "entries": {
+  "equilateral|0|0.25|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.25|0.0|analytic|H": "7cd7f3cfb6b2657171900184600f53e2b1c7756dfcf532b34c93912a97505f51",
+  "equilateral|0|0.25|0.0|analytic|U": "5450fcd62f0f57a5e5d8d8fc047de91bdd39fec4aab93c4589ca94e80d7bf5c0",
+  "equilateral|0|0.25|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.25|0.0|hybrid|H": "7cd7f3cfb6b2657171900184600f53e2b1c7756dfcf532b34c93912a97505f51",
+  "equilateral|0|0.25|0.0|hybrid|U": "5450fcd62f0f57a5e5d8d8fc047de91bdd39fec4aab93c4589ca94e80d7bf5c0",
+  "equilateral|0|0.25|0.3|analytic|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.25|0.3|analytic|H": "50da4b47b5e3655f3147bfe378ebbca085fb29f892bd226dbc29330b6efe2c9d",
+  "equilateral|0|0.25|0.3|analytic|U": "3e074019400cd0dad582bd1788b377f9dd852cfd063da6445e0cf6c386a00c45",
+  "equilateral|0|0.25|0.3|hybrid|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.25|0.3|hybrid|H": "50da4b47b5e3655f3147bfe378ebbca085fb29f892bd226dbc29330b6efe2c9d",
+  "equilateral|0|0.25|0.3|hybrid|U": "3e074019400cd0dad582bd1788b377f9dd852cfd063da6445e0cf6c386a00c45",
+  "equilateral|0|0.25|1.1|analytic|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.25|1.1|analytic|H": "2e584ef3723ebb9acde38a53af5720bc319f46d629c7686ed6b59ac0e26108ce",
+  "equilateral|0|0.25|1.1|analytic|U": "fe236ce90e753bb1856a20b4371b157ca51a3ff43361a01e377c8c53a87dfbf6",
+  "equilateral|0|0.25|1.1|hybrid|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.25|1.1|hybrid|H": "2e584ef3723ebb9acde38a53af5720bc319f46d629c7686ed6b59ac0e26108ce",
+  "equilateral|0|0.25|1.1|hybrid|U": "fe236ce90e753bb1856a20b4371b157ca51a3ff43361a01e377c8c53a87dfbf6",
+  "equilateral|0|0.3|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.3|0.0|analytic|H": "53f997153561c05b8b10e1002f69a14a7542ed3cd37f3a660d1e56f0d03e3306",
+  "equilateral|0|0.3|0.0|analytic|U": "253abaec0390ddac23d6bc8ce8abb4d6dac7f5dedc32624b8e218a1a735af542",
+  "equilateral|0|0.3|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.3|0.0|hybrid|H": "53f997153561c05b8b10e1002f69a14a7542ed3cd37f3a660d1e56f0d03e3306",
+  "equilateral|0|0.3|0.0|hybrid|U": "253abaec0390ddac23d6bc8ce8abb4d6dac7f5dedc32624b8e218a1a735af542",
+  "equilateral|0|0.3|0.3|analytic|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.3|0.3|analytic|H": "63091004f22b3cec25bfd7cde49af3ff002f7702620a1a700e628b29877b9a73",
+  "equilateral|0|0.3|0.3|analytic|U": "0a37aa0000de0d9751b62bf5958ae337c846822df83cf071fda557b13e05cd3f",
+  "equilateral|0|0.3|0.3|hybrid|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.3|0.3|hybrid|H": "63091004f22b3cec25bfd7cde49af3ff002f7702620a1a700e628b29877b9a73",
+  "equilateral|0|0.3|0.3|hybrid|U": "0a37aa0000de0d9751b62bf5958ae337c846822df83cf071fda557b13e05cd3f",
+  "equilateral|0|0.3|1.1|analytic|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.3|1.1|analytic|H": "8b1e20f5727e95323621a697f1052afe7432b868db6d4988f936445d1ee97fea",
+  "equilateral|0|0.3|1.1|analytic|U": "cc543bcc5c43803cb562ce44c76a03765a90ed0039dad7919ac6955a6e0cf3a2",
+  "equilateral|0|0.3|1.1|hybrid|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.3|1.1|hybrid|H": "8b1e20f5727e95323621a697f1052afe7432b868db6d4988f936445d1ee97fea",
+  "equilateral|0|0.3|1.1|hybrid|U": "cc543bcc5c43803cb562ce44c76a03765a90ed0039dad7919ac6955a6e0cf3a2",
+  "equilateral|0|0.45|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.45|0.0|analytic|H": "3c94d3a31e9db6b54dff5821b735a5e53d16143aa1001bc85e4dedc58fa47d1c",
+  "equilateral|0|0.45|0.0|analytic|U": "df465020a5c143f58db3449220ea4d660209e98e9c0f517ccd70150a1a7b24ce",
+  "equilateral|0|0.45|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "equilateral|0|0.45|0.0|hybrid|H": "3c94d3a31e9db6b54dff5821b735a5e53d16143aa1001bc85e4dedc58fa47d1c",
+  "equilateral|0|0.45|0.0|hybrid|U": "df465020a5c143f58db3449220ea4d660209e98e9c0f517ccd70150a1a7b24ce",
+  "equilateral|0|0.45|0.3|analytic|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.45|0.3|analytic|H": "387175e89dde5a539d8dd6f58ac057972047f6c119988e64dec82c489005c37d",
+  "equilateral|0|0.45|0.3|analytic|U": "731774c48f285c5a79b43494913c04a64d395c60196b0314b31448b45341f5ba",
+  "equilateral|0|0.45|0.3|hybrid|E": "9cacfe772c2f76a6fa9ae3152d2d21edc809198084c08ea7bbddbd70d5c9128a",
+  "equilateral|0|0.45|0.3|hybrid|H": "387175e89dde5a539d8dd6f58ac057972047f6c119988e64dec82c489005c37d",
+  "equilateral|0|0.45|0.3|hybrid|U": "731774c48f285c5a79b43494913c04a64d395c60196b0314b31448b45341f5ba",
+  "equilateral|0|0.45|1.1|analytic|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.45|1.1|analytic|H": "0244bf1fc470be7eecd8a4ba879156e3b1adef51e96574c17aae0eea600d82ce",
+  "equilateral|0|0.45|1.1|analytic|U": "5fc4428dfcc077cd92308405fd68b231805ccafaed77f219b6ca0939490f8bd6",
+  "equilateral|0|0.45|1.1|hybrid|E": "bb56ec1b2a3dc690e551d93cc078282de2466782daf7be823e28c7300f53e099",
+  "equilateral|0|0.45|1.1|hybrid|H": "0244bf1fc470be7eecd8a4ba879156e3b1adef51e96574c17aae0eea600d82ce",
+  "equilateral|0|0.45|1.1|hybrid|U": "5fc4428dfcc077cd92308405fd68b231805ccafaed77f219b6ca0939490f8bd6",
+  "equilateral|1|0.25|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.25|0.0|analytic|H": "8d27e9e588bbb7ec82d75c4e714b620e82b579659c6bfdd77c4c24aed466c25c",
+  "equilateral|1|0.25|0.0|analytic|U": "118744124bd0f713dad64155f222969d60c1159fb04a406023638746137bcafd",
+  "equilateral|1|0.25|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.25|0.0|hybrid|H": "8d27e9e588bbb7ec82d75c4e714b620e82b579659c6bfdd77c4c24aed466c25c",
+  "equilateral|1|0.25|0.0|hybrid|U": "118744124bd0f713dad64155f222969d60c1159fb04a406023638746137bcafd",
+  "equilateral|1|0.25|0.3|analytic|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.25|0.3|analytic|H": "b62abc9bbcbc7f885a83dda56eeef5f73ccceebf60dc29a7e3729028369e8926",
+  "equilateral|1|0.25|0.3|analytic|U": "dc1ddc7346ea01d379bb6a0dd52f75758760de7cdb211eb4fe872a7d454f183d",
+  "equilateral|1|0.25|0.3|hybrid|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.25|0.3|hybrid|H": "b62abc9bbcbc7f885a83dda56eeef5f73ccceebf60dc29a7e3729028369e8926",
+  "equilateral|1|0.25|0.3|hybrid|U": "dc1ddc7346ea01d379bb6a0dd52f75758760de7cdb211eb4fe872a7d454f183d",
+  "equilateral|1|0.25|1.1|analytic|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.25|1.1|analytic|H": "8dd61b13b3024fb99ec21d99b7df4ab92959ed64f12d43734759f29294be6846",
+  "equilateral|1|0.25|1.1|analytic|U": "2fcd1c1ccb69e8469a733724789426e9b7ccc17e86749b82ab3d7138a43ef775",
+  "equilateral|1|0.25|1.1|hybrid|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.25|1.1|hybrid|H": "8dd61b13b3024fb99ec21d99b7df4ab92959ed64f12d43734759f29294be6846",
+  "equilateral|1|0.25|1.1|hybrid|U": "2fcd1c1ccb69e8469a733724789426e9b7ccc17e86749b82ab3d7138a43ef775",
+  "equilateral|1|0.3|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.3|0.0|analytic|H": "9cc40877de7f3bda25232f1183c48df423da9826989f1b453b78ce20acaebf93",
+  "equilateral|1|0.3|0.0|analytic|U": "88851e204b0c2bb3fd43ad74d6deb734ad5cb9d06d20e4056e8281b223fc7976",
+  "equilateral|1|0.3|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.3|0.0|hybrid|H": "9cc40877de7f3bda25232f1183c48df423da9826989f1b453b78ce20acaebf93",
+  "equilateral|1|0.3|0.0|hybrid|U": "88851e204b0c2bb3fd43ad74d6deb734ad5cb9d06d20e4056e8281b223fc7976",
+  "equilateral|1|0.3|0.3|analytic|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.3|0.3|analytic|H": "9bf435b07262125c514fe50d05bb8d8db8a5c6030bb4001ed8b5f456f107dc49",
+  "equilateral|1|0.3|0.3|analytic|U": "ba86fa2d543cc92ed28a97825c1d02142c479cfc913be7ba71a0114f3340cabf",
+  "equilateral|1|0.3|0.3|hybrid|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.3|0.3|hybrid|H": "9bf435b07262125c514fe50d05bb8d8db8a5c6030bb4001ed8b5f456f107dc49",
+  "equilateral|1|0.3|0.3|hybrid|U": "ba86fa2d543cc92ed28a97825c1d02142c479cfc913be7ba71a0114f3340cabf",
+  "equilateral|1|0.3|1.1|analytic|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.3|1.1|analytic|H": "3f0b2c19d1a269a7322d48c0e9b7a83aa03fe5cf881547751264366d62256be7",
+  "equilateral|1|0.3|1.1|analytic|U": "b8df49c86c5c2308aa8a674ce2f72576d15e1627f282d301e07c2b8eb63bd4fa",
+  "equilateral|1|0.3|1.1|hybrid|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.3|1.1|hybrid|H": "3f0b2c19d1a269a7322d48c0e9b7a83aa03fe5cf881547751264366d62256be7",
+  "equilateral|1|0.3|1.1|hybrid|U": "b8df49c86c5c2308aa8a674ce2f72576d15e1627f282d301e07c2b8eb63bd4fa",
+  "equilateral|1|0.45|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.45|0.0|analytic|H": "e2acf7169d7013147e7aa89ebe6f07b142aac1b01be56ba4d5409da5dacc0f5a",
+  "equilateral|1|0.45|0.0|analytic|U": "5c69998327935e03b683263e5c6949e443fc0ab64592b177e50914c58dddaae6",
+  "equilateral|1|0.45|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "equilateral|1|0.45|0.0|hybrid|H": "e2acf7169d7013147e7aa89ebe6f07b142aac1b01be56ba4d5409da5dacc0f5a",
+  "equilateral|1|0.45|0.0|hybrid|U": "5c69998327935e03b683263e5c6949e443fc0ab64592b177e50914c58dddaae6",
+  "equilateral|1|0.45|0.3|analytic|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.45|0.3|analytic|H": "e65f71d30c3c943e749b6afc5f887bb4192f7a5ad3957710a4c971d7a0b6cc68",
+  "equilateral|1|0.45|0.3|analytic|U": "52a3f763267cd398a31544d495aedcfe35f9c2c1639c3898530621395d6f2a94",
+  "equilateral|1|0.45|0.3|hybrid|E": "213ed5dd23871a8becd0f2f823515b542f7060d625d196ebc209849d009d06a8",
+  "equilateral|1|0.45|0.3|hybrid|H": "e65f71d30c3c943e749b6afc5f887bb4192f7a5ad3957710a4c971d7a0b6cc68",
+  "equilateral|1|0.45|0.3|hybrid|U": "52a3f763267cd398a31544d495aedcfe35f9c2c1639c3898530621395d6f2a94",
+  "equilateral|1|0.45|1.1|analytic|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.45|1.1|analytic|H": "17a7fac0d9ec02fe5c05e32e2bd299dd4e1cf8eb304ba439b8035a4985d72575",
+  "equilateral|1|0.45|1.1|analytic|U": "749076814836b116ed195eaea28d7631138e70e964f71981ea669b188c245760",
+  "equilateral|1|0.45|1.1|hybrid|E": "e36489c562119db152fe867e4554f5c740b6f576faf9b40b4fd74009e706f474",
+  "equilateral|1|0.45|1.1|hybrid|H": "17a7fac0d9ec02fe5c05e32e2bd299dd4e1cf8eb304ba439b8035a4985d72575",
+  "equilateral|1|0.45|1.1|hybrid|U": "749076814836b116ed195eaea28d7631138e70e964f71981ea669b188c245760",
+  "equilateral|2|0.25|0.0|analytic|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.25|0.0|analytic|H": "91d7dc4b0c6e1ba1ed7146c4d3b74a970004beb7fd4d54d47c51367d9dfe81f0",
+  "equilateral|2|0.25|0.0|analytic|U": "5652d8fd4ed4abb969a745497dd8d780f15c1fd031d08104c6ec3342ae46efd4",
+  "equilateral|2|0.25|0.0|hybrid|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.25|0.0|hybrid|H": "91d7dc4b0c6e1ba1ed7146c4d3b74a970004beb7fd4d54d47c51367d9dfe81f0",
+  "equilateral|2|0.25|0.0|hybrid|U": "5652d8fd4ed4abb969a745497dd8d780f15c1fd031d08104c6ec3342ae46efd4",
+  "equilateral|2|0.25|0.3|analytic|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.25|0.3|analytic|H": "5d9405f8379c9c73ea9160a0d70182d4cf6a82e5283d8ebb6cc3f39dddbc9319",
+  "equilateral|2|0.25|0.3|analytic|U": "b29238683d44f1eecad13c824b3ccff8a6068a3003e25ece8cbb2d435ac7acc3",
+  "equilateral|2|0.25|0.3|hybrid|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.25|0.3|hybrid|H": "5d9405f8379c9c73ea9160a0d70182d4cf6a82e5283d8ebb6cc3f39dddbc9319",
+  "equilateral|2|0.25|0.3|hybrid|U": "b29238683d44f1eecad13c824b3ccff8a6068a3003e25ece8cbb2d435ac7acc3",
+  "equilateral|2|0.25|1.1|analytic|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.25|1.1|analytic|H": "28206c89d16fb1194ac706125b90710467aba9db6261c2825b06a32d8fc36978",
+  "equilateral|2|0.25|1.1|analytic|U": "73e940c04bcb3f5d7d1f0d4875d7ec6a63398393cc43a86ebe6230e7077984b1",
+  "equilateral|2|0.25|1.1|hybrid|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.25|1.1|hybrid|H": "28206c89d16fb1194ac706125b90710467aba9db6261c2825b06a32d8fc36978",
+  "equilateral|2|0.25|1.1|hybrid|U": "73e940c04bcb3f5d7d1f0d4875d7ec6a63398393cc43a86ebe6230e7077984b1",
+  "equilateral|2|0.3|0.0|analytic|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.3|0.0|analytic|H": "cea332f6faaaa2c239cef8786cc3a6f328b154d1e0f3ac443e1fdb76093ee181",
+  "equilateral|2|0.3|0.0|analytic|U": "a5b5a3ddd8153b43c5a702c08a2aee5f252ad93da6b2e96c616c67ee7bb3b3b8",
+  "equilateral|2|0.3|0.0|hybrid|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.3|0.0|hybrid|H": "cea332f6faaaa2c239cef8786cc3a6f328b154d1e0f3ac443e1fdb76093ee181",
+  "equilateral|2|0.3|0.0|hybrid|U": "a5b5a3ddd8153b43c5a702c08a2aee5f252ad93da6b2e96c616c67ee7bb3b3b8",
+  "equilateral|2|0.3|0.3|analytic|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.3|0.3|analytic|H": "04ba6a6d520c9798b355570776b3d39b4a6a709b2352209625a46ee447cff390",
+  "equilateral|2|0.3|0.3|analytic|U": "420b57149e388bc7de5c13ead37ab4d9365d20451a0c49c52b4186a035492337",
+  "equilateral|2|0.3|0.3|hybrid|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.3|0.3|hybrid|H": "04ba6a6d520c9798b355570776b3d39b4a6a709b2352209625a46ee447cff390",
+  "equilateral|2|0.3|0.3|hybrid|U": "420b57149e388bc7de5c13ead37ab4d9365d20451a0c49c52b4186a035492337",
+  "equilateral|2|0.3|1.1|analytic|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.3|1.1|analytic|H": "ac22e7e500f0782d676c530266513aed0539aa5f83ba070c511ce0645b876860",
+  "equilateral|2|0.3|1.1|analytic|U": "421b5bcf78eaa8da1e95d6659872be3cd45a15c97c555257010ed8ce49567b0f",
+  "equilateral|2|0.3|1.1|hybrid|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.3|1.1|hybrid|H": "ac22e7e500f0782d676c530266513aed0539aa5f83ba070c511ce0645b876860",
+  "equilateral|2|0.3|1.1|hybrid|U": "421b5bcf78eaa8da1e95d6659872be3cd45a15c97c555257010ed8ce49567b0f",
+  "equilateral|2|0.45|0.0|analytic|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.45|0.0|analytic|H": "b71bfc90d7c714d2c101fa3a6823548ea8dd9dc3b4e714a1d7ee1922531441da",
+  "equilateral|2|0.45|0.0|analytic|U": "aadaf0a463e2745ae1579f73627530a330556aa560c667586bff8f55b75fe81c",
+  "equilateral|2|0.45|0.0|hybrid|E": "b2b73a06a011e275d57b596ab8cb5654aabc84b7b92f3a697e3a7fdb852ebb3e",
+  "equilateral|2|0.45|0.0|hybrid|H": "b71bfc90d7c714d2c101fa3a6823548ea8dd9dc3b4e714a1d7ee1922531441da",
+  "equilateral|2|0.45|0.0|hybrid|U": "aadaf0a463e2745ae1579f73627530a330556aa560c667586bff8f55b75fe81c",
+  "equilateral|2|0.45|0.3|analytic|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.45|0.3|analytic|H": "18f6749b7df86ce3069b4d3b822059944a2666fb1161651684e040109d6f3413",
+  "equilateral|2|0.45|0.3|analytic|U": "97fb9331e17c149730b9a3c9800d2e189773410048f92aea89cfefb2a63ee6e9",
+  "equilateral|2|0.45|0.3|hybrid|E": "1266cbe58903371ba1406ce7807d27b672ebc106b90301384b5271eae5be0fc0",
+  "equilateral|2|0.45|0.3|hybrid|H": "18f6749b7df86ce3069b4d3b822059944a2666fb1161651684e040109d6f3413",
+  "equilateral|2|0.45|0.3|hybrid|U": "97fb9331e17c149730b9a3c9800d2e189773410048f92aea89cfefb2a63ee6e9",
+  "equilateral|2|0.45|1.1|analytic|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.45|1.1|analytic|H": "e956acc64b565d5da4fb0166dc6d27892b4a5751b0d77c0e25a683ee87e347c7",
+  "equilateral|2|0.45|1.1|analytic|U": "e3fcacf19325ebd4e0897f229aca87ac574d6d040cfaa7869106a65630f3a08c",
+  "equilateral|2|0.45|1.1|hybrid|E": "afa1407f55c7472ccea8bb98026d9016bb0e81d0bdf5fa9a59a143bba8b6ec8b",
+  "equilateral|2|0.45|1.1|hybrid|H": "e956acc64b565d5da4fb0166dc6d27892b4a5751b0d77c0e25a683ee87e347c7",
+  "equilateral|2|0.45|1.1|hybrid|U": "e3fcacf19325ebd4e0897f229aca87ac574d6d040cfaa7869106a65630f3a08c",
+  "equilateral|3|0.25|0.0|analytic|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.25|0.0|analytic|H": "7a417949ce69886a6de022a9e46eebe21f4432d0007baa6dc6b1e09717ab43ff",
+  "equilateral|3|0.25|0.0|analytic|U": "ce6b62d0e741080e4931d52ffd6c20a5150e630b8fedcb571ca80e03761d0315",
+  "equilateral|3|0.25|0.0|hybrid|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.25|0.0|hybrid|H": "7a417949ce69886a6de022a9e46eebe21f4432d0007baa6dc6b1e09717ab43ff",
+  "equilateral|3|0.25|0.0|hybrid|U": "ce6b62d0e741080e4931d52ffd6c20a5150e630b8fedcb571ca80e03761d0315",
+  "equilateral|3|0.25|0.3|analytic|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.25|0.3|analytic|H": "34b85a5fe0c1bc7a7e010363014e52ebadaca1b9651d8d0e4bb8478febf46ae1",
+  "equilateral|3|0.25|0.3|analytic|U": "5a288ccfb81b58619107b90a538fc5229d2fe16fccca6c90c51872148f445f3b",
+  "equilateral|3|0.25|0.3|hybrid|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.25|0.3|hybrid|H": "34b85a5fe0c1bc7a7e010363014e52ebadaca1b9651d8d0e4bb8478febf46ae1",
+  "equilateral|3|0.25|0.3|hybrid|U": "5a288ccfb81b58619107b90a538fc5229d2fe16fccca6c90c51872148f445f3b",
+  "equilateral|3|0.25|1.1|analytic|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.25|1.1|analytic|H": "bfedaa42db6919aee3084777a41611a23f08385be45dbb5c04923435a357f11c",
+  "equilateral|3|0.25|1.1|analytic|U": "a4c5748d68194a0484fa39f50b0839ac32e913e477f79f32daa9609e7da49642",
+  "equilateral|3|0.25|1.1|hybrid|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.25|1.1|hybrid|H": "bfedaa42db6919aee3084777a41611a23f08385be45dbb5c04923435a357f11c",
+  "equilateral|3|0.25|1.1|hybrid|U": "a4c5748d68194a0484fa39f50b0839ac32e913e477f79f32daa9609e7da49642",
+  "equilateral|3|0.3|0.0|analytic|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.3|0.0|analytic|H": "de0488172e89747162f73b2da06ca6e643b0e8f10cce0ff8cc4312b3fa763202",
+  "equilateral|3|0.3|0.0|analytic|U": "0b4cbc483f949f3964a2e10f7b1e6eca67ca5fd53d713901f48abab6d978b1be",
+  "equilateral|3|0.3|0.0|hybrid|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.3|0.0|hybrid|H": "de0488172e89747162f73b2da06ca6e643b0e8f10cce0ff8cc4312b3fa763202",
+  "equilateral|3|0.3|0.0|hybrid|U": "0b4cbc483f949f3964a2e10f7b1e6eca67ca5fd53d713901f48abab6d978b1be",
+  "equilateral|3|0.3|0.3|analytic|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.3|0.3|analytic|H": "ba49629e74f4a0acfcd0a4917892d0c403d1206b61429628948ce157b549daae",
+  "equilateral|3|0.3|0.3|analytic|U": "3806ee4546d06789d06a419bb190e4d2157323e6e836d288d4604b17fa1108f7",
+  "equilateral|3|0.3|0.3|hybrid|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.3|0.3|hybrid|H": "ba49629e74f4a0acfcd0a4917892d0c403d1206b61429628948ce157b549daae",
+  "equilateral|3|0.3|0.3|hybrid|U": "3806ee4546d06789d06a419bb190e4d2157323e6e836d288d4604b17fa1108f7",
+  "equilateral|3|0.3|1.1|analytic|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.3|1.1|analytic|H": "9cdde36cfaca6cc75b8e3b5d5772e788766d5046473d426c0609569400a61c59",
+  "equilateral|3|0.3|1.1|analytic|U": "e6fdeba18460475e0a6f94e0997075297cfea661edf2a1183dbf7b0b77fda715",
+  "equilateral|3|0.3|1.1|hybrid|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.3|1.1|hybrid|H": "9cdde36cfaca6cc75b8e3b5d5772e788766d5046473d426c0609569400a61c59",
+  "equilateral|3|0.3|1.1|hybrid|U": "e6fdeba18460475e0a6f94e0997075297cfea661edf2a1183dbf7b0b77fda715",
+  "equilateral|3|0.45|0.0|analytic|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.45|0.0|analytic|H": "b351538051d6ff88a422bc67b134596cb4ed30940427d876f8431842237dfa17",
+  "equilateral|3|0.45|0.0|analytic|U": "786bf7f0fa060a0507f53223c5854ac75d08bba0b26a4cae48b0ad030c3712df",
+  "equilateral|3|0.45|0.0|hybrid|E": "44832ca6b3692e1b7baab03ace9dc8aeff19b18338e9143a3d7b88bb7af01d79",
+  "equilateral|3|0.45|0.0|hybrid|H": "b351538051d6ff88a422bc67b134596cb4ed30940427d876f8431842237dfa17",
+  "equilateral|3|0.45|0.0|hybrid|U": "786bf7f0fa060a0507f53223c5854ac75d08bba0b26a4cae48b0ad030c3712df",
+  "equilateral|3|0.45|0.3|analytic|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.45|0.3|analytic|H": "a97a9dc6cbc343ee7a41ce3aeb7e5043f40080b72a1e384c26f987ca14557ec0",
+  "equilateral|3|0.45|0.3|analytic|U": "18dfaed690f7977af454b2ed5a1bca721f40cbb9c60e6435d366d466b25852ec",
+  "equilateral|3|0.45|0.3|hybrid|E": "2f285ccd21d9a60c9afadb196d7d73f4c6d98886f9697c370676ad9b544a1e2a",
+  "equilateral|3|0.45|0.3|hybrid|H": "a97a9dc6cbc343ee7a41ce3aeb7e5043f40080b72a1e384c26f987ca14557ec0",
+  "equilateral|3|0.45|0.3|hybrid|U": "18dfaed690f7977af454b2ed5a1bca721f40cbb9c60e6435d366d466b25852ec",
+  "equilateral|3|0.45|1.1|analytic|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.45|1.1|analytic|H": "915990cf67b64220f589096784ecd00e2dfcda4f21fbf9c9fb3c4b959ca6b10e",
+  "equilateral|3|0.45|1.1|analytic|U": "ad0b0c30eebaf9d1a29a12a2b81304732cc7315c185898862f387947de54a268",
+  "equilateral|3|0.45|1.1|hybrid|E": "0d97e97cd0e0d843cee838b34484c3cf3c8d693571df5043ef9032e939bd3f83",
+  "equilateral|3|0.45|1.1|hybrid|H": "915990cf67b64220f589096784ecd00e2dfcda4f21fbf9c9fb3c4b959ca6b10e",
+  "equilateral|3|0.45|1.1|hybrid|U": "ad0b0c30eebaf9d1a29a12a2b81304732cc7315c185898862f387947de54a268",
+  "scalene|0|0.25|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.25|0.0|analytic|H": "d019ab0acb76e23c8f87c7b10a9cf1140ac90798a0e9b27eba2ef74f620d39ef",
+  "scalene|0|0.25|0.0|analytic|U": "c7f52219b15cd232e7008be9d3cdb7f2e45504134c3f6abcccd3e3fd804f4b7b",
+  "scalene|0|0.25|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.25|0.0|hybrid|H": "d019ab0acb76e23c8f87c7b10a9cf1140ac90798a0e9b27eba2ef74f620d39ef",
+  "scalene|0|0.25|0.0|hybrid|U": "c7f52219b15cd232e7008be9d3cdb7f2e45504134c3f6abcccd3e3fd804f4b7b",
+  "scalene|0|0.25|0.3|analytic|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.25|0.3|analytic|H": "448f0d81bff1c644bc6c51760ee1db1f23ed2f2869f97f5280e22e0916ef6e0d",
+  "scalene|0|0.25|0.3|analytic|U": "782fbf1eb826746ceb83e5f8d9b91ae6294783b9b6caf36d7e7cbbbb5a94718d",
+  "scalene|0|0.25|0.3|hybrid|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.25|0.3|hybrid|H": "448f0d81bff1c644bc6c51760ee1db1f23ed2f2869f97f5280e22e0916ef6e0d",
+  "scalene|0|0.25|0.3|hybrid|U": "782fbf1eb826746ceb83e5f8d9b91ae6294783b9b6caf36d7e7cbbbb5a94718d",
+  "scalene|0|0.25|1.1|analytic|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.25|1.1|analytic|H": "2a04f648217794d8e71b20a344a4039c351c6bc1bf68426c6818f4a6974d1858",
+  "scalene|0|0.25|1.1|analytic|U": "83c4eb4b70f91129e697b2f0c12c26f98e96f56d3f8522bc898da3a646f583c3",
+  "scalene|0|0.25|1.1|hybrid|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.25|1.1|hybrid|H": "2a04f648217794d8e71b20a344a4039c351c6bc1bf68426c6818f4a6974d1858",
+  "scalene|0|0.25|1.1|hybrid|U": "83c4eb4b70f91129e697b2f0c12c26f98e96f56d3f8522bc898da3a646f583c3",
+  "scalene|0|0.3|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.3|0.0|analytic|H": "79b83bd6e2641e29929c0dd70dbc491f111d7678b27091bef5f1c62180f4c28f",
+  "scalene|0|0.3|0.0|analytic|U": "c68d2945e94c8e48fa8efeb120930d24aa587fef10160a65cefb23086415d83c",
+  "scalene|0|0.3|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.3|0.0|hybrid|H": "79b83bd6e2641e29929c0dd70dbc491f111d7678b27091bef5f1c62180f4c28f",
+  "scalene|0|0.3|0.0|hybrid|U": "c68d2945e94c8e48fa8efeb120930d24aa587fef10160a65cefb23086415d83c",
+  "scalene|0|0.3|0.3|analytic|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.3|0.3|analytic|H": "ce3afe1f1219d3578ad589010e03710a6edcc4fa7304d4f6fdd7f10d7bff30da",
+  "scalene|0|0.3|0.3|analytic|U": "e0d509b20ac23ecd466a1f380dc4666df0e85bf0ebc4246ecfc7d3628cdc2046",
+  "scalene|0|0.3|0.3|hybrid|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.3|0.3|hybrid|H": "ce3afe1f1219d3578ad589010e03710a6edcc4fa7304d4f6fdd7f10d7bff30da",
+  "scalene|0|0.3|0.3|hybrid|U": "e0d509b20ac23ecd466a1f380dc4666df0e85bf0ebc4246ecfc7d3628cdc2046",
+  "scalene|0|0.3|1.1|analytic|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.3|1.1|analytic|H": "7c89872647e3acd57d06701b0b691bcbf81ed1a60667a8070606b917edc39b42",
+  "scalene|0|0.3|1.1|analytic|U": "0a7f5b1a4464a58f7601283bd49351dc183401f38f28f9c09e8b9d3ba5e48eb9",
+  "scalene|0|0.3|1.1|hybrid|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.3|1.1|hybrid|H": "7c89872647e3acd57d06701b0b691bcbf81ed1a60667a8070606b917edc39b42",
+  "scalene|0|0.3|1.1|hybrid|U": "0a7f5b1a4464a58f7601283bd49351dc183401f38f28f9c09e8b9d3ba5e48eb9",
+  "scalene|0|0.45|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.45|0.0|analytic|H": "f23cc81fce3b21ae65e9fa0986dd63664b83290bb7cdeedc195e079d040ccf8d",
+  "scalene|0|0.45|0.0|analytic|U": "ec7f4635e50fc87b732141f4f552e61f6a9974124b6a3639ff3dfd0a6b366365",
+  "scalene|0|0.45|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "scalene|0|0.45|0.0|hybrid|H": "f23cc81fce3b21ae65e9fa0986dd63664b83290bb7cdeedc195e079d040ccf8d",
+  "scalene|0|0.45|0.0|hybrid|U": "ec7f4635e50fc87b732141f4f552e61f6a9974124b6a3639ff3dfd0a6b366365",
+  "scalene|0|0.45|0.3|analytic|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.45|0.3|analytic|H": "384367e40d7bff7fdf36c52880b8e4fe3578818cf6183a505d127ccf0cdf618c",
+  "scalene|0|0.45|0.3|analytic|U": "25fe92dcbd1a25b21ec8ec6ccd55509d993d55832fc27ad212f0837dae855540",
+  "scalene|0|0.45|0.3|hybrid|E": "d521ec8777cc5e360de4158e4ba59c754c2b91f28180d56c3aa913438e275af3",
+  "scalene|0|0.45|0.3|hybrid|H": "384367e40d7bff7fdf36c52880b8e4fe3578818cf6183a505d127ccf0cdf618c",
+  "scalene|0|0.45|0.3|hybrid|U": "25fe92dcbd1a25b21ec8ec6ccd55509d993d55832fc27ad212f0837dae855540",
+  "scalene|0|0.45|1.1|analytic|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.45|1.1|analytic|H": "27fa4a2d154d1b160f884f8b4db15fceef6463fa86d600639d9159941ecdc0a4",
+  "scalene|0|0.45|1.1|analytic|U": "3a812ad26da40c9efd7acea3fb11c19577a0842ef7bed9edf91c62bccc9c64be",
+  "scalene|0|0.45|1.1|hybrid|E": "8248ad40a96618f9cec3f52cb37e9d0df4a4147c55fa5f6ab61fdebcc69c00c2",
+  "scalene|0|0.45|1.1|hybrid|H": "27fa4a2d154d1b160f884f8b4db15fceef6463fa86d600639d9159941ecdc0a4",
+  "scalene|0|0.45|1.1|hybrid|U": "3a812ad26da40c9efd7acea3fb11c19577a0842ef7bed9edf91c62bccc9c64be",
+  "scalene|1|0.25|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.25|0.0|analytic|H": "1a9c83e1a26adb3345267628c1c07376cb423e3574f55c94f26694488972865c",
+  "scalene|1|0.25|0.0|analytic|U": "f7c19eada22a88274bec194f5b70122e02737482e629d7af497e40b8a300049d",
+  "scalene|1|0.25|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.25|0.0|hybrid|H": "1a9c83e1a26adb3345267628c1c07376cb423e3574f55c94f26694488972865c",
+  "scalene|1|0.25|0.0|hybrid|U": "f7c19eada22a88274bec194f5b70122e02737482e629d7af497e40b8a300049d",
+  "scalene|1|0.25|0.3|analytic|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.25|0.3|analytic|H": "e4ca2390706254162a2cfcb23daa9e745384693f8c7761eccf292a128722d0d5",
+  "scalene|1|0.25|0.3|analytic|U": "dc240a9226a2425ed1322c2a0a0e4f5bfc9341eee00069b9f6f5aa0238fcfa66",
+  "scalene|1|0.25|0.3|hybrid|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.25|0.3|hybrid|H": "e4ca2390706254162a2cfcb23daa9e745384693f8c7761eccf292a128722d0d5",
+  "scalene|1|0.25|0.3|hybrid|U": "dc240a9226a2425ed1322c2a0a0e4f5bfc9341eee00069b9f6f5aa0238fcfa66",
+  "scalene|1|0.25|1.1|analytic|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.25|1.1|analytic|H": "ed3d8638c03bf478eaea043db3347a97794fda694e539e70884a26e6d5c555bb",
+  "scalene|1|0.25|1.1|analytic|U": "e31e1ab0e6cefd35129cc73226d2b8cef907e6b633b69cec1e89de27be953202",
+  "scalene|1|0.25|1.1|hybrid|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.25|1.1|hybrid|H": "ed3d8638c03bf478eaea043db3347a97794fda694e539e70884a26e6d5c555bb",
+  "scalene|1|0.25|1.1|hybrid|U": "e31e1ab0e6cefd35129cc73226d2b8cef907e6b633b69cec1e89de27be953202",
+  "scalene|1|0.3|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.3|0.0|analytic|H": "e4cde587f014629c8191271eaa70ce85f7b97bb98f27e4c47193adbc4e0c929d",
+  "scalene|1|0.3|0.0|analytic|U": "7f031803daf586d5e10c721b1b18652d9401fa086cb235b154bf6ccc3e3f0ea9",
+  "scalene|1|0.3|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.3|0.0|hybrid|H": "e4cde587f014629c8191271eaa70ce85f7b97bb98f27e4c47193adbc4e0c929d",
+  "scalene|1|0.3|0.0|hybrid|U": "7f031803daf586d5e10c721b1b18652d9401fa086cb235b154bf6ccc3e3f0ea9",
+  "scalene|1|0.3|0.3|analytic|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.3|0.3|analytic|H": "4e26a6484c0da01269d59b24f7e8cb01a53f5ced42485a18485845e97d2b48c1",
+  "scalene|1|0.3|0.3|analytic|U": "b81f5af48b89dbde015baadfada998c1e7282055bd2b41003b73b4a89951605a",
+  "scalene|1|0.3|0.3|hybrid|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.3|0.3|hybrid|H": "4e26a6484c0da01269d59b24f7e8cb01a53f5ced42485a18485845e97d2b48c1",
+  "scalene|1|0.3|0.3|hybrid|U": "b81f5af48b89dbde015baadfada998c1e7282055bd2b41003b73b4a89951605a",
+  "scalene|1|0.3|1.1|analytic|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.3|1.1|analytic|H": "87b1790bfe64eb10a9749166418012d27c9055d53ad44ab49610b2e753881e46",
+  "scalene|1|0.3|1.1|analytic|U": "bd65c10769ad81a710fd63434ec73b977238fed33a0f04cbacb1325580952c77",
+  "scalene|1|0.3|1.1|hybrid|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.3|1.1|hybrid|H": "87b1790bfe64eb10a9749166418012d27c9055d53ad44ab49610b2e753881e46",
+  "scalene|1|0.3|1.1|hybrid|U": "bd65c10769ad81a710fd63434ec73b977238fed33a0f04cbacb1325580952c77",
+  "scalene|1|0.45|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.45|0.0|analytic|H": "ff9f68b078ce6a3e4b82c76e5445c0190e5f56c025f4afdefb2ad9e580ced94d",
+  "scalene|1|0.45|0.0|analytic|U": "a238fde1b735f769ae10c1a90ae15b6420d74be168ec50103fafdf2698411097",
+  "scalene|1|0.45|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "scalene|1|0.45|0.0|hybrid|H": "ff9f68b078ce6a3e4b82c76e5445c0190e5f56c025f4afdefb2ad9e580ced94d",
+  "scalene|1|0.45|0.0|hybrid|U": "a238fde1b735f769ae10c1a90ae15b6420d74be168ec50103fafdf2698411097",
+  "scalene|1|0.45|0.3|analytic|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.45|0.3|analytic|H": "1840d1f7791abd007665147e9880557cfcd3a93cedaca702b0962930ca02178e",
+  "scalene|1|0.45|0.3|analytic|U": "e955b6b461441129eaf5940728fe31944c806db8e9dfff5e1451ca857acaeeac",
+  "scalene|1|0.45|0.3|hybrid|E": "d03618b126f54c44e3fb9344fb9bef41322fd7fa0a00fe0b0b8c054a6fbeff1b",
+  "scalene|1|0.45|0.3|hybrid|H": "1840d1f7791abd007665147e9880557cfcd3a93cedaca702b0962930ca02178e",
+  "scalene|1|0.45|0.3|hybrid|U": "e955b6b461441129eaf5940728fe31944c806db8e9dfff5e1451ca857acaeeac",
+  "scalene|1|0.45|1.1|analytic|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.45|1.1|analytic|H": "f8cc2f1e902411f534de0930c54d59bc998a26e8aae5ccf88c1b66ababb4a91d",
+  "scalene|1|0.45|1.1|analytic|U": "850b073045aad59af04b997adc28f5794e4b6dc0a15baad78eb8cb771ac6ec6e",
+  "scalene|1|0.45|1.1|hybrid|E": "5304473dbde64cf3d7364a9b7200804b1d1d5418278bf2acf5bb09995f5625b4",
+  "scalene|1|0.45|1.1|hybrid|H": "f8cc2f1e902411f534de0930c54d59bc998a26e8aae5ccf88c1b66ababb4a91d",
+  "scalene|1|0.45|1.1|hybrid|U": "850b073045aad59af04b997adc28f5794e4b6dc0a15baad78eb8cb771ac6ec6e",
+  "scalene|2|0.25|0.0|analytic|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.25|0.0|analytic|H": "aa0fa4d33b7eb19dd1ddc1beedc14b19b70bca8eaef363d122166a8791607dc3",
+  "scalene|2|0.25|0.0|analytic|U": "83ac2e4f9ed17fe202cc556c939fd150b89e46ada83081196a6d6e7c66a50aec",
+  "scalene|2|0.25|0.0|hybrid|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.25|0.0|hybrid|H": "aa0fa4d33b7eb19dd1ddc1beedc14b19b70bca8eaef363d122166a8791607dc3",
+  "scalene|2|0.25|0.0|hybrid|U": "83ac2e4f9ed17fe202cc556c939fd150b89e46ada83081196a6d6e7c66a50aec",
+  "scalene|2|0.25|0.3|analytic|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.25|0.3|analytic|H": "c97e7dc46a391e2fce9112368e7d3284473eb5985067fee173eafdf50d599952",
+  "scalene|2|0.25|0.3|analytic|U": "21b9b1985dc02564c05d3d301b206ee52557618aa72d0a8757a6d0030e79bc92",
+  "scalene|2|0.25|0.3|hybrid|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.25|0.3|hybrid|H": "c97e7dc46a391e2fce9112368e7d3284473eb5985067fee173eafdf50d599952",
+  "scalene|2|0.25|0.3|hybrid|U": "21b9b1985dc02564c05d3d301b206ee52557618aa72d0a8757a6d0030e79bc92",
+  "scalene|2|0.25|1.1|analytic|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.25|1.1|analytic|H": "069df858cabf8cc8748fe3514160ff0d4c6060ebf5b914cb9568e3cbcb07e72d",
+  "scalene|2|0.25|1.1|analytic|U": "5ff5938b8475937e7a97de23b2d4130b3e409a26596a5f21f6eb5bca098ecd7f",
+  "scalene|2|0.25|1.1|hybrid|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.25|1.1|hybrid|H": "069df858cabf8cc8748fe3514160ff0d4c6060ebf5b914cb9568e3cbcb07e72d",
+  "scalene|2|0.25|1.1|hybrid|U": "5ff5938b8475937e7a97de23b2d4130b3e409a26596a5f21f6eb5bca098ecd7f",
+  "scalene|2|0.3|0.0|analytic|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.3|0.0|analytic|H": "630eaeee21d90692ebd667acaa4b3f7361cfd327b46ab60836190c606118def8",
+  "scalene|2|0.3|0.0|analytic|U": "2c9f068e401dac316c67b6ecabf71d2c65372182d9018a4c17c138041c29fac5",
+  "scalene|2|0.3|0.0|hybrid|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.3|0.0|hybrid|H": "630eaeee21d90692ebd667acaa4b3f7361cfd327b46ab60836190c606118def8",
+  "scalene|2|0.3|0.0|hybrid|U": "2c9f068e401dac316c67b6ecabf71d2c65372182d9018a4c17c138041c29fac5",
+  "scalene|2|0.3|0.3|analytic|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.3|0.3|analytic|H": "5c08f2e81dc83d19aa3494a6ac988b1139f4ff8b4924733bb93cea661540c68a",
+  "scalene|2|0.3|0.3|analytic|U": "4404f9d8644f62b890f41458c847dc42de3b923970fde623709316151533f8f8",
+  "scalene|2|0.3|0.3|hybrid|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.3|0.3|hybrid|H": "5c08f2e81dc83d19aa3494a6ac988b1139f4ff8b4924733bb93cea661540c68a",
+  "scalene|2|0.3|0.3|hybrid|U": "4404f9d8644f62b890f41458c847dc42de3b923970fde623709316151533f8f8",
+  "scalene|2|0.3|1.1|analytic|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.3|1.1|analytic|H": "84461b159d042304f5ddfdaf9137c9b9ff7fee359b23262c925c2d5361985e48",
+  "scalene|2|0.3|1.1|analytic|U": "7bcf089573e05de2aa2befb4bbae58f46fffd8aec1368702ef3965d1644bfe77",
+  "scalene|2|0.3|1.1|hybrid|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.3|1.1|hybrid|H": "84461b159d042304f5ddfdaf9137c9b9ff7fee359b23262c925c2d5361985e48",
+  "scalene|2|0.3|1.1|hybrid|U": "7bcf089573e05de2aa2befb4bbae58f46fffd8aec1368702ef3965d1644bfe77",
+  "scalene|2|0.45|0.0|analytic|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.45|0.0|analytic|H": "738d0b84d5014b8adf3d970e102a62edf9ec5a7bb907f71581fd8b0760ae9eb7",
+  "scalene|2|0.45|0.0|analytic|U": "c6e07b2eafd93e30c2f3940a6534026ac4cf16a8dcf0a4051758fa363e83afb0",
+  "scalene|2|0.45|0.0|hybrid|E": "eb1868828be6df2bc19ee8c2acbd9dec3ba53be2eea020975c10178db1b9ca16",
+  "scalene|2|0.45|0.0|hybrid|H": "738d0b84d5014b8adf3d970e102a62edf9ec5a7bb907f71581fd8b0760ae9eb7",
+  "scalene|2|0.45|0.0|hybrid|U": "c6e07b2eafd93e30c2f3940a6534026ac4cf16a8dcf0a4051758fa363e83afb0",
+  "scalene|2|0.45|0.3|analytic|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.45|0.3|analytic|H": "b57ee639ea653a585504d43e9aba40e666d2148a1411175dcb8948a8d7e07402",
+  "scalene|2|0.45|0.3|analytic|U": "a55404c4035ef363152c251f401c713cc4042b18250f37978b53f41e99d24cb9",
+  "scalene|2|0.45|0.3|hybrid|E": "0eeb94d64a2a4ff3110dfbf6b797d9600418c7dc1efeb64836e36d08f89e15fb",
+  "scalene|2|0.45|0.3|hybrid|H": "b57ee639ea653a585504d43e9aba40e666d2148a1411175dcb8948a8d7e07402",
+  "scalene|2|0.45|0.3|hybrid|U": "a55404c4035ef363152c251f401c713cc4042b18250f37978b53f41e99d24cb9",
+  "scalene|2|0.45|1.1|analytic|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.45|1.1|analytic|H": "dd48ef7c79ff33b1c0029597d9d9276a08f8b002f0ec5507e7b9bf263fcd95bc",
+  "scalene|2|0.45|1.1|analytic|U": "d52708029f6c1b5aa1bd02153f2451f0bc630e7d0b2a4d992862788b2a33976f",
+  "scalene|2|0.45|1.1|hybrid|E": "6056573679e09082b30f2fa3e6f11336d94a35bf08f4401c151aa050d0691834",
+  "scalene|2|0.45|1.1|hybrid|H": "dd48ef7c79ff33b1c0029597d9d9276a08f8b002f0ec5507e7b9bf263fcd95bc",
+  "scalene|2|0.45|1.1|hybrid|U": "d52708029f6c1b5aa1bd02153f2451f0bc630e7d0b2a4d992862788b2a33976f",
+  "scalene|3|0.25|0.0|analytic|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.25|0.0|analytic|H": "d7687e8c5de1d6e557f59824243e85d44b7759d9a3d8611ac4deac9e19a206c7",
+  "scalene|3|0.25|0.0|analytic|U": "d07edfd2443176c4d38376ef462434e16f348d8a406a198623eac5e22ce00bef",
+  "scalene|3|0.25|0.0|hybrid|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.25|0.0|hybrid|H": "d7687e8c5de1d6e557f59824243e85d44b7759d9a3d8611ac4deac9e19a206c7",
+  "scalene|3|0.25|0.0|hybrid|U": "d07edfd2443176c4d38376ef462434e16f348d8a406a198623eac5e22ce00bef",
+  "scalene|3|0.25|0.3|analytic|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.25|0.3|analytic|H": "eb3df5d7375e8c1f923f7fd6819a05e587bc47fe099bf1f909ffe61ba271ec13",
+  "scalene|3|0.25|0.3|analytic|U": "b8f714fbfe182abb15ccff9a77330df821d4beda24b61c045adb07757072eed0",
+  "scalene|3|0.25|0.3|hybrid|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.25|0.3|hybrid|H": "eb3df5d7375e8c1f923f7fd6819a05e587bc47fe099bf1f909ffe61ba271ec13",
+  "scalene|3|0.25|0.3|hybrid|U": "b8f714fbfe182abb15ccff9a77330df821d4beda24b61c045adb07757072eed0",
+  "scalene|3|0.25|1.1|analytic|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.25|1.1|analytic|H": "c1b59b79aa4e326cf26a3920df82114fa47fc485eb4cbd84329d5b6ea0af29d8",
+  "scalene|3|0.25|1.1|analytic|U": "ef9a95f9f70abfbea462ca11fb473f5dd0d6e173e428304bf5f87f9b0bee2475",
+  "scalene|3|0.25|1.1|hybrid|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.25|1.1|hybrid|H": "c1b59b79aa4e326cf26a3920df82114fa47fc485eb4cbd84329d5b6ea0af29d8",
+  "scalene|3|0.25|1.1|hybrid|U": "ef9a95f9f70abfbea462ca11fb473f5dd0d6e173e428304bf5f87f9b0bee2475",
+  "scalene|3|0.3|0.0|analytic|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.3|0.0|analytic|H": "291eb18f46d027bd57419a443a880e410639fd622bbeb89a203bf5a871e2d077",
+  "scalene|3|0.3|0.0|analytic|U": "7656bd5575e0aee7b696dfaee8d5785ded52866d883df5ca7e888f1e77acc46a",
+  "scalene|3|0.3|0.0|hybrid|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.3|0.0|hybrid|H": "291eb18f46d027bd57419a443a880e410639fd622bbeb89a203bf5a871e2d077",
+  "scalene|3|0.3|0.0|hybrid|U": "7656bd5575e0aee7b696dfaee8d5785ded52866d883df5ca7e888f1e77acc46a",
+  "scalene|3|0.3|0.3|analytic|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.3|0.3|analytic|H": "912834070aab161feed89df8c3fe56483a281bcd8a2719645b0e3d1f6bd56252",
+  "scalene|3|0.3|0.3|analytic|U": "2c7e8c94b52240f87b2603ed8d14716c7f9a9acc0188c91f422096b4cdbc7cae",
+  "scalene|3|0.3|0.3|hybrid|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.3|0.3|hybrid|H": "912834070aab161feed89df8c3fe56483a281bcd8a2719645b0e3d1f6bd56252",
+  "scalene|3|0.3|0.3|hybrid|U": "2c7e8c94b52240f87b2603ed8d14716c7f9a9acc0188c91f422096b4cdbc7cae",
+  "scalene|3|0.3|1.1|analytic|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.3|1.1|analytic|H": "564bd9a5255bfd045ad2743b321a92b3f63ecf49743c0e071127d62b6913c148",
+  "scalene|3|0.3|1.1|analytic|U": "eda4ed504d86f75f650e700ab7ab5e9140d728c2b23358fc763d98c7a7eff64c",
+  "scalene|3|0.3|1.1|hybrid|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.3|1.1|hybrid|H": "564bd9a5255bfd045ad2743b321a92b3f63ecf49743c0e071127d62b6913c148",
+  "scalene|3|0.3|1.1|hybrid|U": "eda4ed504d86f75f650e700ab7ab5e9140d728c2b23358fc763d98c7a7eff64c",
+  "scalene|3|0.45|0.0|analytic|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.45|0.0|analytic|H": "e2376f44ae9464a2c54a884af081e38a5a40207df4a33f0a130336c098f26933",
+  "scalene|3|0.45|0.0|analytic|U": "2862d531124a431e74f797a4982e9888623c3f36fd8a467379c87036aff3ed40",
+  "scalene|3|0.45|0.0|hybrid|E": "dde59c040b419b0e3b6168fb08a48ac62aa4b5b42ff4c802ca8d7d23d451a6c7",
+  "scalene|3|0.45|0.0|hybrid|H": "e2376f44ae9464a2c54a884af081e38a5a40207df4a33f0a130336c098f26933",
+  "scalene|3|0.45|0.0|hybrid|U": "2862d531124a431e74f797a4982e9888623c3f36fd8a467379c87036aff3ed40",
+  "scalene|3|0.45|0.3|analytic|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.45|0.3|analytic|H": "5ac5f2e33636c41a6e06975c4d3b130e8b2331d1d7d97f1b12acb271e0fac9ef",
+  "scalene|3|0.45|0.3|analytic|U": "77ddf51049cade125b21cdf1128e152102da1677327219e8fa1dde5be480c9f2",
+  "scalene|3|0.45|0.3|hybrid|E": "26fb3fa4fd9bb13899134e92934e1d941f7affc38a17baee02477a224a9ab6c7",
+  "scalene|3|0.45|0.3|hybrid|H": "5ac5f2e33636c41a6e06975c4d3b130e8b2331d1d7d97f1b12acb271e0fac9ef",
+  "scalene|3|0.45|0.3|hybrid|U": "77ddf51049cade125b21cdf1128e152102da1677327219e8fa1dde5be480c9f2",
+  "scalene|3|0.45|1.1|analytic|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.45|1.1|analytic|H": "a15457c921f861155b1aacb68da667ab07fa49ca68e51a971d300b5db0b53594",
+  "scalene|3|0.45|1.1|analytic|U": "b8db6bb97b6886741039976f72ba35a4c899b527fe53b4ec7bb42c82b35cb5cf",
+  "scalene|3|0.45|1.1|hybrid|E": "f1a6826dc9a85659b2304e6b0b689f0b1df1c26ef78fbdea41d0b50804103f0c",
+  "scalene|3|0.45|1.1|hybrid|H": "a15457c921f861155b1aacb68da667ab07fa49ca68e51a971d300b5db0b53594",
+  "scalene|3|0.45|1.1|hybrid|U": "b8db6bb97b6886741039976f72ba35a4c899b527fe53b4ec7bb42c82b35cb5cf",
+  "sliver|0|0.25|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.25|0.0|analytic|H": "3baa1b0aff42e16073c529afe1e285d39e85d7d3b1a79328a77e93a27f35439b",
+  "sliver|0|0.25|0.0|analytic|U": "38d01f4807d7659fd2c8f8ce4c13e034edd593b0e30fdea9ba863136714510db",
+  "sliver|0|0.25|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.25|0.0|hybrid|H": "3baa1b0aff42e16073c529afe1e285d39e85d7d3b1a79328a77e93a27f35439b",
+  "sliver|0|0.25|0.0|hybrid|U": "38d01f4807d7659fd2c8f8ce4c13e034edd593b0e30fdea9ba863136714510db",
+  "sliver|0|0.25|0.3|analytic|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.25|0.3|analytic|H": "a9e96d9041fb02fc0ccc706d5a5e91e6781598e6c56a206b632059c5a289eaf6",
+  "sliver|0|0.25|0.3|analytic|U": "ec28c912ddaf95d714ec5076e2fcb2467864b1f8f38383799933c9eae5544ba1",
+  "sliver|0|0.25|0.3|hybrid|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.25|0.3|hybrid|H": "a9e96d9041fb02fc0ccc706d5a5e91e6781598e6c56a206b632059c5a289eaf6",
+  "sliver|0|0.25|0.3|hybrid|U": "ec28c912ddaf95d714ec5076e2fcb2467864b1f8f38383799933c9eae5544ba1",
+  "sliver|0|0.25|1.1|analytic|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.25|1.1|analytic|H": "d76dfa448d0e44d67c2c3a8ff23eaecdc3026dd983256a48c4d01678d72a4f61",
+  "sliver|0|0.25|1.1|analytic|U": "17cfd436aca1a038848a70db79f82defa73489c43faa703b5af451103f70ecd3",
+  "sliver|0|0.25|1.1|hybrid|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.25|1.1|hybrid|H": "d76dfa448d0e44d67c2c3a8ff23eaecdc3026dd983256a48c4d01678d72a4f61",
+  "sliver|0|0.25|1.1|hybrid|U": "17cfd436aca1a038848a70db79f82defa73489c43faa703b5af451103f70ecd3",
+  "sliver|0|0.3|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.3|0.0|analytic|H": "216c6e445b8712ffbd11aafd5d11d97a322fdec8d9b6399d7c892e062b962ba6",
+  "sliver|0|0.3|0.0|analytic|U": "caf60ac12929339d2daa9023d098456f0d07484b41c43e4328c8a001b0e6e5e4",
+  "sliver|0|0.3|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.3|0.0|hybrid|H": "216c6e445b8712ffbd11aafd5d11d97a322fdec8d9b6399d7c892e062b962ba6",
+  "sliver|0|0.3|0.0|hybrid|U": "caf60ac12929339d2daa9023d098456f0d07484b41c43e4328c8a001b0e6e5e4",
+  "sliver|0|0.3|0.3|analytic|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.3|0.3|analytic|H": "265ae92b543e40dc76911dc884b3c2a49d0293171de00908915928ca0196ae23",
+  "sliver|0|0.3|0.3|analytic|U": "32c07365dde67ba455353b3e99383388d876acc2171d7083fbdb67c1a0aac6f2",
+  "sliver|0|0.3|0.3|hybrid|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.3|0.3|hybrid|H": "265ae92b543e40dc76911dc884b3c2a49d0293171de00908915928ca0196ae23",
+  "sliver|0|0.3|0.3|hybrid|U": "32c07365dde67ba455353b3e99383388d876acc2171d7083fbdb67c1a0aac6f2",
+  "sliver|0|0.3|1.1|analytic|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.3|1.1|analytic|H": "f69229d6db058fbe2e8b9dd6a4da4ed641e8eac5cb792db345f705d191c59445",
+  "sliver|0|0.3|1.1|analytic|U": "10bbf5b2d7543a4d180d0485c999e1ab045eb5145d0e9e6ef2373e300a72be7a",
+  "sliver|0|0.3|1.1|hybrid|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.3|1.1|hybrid|H": "f69229d6db058fbe2e8b9dd6a4da4ed641e8eac5cb792db345f705d191c59445",
+  "sliver|0|0.3|1.1|hybrid|U": "10bbf5b2d7543a4d180d0485c999e1ab045eb5145d0e9e6ef2373e300a72be7a",
+  "sliver|0|0.45|0.0|analytic|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.45|0.0|analytic|H": "94ba4ac195a7459aeb3379df190dfc7f53519d0c7d8299b63275192a205c0205",
+  "sliver|0|0.45|0.0|analytic|U": "313210df948f019cc3f47821b221c419183313539fe4d2b9d76d64e16b375238",
+  "sliver|0|0.45|0.0|hybrid|E": "7b6436b0c98f62380866d9432c2af0ee08ce16a171bda6951aecd95ee1307d61",
+  "sliver|0|0.45|0.0|hybrid|H": "94ba4ac195a7459aeb3379df190dfc7f53519d0c7d8299b63275192a205c0205",
+  "sliver|0|0.45|0.0|hybrid|U": "313210df948f019cc3f47821b221c419183313539fe4d2b9d76d64e16b375238",
+  "sliver|0|0.45|0.3|analytic|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.45|0.3|analytic|H": "f99936f5e5f92e54dd3a966df32568c164ba59fd38c073afb08e3e2d4e83058a",
+  "sliver|0|0.45|0.3|analytic|U": "0fc9cc85df13ab002ebe830ce3f536b9edf91a40c76c0c4511ac595b3a2c9528",
+  "sliver|0|0.45|0.3|hybrid|E": "d2542016967ddbb4e32b6cdd7d8354f3e25545bf3d58ebedb6083cf002dcc264",
+  "sliver|0|0.45|0.3|hybrid|H": "f99936f5e5f92e54dd3a966df32568c164ba59fd38c073afb08e3e2d4e83058a",
+  "sliver|0|0.45|0.3|hybrid|U": "0fc9cc85df13ab002ebe830ce3f536b9edf91a40c76c0c4511ac595b3a2c9528",
+  "sliver|0|0.45|1.1|analytic|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.45|1.1|analytic|H": "d8373981ae85889b1a8b67afcc44b5002d679093aed0babc689a4d44be57ef02",
+  "sliver|0|0.45|1.1|analytic|U": "9210ce574d6e746879cf4f5f0d07aa0a92abcf1b09521e250094915a5230ff40",
+  "sliver|0|0.45|1.1|hybrid|E": "674681499820c0ef449b1bdef407b08503f0056ef2f4c1d580966f8900d813ba",
+  "sliver|0|0.45|1.1|hybrid|H": "d8373981ae85889b1a8b67afcc44b5002d679093aed0babc689a4d44be57ef02",
+  "sliver|0|0.45|1.1|hybrid|U": "9210ce574d6e746879cf4f5f0d07aa0a92abcf1b09521e250094915a5230ff40",
+  "sliver|1|0.25|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.25|0.0|analytic|H": "aaed0e3c304da86dd3e8e11e4dc5e6a3d641e5b62aa93162742e4df43002615e",
+  "sliver|1|0.25|0.0|analytic|U": "e191e27cb23aba199b2269748caa67a0b4f76d6c261f40f56f56438ceda2175d",
+  "sliver|1|0.25|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.25|0.0|hybrid|H": "aaed0e3c304da86dd3e8e11e4dc5e6a3d641e5b62aa93162742e4df43002615e",
+  "sliver|1|0.25|0.0|hybrid|U": "e191e27cb23aba199b2269748caa67a0b4f76d6c261f40f56f56438ceda2175d",
+  "sliver|1|0.25|0.3|analytic|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.25|0.3|analytic|H": "682dbb168f6638df8eb29eacfe944fdd9cdad600c5585d873bc0f85a5866f2b5",
+  "sliver|1|0.25|0.3|analytic|U": "4fb97b385e0b8d6254b7e38546ae941aadd30f1b1a3570c5f7e36b5b29c0ab22",
+  "sliver|1|0.25|0.3|hybrid|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.25|0.3|hybrid|H": "682dbb168f6638df8eb29eacfe944fdd9cdad600c5585d873bc0f85a5866f2b5",
+  "sliver|1|0.25|0.3|hybrid|U": "4fb97b385e0b8d6254b7e38546ae941aadd30f1b1a3570c5f7e36b5b29c0ab22",
+  "sliver|1|0.25|1.1|analytic|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.25|1.1|analytic|H": "21599a5519987cabf3e7f8ad49c6453a193214b7585d2a2b2562be12fa5b9bd8",
+  "sliver|1|0.25|1.1|analytic|U": "0b83c356a98a488df3e72a6b2baa9422b530206fd10ddd5ce38342d22eac57de",
+  "sliver|1|0.25|1.1|hybrid|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.25|1.1|hybrid|H": "21599a5519987cabf3e7f8ad49c6453a193214b7585d2a2b2562be12fa5b9bd8",
+  "sliver|1|0.25|1.1|hybrid|U": "0b83c356a98a488df3e72a6b2baa9422b530206fd10ddd5ce38342d22eac57de",
+  "sliver|1|0.3|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.3|0.0|analytic|H": "e42e08fe0e0263cbdb8895d604b0d3e4e5acffba05ffbbf1ca88658472c2ccbd",
+  "sliver|1|0.3|0.0|analytic|U": "1a64cf49943b439f10473cf3a751950fdbc33a4bf6236d0cb1598c2ee325620d",
+  "sliver|1|0.3|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.3|0.0|hybrid|H": "e42e08fe0e0263cbdb8895d604b0d3e4e5acffba05ffbbf1ca88658472c2ccbd",
+  "sliver|1|0.3|0.0|hybrid|U": "1a64cf49943b439f10473cf3a751950fdbc33a4bf6236d0cb1598c2ee325620d",
+  "sliver|1|0.3|0.3|analytic|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.3|0.3|analytic|H": "a1c92fe6cf5340d03d577c35358d72f50e8138df47193412aff5d057a8365e35",
+  "sliver|1|0.3|0.3|analytic|U": "1e0153602a19fa73f216162d16322a758aa55e084a5556f9df9b2833504618d9",
+  "sliver|1|0.3|0.3|hybrid|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.3|0.3|hybrid|H": "a1c92fe6cf5340d03d577c35358d72f50e8138df47193412aff5d057a8365e35",
+  "sliver|1|0.3|0.3|hybrid|U": "1e0153602a19fa73f216162d16322a758aa55e084a5556f9df9b2833504618d9",
+  "sliver|1|0.3|1.1|analytic|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.3|1.1|analytic|H": "6bbc1c68e49ffb268652953b2919d0b59898f542c5d8d9d26121989f034d4416",
+  "sliver|1|0.3|1.1|analytic|U": "5d8dc07f4dc9cd86525c2b60cafadb406e29114756896e9af0604a56480b0482",
+  "sliver|1|0.3|1.1|hybrid|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.3|1.1|hybrid|H": "6bbc1c68e49ffb268652953b2919d0b59898f542c5d8d9d26121989f034d4416",
+  "sliver|1|0.3|1.1|hybrid|U": "5d8dc07f4dc9cd86525c2b60cafadb406e29114756896e9af0604a56480b0482",
+  "sliver|1|0.45|0.0|analytic|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.45|0.0|analytic|H": "6672d74daf9fbb3a4f4b182cf9928f18c88e0b449d636ded6151c76d08cd34cd",
+  "sliver|1|0.45|0.0|analytic|U": "87b7aaff3ee4b63dce4f10743edffee4bd2ba2179b045be20b89cae0c424b51e",
+  "sliver|1|0.45|0.0|hybrid|E": "3dc463a76fc170607c07b104c3cb531362ce7d6e10c1a34e0c0f370aeae08ce8",
+  "sliver|1|0.45|0.0|hybrid|H": "6672d74daf9fbb3a4f4b182cf9928f18c88e0b449d636ded6151c76d08cd34cd",
+  "sliver|1|0.45|0.0|hybrid|U": "87b7aaff3ee4b63dce4f10743edffee4bd2ba2179b045be20b89cae0c424b51e",
+  "sliver|1|0.45|0.3|analytic|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.45|0.3|analytic|H": "d9d1d8c05ffdf0c2f5b5e4c2a57950ebf9bb8fd8de60dc35c068064810182fa0",
+  "sliver|1|0.45|0.3|analytic|U": "f7f1ae977ada2f1a8e1cd971253b088d72d88d79f13a61536b9b14c776ad126e",
+  "sliver|1|0.45|0.3|hybrid|E": "03d96562aa33ee1c096203a42d61f54de04c3ea26536a0d164a6b0fecfaeabd2",
+  "sliver|1|0.45|0.3|hybrid|H": "d9d1d8c05ffdf0c2f5b5e4c2a57950ebf9bb8fd8de60dc35c068064810182fa0",
+  "sliver|1|0.45|0.3|hybrid|U": "f7f1ae977ada2f1a8e1cd971253b088d72d88d79f13a61536b9b14c776ad126e",
+  "sliver|1|0.45|1.1|analytic|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.45|1.1|analytic|H": "93299c2dca82379d81aad515e64b6b5f753f3e5a370e2010691eaa1cbe5b9773",
+  "sliver|1|0.45|1.1|analytic|U": "75cbae906c26498247ec49ef081526bcdf64299500ff030606493b2357344945",
+  "sliver|1|0.45|1.1|hybrid|E": "1686265a18a724bd7af56839802f3f5ad0635b55db26d40baaa3781993de4011",
+  "sliver|1|0.45|1.1|hybrid|H": "93299c2dca82379d81aad515e64b6b5f753f3e5a370e2010691eaa1cbe5b9773",
+  "sliver|1|0.45|1.1|hybrid|U": "75cbae906c26498247ec49ef081526bcdf64299500ff030606493b2357344945",
+  "sliver|2|0.25|0.0|analytic|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.25|0.0|analytic|H": "65b143b250d029abb8b6498f804646cda0ce9eaee2e960de9adf5b7b3e9d9b5e",
+  "sliver|2|0.25|0.0|analytic|U": "04fea319dab01885fd7ec5a0c532e0e0eb0e6661e8dc53b34322ee8645810d30",
+  "sliver|2|0.25|0.0|hybrid|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.25|0.0|hybrid|H": "65b143b250d029abb8b6498f804646cda0ce9eaee2e960de9adf5b7b3e9d9b5e",
+  "sliver|2|0.25|0.0|hybrid|U": "04fea319dab01885fd7ec5a0c532e0e0eb0e6661e8dc53b34322ee8645810d30",
+  "sliver|2|0.25|0.3|analytic|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.25|0.3|analytic|H": "3798d64a3b8385c4420d71e47cb3b8eeb6e02682ae5070966c781d87252006a6",
+  "sliver|2|0.25|0.3|analytic|U": "79895f8b44ace36cec557fd03ffcb273ae87e62557625cbdc6bb91f295879f0a",
+  "sliver|2|0.25|0.3|hybrid|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.25|0.3|hybrid|H": "3798d64a3b8385c4420d71e47cb3b8eeb6e02682ae5070966c781d87252006a6",
+  "sliver|2|0.25|0.3|hybrid|U": "79895f8b44ace36cec557fd03ffcb273ae87e62557625cbdc6bb91f295879f0a",
+  "sliver|2|0.25|1.1|analytic|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.25|1.1|analytic|H": "dc4439730df40b5282936d5e820330cd20ed50a3514b04c1b2504954ab065ab5",
+  "sliver|2|0.25|1.1|analytic|U": "20e1c6cc7220ca0ba11e4b234f68778f974adbc5d01f1d2a0d9c0f7b9646b442",
+  "sliver|2|0.25|1.1|hybrid|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.25|1.1|hybrid|H": "dc4439730df40b5282936d5e820330cd20ed50a3514b04c1b2504954ab065ab5",
+  "sliver|2|0.25|1.1|hybrid|U": "20e1c6cc7220ca0ba11e4b234f68778f974adbc5d01f1d2a0d9c0f7b9646b442",
+  "sliver|2|0.3|0.0|analytic|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.3|0.0|analytic|H": "c225b295c09e0502ddc5d5a28eb3e5e8609614cca6b2289f4172c294e0e0154a",
+  "sliver|2|0.3|0.0|analytic|U": "b84652e9a4d3766dce727840d94ee41f0d146f8fa135fa1d6cdd1c1e5f199963",
+  "sliver|2|0.3|0.0|hybrid|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.3|0.0|hybrid|H": "c225b295c09e0502ddc5d5a28eb3e5e8609614cca6b2289f4172c294e0e0154a",
+  "sliver|2|0.3|0.0|hybrid|U": "b84652e9a4d3766dce727840d94ee41f0d146f8fa135fa1d6cdd1c1e5f199963",
+  "sliver|2|0.3|0.3|analytic|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.3|0.3|analytic|H": "bbf14a0395a7917798ff444a9fe9ddf74dbfa7876b3b4b6b785171ede56c413b",
+  "sliver|2|0.3|0.3|analytic|U": "eb7f431625853447a66515bb0a065aac9323b5737c3a40afe22d25979bd06193",
+  "sliver|2|0.3|0.3|hybrid|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.3|0.3|hybrid|H": "bbf14a0395a7917798ff444a9fe9ddf74dbfa7876b3b4b6b785171ede56c413b",
+  "sliver|2|0.3|0.3|hybrid|U": "eb7f431625853447a66515bb0a065aac9323b5737c3a40afe22d25979bd06193",
+  "sliver|2|0.3|1.1|analytic|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.3|1.1|analytic|H": "a5d7469cc6927f220e9a1a04359eea0af72c84a9dba4de171a4489686cb25f87",
+  "sliver|2|0.3|1.1|analytic|U": "61034ff87bf83e9332d94de455522d030646ca4283e6570dd1fc315552228819",
+  "sliver|2|0.3|1.1|hybrid|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.3|1.1|hybrid|H": "a5d7469cc6927f220e9a1a04359eea0af72c84a9dba4de171a4489686cb25f87",
+  "sliver|2|0.3|1.1|hybrid|U": "61034ff87bf83e9332d94de455522d030646ca4283e6570dd1fc315552228819",
+  "sliver|2|0.45|0.0|analytic|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.45|0.0|analytic|H": "b27a64b0c671c11e0f4972e5431cf566c52282e6326d45ae24479d7b1e9df40e",
+  "sliver|2|0.45|0.0|analytic|U": "ff83655f09f41fcefd414f43c0dcf1489c9b2f8a143c8f545f0d48cf9b27e5d7",
+  "sliver|2|0.45|0.0|hybrid|E": "acb30d6758da38d390d619e24b291f12c02d85988e88b166c20ddaea570c14ae",
+  "sliver|2|0.45|0.0|hybrid|H": "b27a64b0c671c11e0f4972e5431cf566c52282e6326d45ae24479d7b1e9df40e",
+  "sliver|2|0.45|0.0|hybrid|U": "ff83655f09f41fcefd414f43c0dcf1489c9b2f8a143c8f545f0d48cf9b27e5d7",
+  "sliver|2|0.45|0.3|analytic|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.45|0.3|analytic|H": "f343027512ffa6d57b7c8d00b04d3c201fffe056e4657e90a121b694dd3348ac",
+  "sliver|2|0.45|0.3|analytic|U": "48a06830945fbc72747fb5b2baf6cded9c0113987a0dde7c07becadcb77e9dd0",
+  "sliver|2|0.45|0.3|hybrid|E": "51415eefd0f5d473adc45f7013e146f7dd9422882c8a8b92783617b09752a077",
+  "sliver|2|0.45|0.3|hybrid|H": "f343027512ffa6d57b7c8d00b04d3c201fffe056e4657e90a121b694dd3348ac",
+  "sliver|2|0.45|0.3|hybrid|U": "48a06830945fbc72747fb5b2baf6cded9c0113987a0dde7c07becadcb77e9dd0",
+  "sliver|2|0.45|1.1|analytic|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.45|1.1|analytic|H": "0f84a8e468c9df11353fbc61697074ce504e7ad704e6aa77cf0694fa0953f17e",
+  "sliver|2|0.45|1.1|analytic|U": "f43821384ba874d1b327487101b0e68064e39d822e1bde5760f43a27f737e94a",
+  "sliver|2|0.45|1.1|hybrid|E": "5614ce3de521967862ee2e5bd5400f877e56270e1d87cb44e62b05ec77fc8556",
+  "sliver|2|0.45|1.1|hybrid|H": "0f84a8e468c9df11353fbc61697074ce504e7ad704e6aa77cf0694fa0953f17e",
+  "sliver|2|0.45|1.1|hybrid|U": "f43821384ba874d1b327487101b0e68064e39d822e1bde5760f43a27f737e94a",
+  "sliver|3|0.25|0.0|analytic|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.25|0.0|analytic|H": "0402968e08691402800b3483ef372a24215f5e718478517e361dca3c134eb84b",
+  "sliver|3|0.25|0.0|analytic|U": "e6386f0dd44211c91d7f6103b5f6899001603f3fab19875f9597351270561209",
+  "sliver|3|0.25|0.0|hybrid|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.25|0.0|hybrid|H": "0402968e08691402800b3483ef372a24215f5e718478517e361dca3c134eb84b",
+  "sliver|3|0.25|0.0|hybrid|U": "e6386f0dd44211c91d7f6103b5f6899001603f3fab19875f9597351270561209",
+  "sliver|3|0.25|0.3|analytic|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.25|0.3|analytic|H": "5995998e9b0fb7230756df40de0c34ddff8e33bafa06da41aa905dcd177425f0",
+  "sliver|3|0.25|0.3|analytic|U": "050ebb60f96d191b926e97780d29ae8a3d6c83ee3f91b152f76ef9a6257ffd8e",
+  "sliver|3|0.25|0.3|hybrid|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.25|0.3|hybrid|H": "5995998e9b0fb7230756df40de0c34ddff8e33bafa06da41aa905dcd177425f0",
+  "sliver|3|0.25|0.3|hybrid|U": "050ebb60f96d191b926e97780d29ae8a3d6c83ee3f91b152f76ef9a6257ffd8e",
+  "sliver|3|0.25|1.1|analytic|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.25|1.1|analytic|H": "77408d624244bfce472fd17b3f85a94f26ee2362c2041f4737d25bba5fde5a64",
+  "sliver|3|0.25|1.1|analytic|U": "3aa72db045af35cfacc56dac1cbbfc064ebeaff33d88f32dda9938983f8ec146",
+  "sliver|3|0.25|1.1|hybrid|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.25|1.1|hybrid|H": "77408d624244bfce472fd17b3f85a94f26ee2362c2041f4737d25bba5fde5a64",
+  "sliver|3|0.25|1.1|hybrid|U": "3aa72db045af35cfacc56dac1cbbfc064ebeaff33d88f32dda9938983f8ec146",
+  "sliver|3|0.3|0.0|analytic|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.3|0.0|analytic|H": "a8804e30189dd564b425cd91286fb5fe274d2c962e8310e5bed7c81fbd3c274c",
+  "sliver|3|0.3|0.0|analytic|U": "afb1eb12f4f143a2b80b88d6346878fe2c491f0d5f6fbe004385b05395e6cfd3",
+  "sliver|3|0.3|0.0|hybrid|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.3|0.0|hybrid|H": "a8804e30189dd564b425cd91286fb5fe274d2c962e8310e5bed7c81fbd3c274c",
+  "sliver|3|0.3|0.0|hybrid|U": "afb1eb12f4f143a2b80b88d6346878fe2c491f0d5f6fbe004385b05395e6cfd3",
+  "sliver|3|0.3|0.3|analytic|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.3|0.3|analytic|H": "1b52682e470e7bfb2fc522117a45d4a0efdfecc404590dfa75204b0000da1960",
+  "sliver|3|0.3|0.3|analytic|U": "aee0827d4ca7b755bcbda99b5aba238d25ad6a94deb669c208acbb055cb6cbf6",
+  "sliver|3|0.3|0.3|hybrid|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.3|0.3|hybrid|H": "1b52682e470e7bfb2fc522117a45d4a0efdfecc404590dfa75204b0000da1960",
+  "sliver|3|0.3|0.3|hybrid|U": "aee0827d4ca7b755bcbda99b5aba238d25ad6a94deb669c208acbb055cb6cbf6",
+  "sliver|3|0.3|1.1|analytic|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.3|1.1|analytic|H": "e472bd4018c35c1935c3d68eee20b80d1d3064f6b2a07db709c41bdb58c0964c",
+  "sliver|3|0.3|1.1|analytic|U": "5f86179f159210ab5bc5536419276eed5153720a9728e4238f09ab6445f9c582",
+  "sliver|3|0.3|1.1|hybrid|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.3|1.1|hybrid|H": "e472bd4018c35c1935c3d68eee20b80d1d3064f6b2a07db709c41bdb58c0964c",
+  "sliver|3|0.3|1.1|hybrid|U": "5f86179f159210ab5bc5536419276eed5153720a9728e4238f09ab6445f9c582",
+  "sliver|3|0.45|0.0|analytic|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.45|0.0|analytic|H": "9a01e02d08305b1c837b75d93735c57e077bb798e315c6efbaa52d5f25978444",
+  "sliver|3|0.45|0.0|analytic|U": "bdfbd63ae6a80c227506f8d36060df47924428525de53918f989f4e5a9abb414",
+  "sliver|3|0.45|0.0|hybrid|E": "5f3db309dd8f309ec5f1a5bf1748c6d9de636d40bd5b677df7e88f740deb9c28",
+  "sliver|3|0.45|0.0|hybrid|H": "9a01e02d08305b1c837b75d93735c57e077bb798e315c6efbaa52d5f25978444",
+  "sliver|3|0.45|0.0|hybrid|U": "bdfbd63ae6a80c227506f8d36060df47924428525de53918f989f4e5a9abb414",
+  "sliver|3|0.45|0.3|analytic|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.45|0.3|analytic|H": "f18329b7117186b9b565132dec997dc83e0ebe0bd2415db0b9ddff22decdcf33",
+  "sliver|3|0.45|0.3|analytic|U": "5a7f1aa2ba25cf6f6554ce5dbaf38c35fa661ae2f5fd352c09a780b4f4f0fa5a",
+  "sliver|3|0.45|0.3|hybrid|E": "d9c880e929f41c7acf20421a86442ea06c410d5621b940b6c49ca607a68c4ca1",
+  "sliver|3|0.45|0.3|hybrid|H": "f18329b7117186b9b565132dec997dc83e0ebe0bd2415db0b9ddff22decdcf33",
+  "sliver|3|0.45|0.3|hybrid|U": "5a7f1aa2ba25cf6f6554ce5dbaf38c35fa661ae2f5fd352c09a780b4f4f0fa5a",
+  "sliver|3|0.45|1.1|analytic|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.45|1.1|analytic|H": "fb35d418902d29c1eeec11590e40dff2286e4fe0bfd665dc749dbe1f8f292357",
+  "sliver|3|0.45|1.1|analytic|U": "200fb02c2f0490db38e24ad1d7544641c68f9d7e654a767c7a517c2e88362e25",
+  "sliver|3|0.45|1.1|hybrid|E": "a4fdcf73e963df8538dbd2bf628e69ff21d68190076245d1e9cd6c176ac8938a",
+  "sliver|3|0.45|1.1|hybrid|H": "fb35d418902d29c1eeec11590e40dff2286e4fe0bfd665dc749dbe1f8f292357",
+  "sliver|3|0.45|1.1|hybrid|U": "200fb02c2f0490db38e24ad1d7544641c68f9d7e654a767c7a517c2e88362e25"
+ },
+ "note": "sha256 of float64 bytes; see verify_baseline_bitwise.py",
+ "shapes": {
+  "equilateral|0|0.25|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.25|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.25|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.3|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.3|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "equilateral|0|0.45|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "equilateral|0|0.45|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.25|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.25|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.3|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.3|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "equilateral|1|0.45|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "equilateral|1|0.45|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.25|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.25|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.3|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.3|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "equilateral|2|0.45|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "equilateral|2|0.45|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.25|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.25|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.3|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.3|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "equilateral|3|0.45|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "equilateral|3|0.45|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.25|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.25|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.25|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.25|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.3|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.3|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.3|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|0|0.45|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "scalene|0|0.45|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "scalene|0|0.45|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.25|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.25|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.3|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.3|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "scalene|1|0.45|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "scalene|1|0.45|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.25|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.25|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.25|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.25|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.3|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.3|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.3|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|2|0.45|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "scalene|2|0.45|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "scalene|2|0.45|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.25|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.25|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.25|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.25|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.3|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.3|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.3|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "scalene|3|0.45|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "scalene|3|0.45|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "scalene|3|0.45|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.25|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.25|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.25|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.25|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.3|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.3|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.3|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.0|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|0.0|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.0|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.0|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|0.0|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.0|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.3|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|0.3|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.3|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.3|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|0.3|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|0.3|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|1.1|analytic|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|1.1|analytic|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|1.1|analytic|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|0|0.45|1.1|hybrid|E": [
+   40,
+   1
+  ],
+  "sliver|0|0.45|1.1|hybrid|H": [
+   40,
+   1,
+   3,
+   3,
+   3
+  ],
+  "sliver|0|0.45|1.1|hybrid|U": [
+   40,
+   1,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.25|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.25|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.3|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.3|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.0|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|0.0|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.0|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.0|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|0.0|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.0|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.3|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|0.3|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.3|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.3|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|0.3|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|0.3|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|1.1|analytic|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|1.1|analytic|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|1.1|analytic|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|1.1|hybrid|E": [
+   40,
+   3
+  ],
+  "sliver|1|0.45|1.1|hybrid|H": [
+   40,
+   3,
+   3,
+   3,
+   3
+  ],
+  "sliver|1|0.45|1.1|hybrid|U": [
+   40,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.25|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.25|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.25|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.25|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.3|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.3|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.3|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.0|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|0.0|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.0|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.0|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|0.0|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.0|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.3|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|0.3|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.3|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.3|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|0.3|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|0.3|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|1.1|analytic|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|1.1|analytic|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|1.1|analytic|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|2|0.45|1.1|hybrid|E": [
+   40,
+   6
+  ],
+  "sliver|2|0.45|1.1|hybrid|H": [
+   40,
+   6,
+   3,
+   3,
+   3
+  ],
+  "sliver|2|0.45|1.1|hybrid|U": [
+   40,
+   6,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.25|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.25|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.25|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.25|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.3|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.3|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.3|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.0|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|0.0|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.0|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.0|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|0.0|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.0|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.3|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|0.3|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.3|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.3|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|0.3|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|0.3|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|1.1|analytic|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|1.1|analytic|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|1.1|analytic|U": [
+   40,
+   10,
+   3,
+   3
+  ],
+  "sliver|3|0.45|1.1|hybrid|E": [
+   40,
+   10
+  ],
+  "sliver|3|0.45|1.1|hybrid|H": [
+   40,
+   10,
+   3,
+   3,
+   3
+  ],
+  "sliver|3|0.45|1.1|hybrid|U": [
+   40,
+   10,
+   3,
+   3
+  ]
+ }
+}

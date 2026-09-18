@@ -257,19 +257,29 @@ class MomentTable:
             tab = edge_table(ua, ub, rho2, spec)
             # precompute powers
             nzdp = dp != 0.0
-            def _dp_times(pw: int, col: np.ndarray) -> np.ndarray:
-                """dp**pw * col, with 0 * inf -> 0 (the dp -> 0 limit of an
-                edge whose line passes through the observer's foot)."""
-                out = np.zeros(N)
+
+            def _term(coeff: np.ndarray, col: np.ndarray, pw: int) -> np.ndarray:
+                """``coeff * col``, where ``coeff`` already carries ``dp**pw``.
+
+                Where ``dp == 0`` and ``pw > 0`` the coefficient is zero while
+                ``col`` may be ``+inf`` (a divergent edge principal value at
+                ``rho = 0``), so the product is forced to its ``dp -> 0`` limit
+                of 0 instead of evaluating ``0 * inf = nan``.
+
+                The grouping is deliberately ``(comb * dp**pw * c^.. * s^..) *
+                P`` -- the form used before the force element existed.  Keep it:
+                regrouping the product moves ``U``/``H``/``E`` by ~1e-16, which
+                is harmless numerically but breaks the bitwise baseline that
+                ``verify_baseline_bitwise.py`` pins."""
                 if pw == 0:
-                    out[:] = col
-                else:
-                    out[nzdp] = dp[nzdp] ** pw * col[nzdp]
+                    return coeff * col
+                out = np.zeros(N)
+                out[nzdp] = coeff[nzdp] * col[nzdp]
                 return out
 
             for m, kmax in edge_deg.items():
                 P = tab[m]                                   # (N, kmax+1)
-                BD[m] = BD.get(m, 0.0) + _dp_times(1, P[:, 0])
+                BD[m] = BD.get(m, 0.0) + _term(dp, P[:, 0], 1)
                 lo = edge_min.get(m, 0)
                 for a in range(kmax + 1):
                     for b in range(kmax + 1 - a):
@@ -278,10 +288,12 @@ class MomentTable:
                         val = np.zeros(N)
                         for i in range(a + 1):
                             for j in range(b + 1):
+                                pw = a + b - i - j
                                 coeff = (comb(a, i) * comb(b, j)
+                                         * dp ** pw
                                          * c1 ** (a - i) * s1 ** i
                                          * c2 ** (b - j) * s2 ** j)
-                                val += coeff * _dp_times(a + b - i - j, P[:, i + j])
+                                val += _term(coeff, P[:, i + j], pw)
                         BN1[(a, b, m)] = BN1.get((a, b, m), 0.0) + c1 * val
                         BN2[(a, b, m)] = BN2.get((a, b, m), 0.0) + c2 * val
         self._BN1, self._BN2, self._BD = BN1, BN2, BD
@@ -459,18 +471,32 @@ def weighted_tables(frame: Frame, obs, eps: float, order: int, want,
     identity_residual = 0.0
     if np.any(near):
         need = kernel_degrees(order, want)
-        # the floor exists only where h_eps is actually zero
-        floor = h0_floor(need) if (allow and h0[near].any()) else None
-        tab = MomentTable(frame, obs[near], eps, need, check_identity=check_identity,
-                          floor=floor)
-        coeffs = shape_coefficients(frame, order, tab.X)
-        Wn = weighted_from_table(tab, coeffs, need0)
-        for n in W:
-            W[n][near] = Wn[n]
-        z[near] = tab.z
-        X[near] = tab.X
-        if check_identity:
-            identity_residual = getattr(tab, "identity_residual", 0.0)
+        # A FLOORED table leaves its sub-floor slots NaN, which is correct only
+        # for on-plane rows -- `lift` masks them there because z is exactly 0.
+        # An off-plane row in the same table would multiply that NaN by a
+        # nonzero z^c and silently return NaN, so the two regimes get SEPARATE
+        # tables.  A batch that is all-on-plane or all-off-plane still builds
+        # exactly one, as before.
+        h0_near = h0 & near
+        if allow and h0_near.any():
+            groups = [(h0_near, h0_floor(need))]
+            rest = near & ~h0_near
+            if rest.any():
+                groups.append((rest, None))
+        else:
+            groups = [(near, None)]
+        for sel, fl in groups:
+            tab = MomentTable(frame, obs[sel], eps, need,
+                              check_identity=check_identity, floor=fl)
+            coeffs = shape_coefficients(frame, order, tab.X)
+            Wn = weighted_from_table(tab, coeffs, need0)
+            for n in W:
+                W[n][sel] = Wn[n]
+            z[sel] = tab.z
+            X[sel] = tab.X
+            if check_identity:
+                identity_residual = max(
+                    identity_residual, getattr(tab, "identity_residual", 0.0))
     if np.any(~near):
         far = ~near
         Dfar = np.sqrt(np.sum((obs[far] - frame.centroid) ** 2, axis=1) + float(eps) ** 2)

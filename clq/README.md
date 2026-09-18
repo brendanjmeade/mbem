@@ -121,6 +121,7 @@ Figures are written to the clq root as `.png` and `.pdf`.
 | `verify_moments.py` | full quadratic-slip moment table vs 200x200 Gauss; two-route identity |
 | `verify_order0_parity.py` | constant slip == the `msd` (post-fix) and `moss` scalar oracles at nu = 1/4 and 0.3 to 1e-12; pre-fix form rejected |
 | `verify_regressions.py` | review regressions: extreme-scale edge primitives, orders 5-6 vs quadrature, eps = 0 guard on every path, translation invariance, eps >> L crossover |
+| `verify_baseline_bitwise.py` | `U`/`H`/`E` bitwise against 648 byte hashes from the pre-force-element tree (72c2840) -- the only gate that sees a shared-machinery refactor moving every `want` equally |
 | `verify_nodal_vs_quadrature.py` | P0/P1/P2 nodal tensors vs quadrature, off- and on-plane |
 | `verify_subdivision.py` | P1/P2 vs the sum of N^2 constant-slip sub-triangles (independent oracle) |
 | `verify_identities.py` | partition of unity, P1 in P2, relabelling, orientation, rigid covariance, scaling |

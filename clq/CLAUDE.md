@@ -98,12 +98,17 @@ path; do not import those packages any other way.
   midpoint of an axis-aligned triangle.
 * `S` (force -> stress) reuses the very same `G1` block as `U`; keep that
   expression and the in-place `G1 *= C1` byte-identical so `U` stays bitwise
-  unchanged (`verify_regressions.py` gates that `want=("U",)` and
-  `("U","S")` agree bitwise -- note this is want-INDEPENDENCE, not
-  old-vs-new: the 2026-09-17 force-element commit does move `U` by ~1e-16
-  relative, from regrouping `dp ** pw` into `_dp_times` in `moments.py`, and
-  no gate covers that), and note `("S",)` closes to
-  exactly the degrees of `("U",)`.
+  unchanged, and note `("S",)` closes to exactly the degrees of `("U",)`.
+  TWO gates, which check different things: `verify_regressions.py` gates
+  want-INDEPENDENCE (`want=("U",)` vs `("U","S")` inside the current code),
+  and `verify_baseline_bitwise.py` gates OLD-VS-NEW, pinning `U`/`H`/`E`
+  against 648 byte hashes taken from the pre-force-element tree (72c2840).
+  Only the second can see a refactor of the shared moment machinery that
+  moves both `want` variants equally -- which has already happened once:
+  regrouping `dp ** pw` out of `coeff` in `moments.py` moved 40 of 48 arrays
+  by up to 1.9e-15 and nothing caught it.  Keep the factor grouping in
+  `MomentTable.__init__` as it is; if you must change the slip kernels
+  deliberately, regenerate with `--regenerate` and say so in the commit.
 * When adding a kernel or a code path, add a `verify/` script that gates it
   against quadrature or an identity and prints PASS/FAIL.
 * Figures follow the house matplotlib style (`examples/_paper_style.py`, the

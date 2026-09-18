@@ -146,6 +146,8 @@ comparand is an empirical question, not a definitional one.
 | file | what |
 |---|---|
 | `assembly.py` | numba dense assemblers (`traction_matrix` = `B`, `displacement_matrix` = `G`, `stress_matrix`, `apply_displacement`, `eps_bias_operator`) built on `msd`'s frozen pair kernels. Fills `[source, field]` C-contiguous and returns `.T`, so the matrix is **Fortran-ordered** and `lu_factor(overwrite_a=True)` factors in place. |
+| `assembly_ho.py` | the same influence matrices for a **discontinuous P0/P1/P2 nodal** force density, built on `clq.influence` rather than `msd`'s numba constant-density kernels. Element `e` owns unknowns `3*K*e + 3*k + c` with `K = 1, 3, 6`, so there is no connectivity; `order=0` reproduces `assembly.py` entrywise. Pure numpy and ~50× slower — and because P1/P2 triple/sextuple the unknowns on the same mesh, error must be read against UNKNOWN COUNT, not against `h`. |
+| `ho_convergence.py` | the P0/P1/P2 **rows** (R1 + R3 for a nodal density, collocated at shrunk nodes) and the convergence **study** built on them: L2's box, exact solution, ε convention, metric and edge exclusion, swept over order and mesh. A study, not a gate. Answer: higher order does **not** repair the rate, and at matched unknown count it is 1.3–1.5× *worse* than P0. |
 | `model.py` | `Patch` (orientation), `ForceElementModel` (rows, assembly, solve, evaluation), `fault_source`. |
 | `geometry.py` | rebuilds and caches the `topo_inclusion` meshes from the original builder. |
 | `topo_inclusion.py` | the trial: two solves (`a = 0.1` and `a = 1`) sharing one traction block, compared against the cached matching-BC fields. |
@@ -172,13 +174,15 @@ The gates, in order of what they pin:
 | `verify_l1_zero_contrast.py` | α = 1 is exactly inert: R2 rows bitwise identity, densities bitwise zero, and the solve reduces to the homogeneous box |
 | `verify_l2_head_to_head.py` | accuracy against `msd`'s direct BIE on the same box and the same exact solution |
 | `verify_l3_eshelby.py` | R2's `(1+α)/2` and `(1−α)` structure against Eshelby's closed form, both load cases, soft **and** stiff |
+| `verify_ho_assembly.py` | `assembly_ho.py`: the order-0 reduction to `assembly.py`, partition of unity for P1/P2, an independent Gauss rule and kernel transcription entrywise per node, `clq`'s reciprocity identity read off the assembled matrix, and the assembly timings (`--quick` drops the N_tri = 2048 row, which is most of its ~6 min) |
 
 ## Status
 
-`verify/run_all.py`: **3 of 4 gates pass.**
+`verify/run_all.py`: **4 of 5 gates pass.**
 
-L0 (operator conventions and self terms), L1 (zero contrast is exactly inert)
-and L3 (Eshelby, soft and stiff) pass. **L2 — the head-to-head against `msd`'s
+L0 (operator conventions and self terms), L1 (zero contrast is exactly inert),
+L3 (Eshelby, soft and stiff) and `ho_assembly` (the P0/P1/P2 assembler) pass.
+**L2 — the head-to-head against `msd`'s
 direct BIE — fails**, and that failure is the main result: the force element
 converges at O(h^0.32) on free-traction rows over a polyhedron against the
 direct BIE's O(h^0.90), so its error ratio grows under refinement rather than

@@ -1,4 +1,4 @@
-# Closed-form mollified dislocation kernels for constant, linear and quadratic slip on a flat triangle
+# Closed-form mollified dislocation and force kernels for constant, linear and quadratic nodal density on a flat triangle
 
 This note states the closed-form results implemented in `clq` in the notation
 of the manuscript appendix *Closed-form mollified DD-triangle integration*
@@ -41,6 +41,26 @@ direction $j$,
 $$
 U_{ij} = -\Big[\mu\, n_m G^1_{ijm} + \lambda\, n_j\, G^1_{imm} + \mu\, n_m G^1_{imj}\Big]. \tag{1.1}
 $$
+
+**Force (single-layer) source.**  The same $G^\varepsilon$ is, by construction,
+the displacement of a blob-smeared point force, so a force per unit area
+$\mathbf f(\mathbf y)$ distributed over $\mathcal T$ gives
+
+$$
+u_i(\mathbf x)=\int_{\mathcal T}G^\varepsilon_{ij}(\mathbf x-\mathbf y)\,f_j(\mathbf y)\,dS,
+\qquad
+\sigma_{ij}(\mathbf x)=\int_{\mathcal T}C_{ijab}\,\partial_{x_b}G^\varepsilon_{ac}(\mathbf x-\mathbf y)\,f_c(\mathbf y)\,dS .
+\tag{1.2}
+$$
+
+Equilibrium follows from $\mathcal L G^\varepsilon=-\mathbf I\phi_\varepsilon$ as
+$\partial_j\sigma_{ij}+(\phi_\varepsilon*f)_i=0$, i.e. **$\operatorname{div}\sigma+\mathbf f=0$**
+in the $\varepsilon\to0$ sense, so $\oint_S\sigma\hat{\mathbf n}\,dS=-\int_{\mathcal T}\mathbf f\,dS$
+for any closed $S$ enclosing the element (`verify_force_jump.py`).  Unlike the
+dislocation kernels, the force element has **no $\hat{\mathbf n}$ dependence at
+all**: reversing the vertex order leaves (1.2) unchanged.  (Beware: the
+body-force drafts in `moss-org/body_forces_bem` write $\partial_i\sigma_{ij}=f_i$,
+the opposite sign convention.)
 
 The stress read from Hooke's law on $\nabla\mathbf u$ is the **total** stress
 of the mollified dislocation (section 6); its kernel is
@@ -105,6 +125,13 @@ H^{(k)}_{mn,j}(\mathbf x)=\int_{\mathcal T}N_k\,K_{mn,j}\,dS,\qquad
 E^{(k)}(\mathbf x)=\int_{\mathcal T}N_k\,\phi_\varepsilon\,dS ,
 $$
 
+and, for a force source (1.2),
+
+$$
+G^{(k)}_{ij}(\mathbf x)=\int_{\mathcal T}N_k\,G^\varepsilon_{ij}\,dS,\qquad
+S^{(k)}_{ij,c}(\mathbf x)=\int_{\mathcal T}N_k\,C_{ijab}\,\partial_b G^\varepsilon_{ac}\,dS ,
+$$
+
 so that $u_i=\sum_k U^{(k)}_{ij}s_{k,j}$, $\sigma^{\rm tot}_{mn}=\sum_k H^{(k)}_{mn,j}s_{k,j}$ and
 (section 6) $C\!:\!\boldsymbol\varepsilon^*=\sum_k E^{(k)}\big[\lambda(\mathbf s_k\!\cdot\!\hat{\mathbf n})\mathbf I+\mu(\mathbf s_k\hat{\mathbf n}^{\sf T}+\hat{\mathbf n}\mathbf s_k^{\sf T})\big]$.
 
@@ -147,6 +174,44 @@ degrees raised by $p$):
 | $U$ ($V_3$, $V_5$, $T^{[3]}_5$) | $p-1$ | $1+p$ | $3+p$ | – |
 | $H$ ($I_3$, $I_5$, $T^{[2]}_5$, $T^{[2]}_7$, $T^{[4]}_7$) | $p-2$ | $p$ | $2+p$ | $4+p$ |
 | $E$ | – | – | – | $p$ |
+| $G$ ($I_1$, $I_3$, $T^{[2]}_3$) | $p$ | $2+p$ | – | – |
+| $S$ ($V_3$, $V_5$, $T^{[3]}_5$) | $p-1$ | $1+p$ | $3+p$ | – |
+
+$S$ closes to exactly the degrees of $U$ — both read $G^{1(k)}$ — so a force
+stress kernel is free whenever the dislocation displacement kernel is already
+requested.  $G$ is the only kernel that reads the $n=1$ row at nonzero degree;
+from $p\ge1$ it pulls in the $m=-1$ edge primitives ($J_{-1}$, $K_{-1}$), and
+the $p=2$ edge table becomes $\{m=5:k\le5,\ m=3:k\le4,\ m=1:k\le3,\ m=-1:k\le1\}$.
+The force kernels never touch $n=7$, so a force-only element is materially
+cheaper than a dislocation element.
+
+**The limit $h_\varepsilon\to0$ (on-element, $\varepsilon=0$).**  In polar
+coordinates about the observer $M_n^{(a,b)}$ integrates $r^{\,a+b-n+1}$, so with
+$g=a+b$ the index $g-(n-2)$ decides: $\ge1$ absolutely convergent, $=0$ a
+Cauchy principal value, $\le-1$ divergent.  The index is invariant under the
+master recurrence, so the **floor** $g\ge n-1$ is self-consistent
+(`clq.moments.h0_floor`).  At $h_\varepsilon=0$ the vertical identity decouples,
+because $h_\varepsilon^2I_3=-\Omega h_\varepsilon\to0$:
+
+$$
+I_1=E_1=\sum_{\rm edges}d_\perp\big[\log(u+R)\big]_{u_a}^{u_b},\qquad
+I_{-1}=E_{-1}/3,\qquad I_3\ \text{undefined},
+$$
+
+the classical Wilton polygon formula — no solid angle.  Only the $a+b\ge2$
+slots of the $n=3$ table are then needed, because $z=0$ annihilates every
+out-of-plane slot of the rank-2 lift, so the force displacement kernel is
+computable for observers **on** the element, including vertices and edge
+points.  The first-order approach from $\varepsilon>0$ is
+$I_1(\varepsilon)=E_1-\Omega_{\rm 2D}\,\varepsilon+O(\varepsilon^2)$ with
+$\Omega_{\rm 2D}$ the in-plane angle subtended by the triangle ($2\pi$ inside,
+$\pi$ on an open edge, the interior angle at a vertex, $0$ outside) — measured
+to $6\times10^{-7}$ in `verify_force_on_element.py`.  An observer whose foot lies
+on an edge *line* has $\rho=0$ there; the edge primitives reduce to elementary
+powers $\int u^k|u|^{-m}du$ (`clq.primitives`, exact test `rho2 == 0.0`), which
+is not an exotic case: it happens bit-exactly at every vertex and edge midpoint
+of an axis-aligned triangle.  The dislocation kernels keep the old behaviour
+and still raise, since their $I_5$, $I_7$ genuinely diverge.
 
 so quadratic slip closes at $a+b=6$, $n=7$ (constant: $a+b=4$).  The $n=1$
 column is what the recursion consumes, not what the kernels read; the closure
@@ -220,7 +285,25 @@ H^{(k)}_{mn,j}=-\big[\lambda\delta_{mn}B^{(k)}_{rrj}+\mu(B^{(k)}_{mnj}+B^{(k)}_{
 \end{aligned}
 $$
 
-where $I^{(k)}_n=W^{(k)}_n{}^{(0,0)}$.
+where $I^{(k)}_n=W^{(k)}_n{}^{(0,0)}$.  The force kernels are two further
+contractions of the same objects:
+
+$$
+G^{(k)}_{ij}=C_1\Big[\big((3-4\nu)I^{(k)}_1+2(1-\nu)\varepsilon^2I^{(k)}_3\big)\delta_{ij}
+ + T^{[2](k)}_{ij,3}\Big],
+\qquad
+S^{(k)}_{ij,c}=\lambda\delta_{ij}G^{1(k)}_{aca}+\mu G^{1(k)}_{icj}+\mu G^{1(k)}_{jci},
+$$
+
+the second reusing the very same $G^{1(k)}$ as $U^{(k)}$.  Because
+$G^\varepsilon$ is symmetric, $G^{1(k)}_{ijm}$ is symmetric in $(i,j)$ and hence
+
+$$
+U^{(k)}_{ij}=-\,n_m\,S^{(k)}_{jm,i} \tag{5.1}
+$$
+
+**exactly** — the dislocation displacement kernel is the traction of the force
+stress kernel (verified to $3\times10^{-16}$, `verify_identities.py`).
 
 **Linear slip, stated explicitly.**  With $N_k=A_k+B_k\xi_1+C_k\xi_2$,
 
@@ -257,6 +340,13 @@ with $\rho_\varepsilon(z)=\tfrac34\varepsilon^4/(z^2+\varepsilon^2)^{5/2}$ — t
 peaks at $\tfrac34\mu\,s(\mathbf x)/\varepsilon$; the elastic stress is bounded and
 converges as $\varepsilon\to0$ (`fig_eps_finiteness`).
 
+**No eigenstress for the force element.**  A mollified body force is a genuine
+body force, not an eigenstrain: (1.2) already solves
+$\partial_j\sigma_{ij}+(\phi_\varepsilon*f)_i=0$, so $S^{(k)}$ *is* the elastic
+stress and there is nothing to subtract.  `clq.force_stress` therefore takes no
+`subtract_eigenstress` argument (in contrast with `clq.stress`, whose default is
+the tree-wide policy of `../EIGENSTRESS_AUDIT.md`), and passing one raises.
+
 ## 7. Identities and limits (all gated in `verify/`)
 
 * $\varepsilon\to0$ off the plane: $h_\varepsilon\to|z|$ reproduces the singular closed form
@@ -269,7 +359,20 @@ converges as $\varepsilon\to0$ (`fig_eps_finiteness`).
   relabelling permutes nodes; reversing the orientation and negating the slip
   leaves everything unchanged.
 * Rigid covariance and scaling $(\mathcal T,\mathbf x,\varepsilon)\to\alpha(\cdot)$: $U$ invariant,
-  $H,E\propto\alpha^{-1}$.
+  $H,E\propto\alpha^{-1}$; for the force element $G\propto\alpha$ and $S$ invariant.
+* Force/dislocation reciprocity (5.1): $U^{(k)}_{ij}=-n_mS^{(k)}_{jm,i}$ exactly,
+  to $3\times10^{-16}$ at every order.  Both force kernels are unchanged by a
+  reversal of the vertex order (they carry no $\hat{\mathbf n}$), whereas $U$ and
+  $H$ flip — a cheap discriminator against an accidental normal contraction.
+* Force element physics (`verify_force_jump.py`), all convention-free: the
+  displacement is **continuous** across the layer (hence no $\tfrac12\mathbf I$
+  free term in a BEM: the jump belongs to the double layer), while the traction
+  jumps by $\mathbf t^+-\mathbf t^-=-f(z_0/\varepsilon)\,\mathbf f$ with the *same*
+  profile $f$ as the dislocation displacement jump; global equilibrium
+  $\oint_S\sigma\hat{\mathbf n}\,dS=-\int_{\mathcal T}\mathbf f\,dS$ holds to
+  $3\times10^{-9}$; and at distance $D$ the element tends to a point force at the
+  centroid at order 2 for $p=0$ (the area centroid kills the dipole) and order 1
+  for $p\ge1$.
 * Hooke consistency: the finite-difference gradient of the closed-form
   displacement, through Hooke's law, equals the closed-form total stress at
   $\nu=0.3$.  Since the stress kernel is built from the traction-operator
@@ -312,6 +415,8 @@ converges as $\varepsilon\to0$ (`fig_eps_finiteness`).
 | seeds, master recurrence, degrees, $W^{(k)}$, far-field producer | `clq/moments.py` | `verify_moments.py`, `verify_far_field.py` |
 | nodes, $N_{\boldsymbol\alpha}$, $c^{(k)}_{ab}$, interpolation, grids | `clq/shape.py` | `verify_identities.py`, `verify_api.py` |
 | lift, $G^1$, $U$, $\overline{\mathcal D}$, $H$, $E$ | `clq/kernels.py` | `verify_nodal_vs_quadrature.py`, `verify_subdivision.py`, `verify_hooke_consistency.py`, `verify_jump.py` |
+| force kernels $G^{(k)}$, $S^{(k)}$, reciprocity (5.1) | `clq/kernels.py` | `verify_force_jump.py`, `verify_identities.py`, `verify_nodal_vs_quadrature.py`, `verify_hooke_consistency.py` |
+| $h_\varepsilon=0$ floor, decoupled seeds, $\rho=0$ primitives | `clq/moments.py`, `clq/primitives.py` | `verify_force_on_element.py`, `verify_primitives.py` |
 | public API, $\boldsymbol\sigma_{\rm el}$, $C\!:\!\boldsymbol\varepsilon^*$ | `clq/api.py` | `verify_api.py`, `verify_eigenstress.py` |
 | point kernels, blob, oracle quadrature | `clq/pointwise.py`, `clq/quadrature.py` | `verify_pointwise.py` |
-| constant-slip parity with the frozen oracles | — | `verify_order0_parity.py` |
+| constant-density parity with the frozen oracles ($U$, $H$, $G$, $S$) | — | `verify_order0_parity.py` |

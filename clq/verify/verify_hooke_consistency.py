@@ -20,6 +20,22 @@ inside TRI):
     quadrature-limited); with lam and mu swapped on the first two contraction
     terms the mismatch exceeds 1e-2 at nu = 0.3 while staying below 1e-6 at
     nu = 0.25.
+
+FORCE (Kelvin single-layer) element, same p / nu / observers and the same
+Richardson gradient of ``clq.force_displacement``:
+
+    C : sym(grad u_force)  ==  clq.force_stress                  (1e-9)
+
+NOTE THE ASYMMETRY WITH THE SLIP PATH.  Above, the FD-Hooke stress has to be
+compared with ``clq.stress(..., subtract_eigenstress=False)``, because a
+mollified dislocation carries an eigenstrain and ``C : sym(grad u)`` is the
+TOTAL stress, eigenstress included.  A mollified body force carries none: it
+is a genuine body force, so ``force_stress`` IS ``C : sym(grad u_force)`` and
+no eigenstress term appears anywhere below -- ``force_stress`` deliberately
+takes no ``subtract_eigenstress`` keyword at all (gated in verify_api.py).
+Measured worst over the 18 force cases: 3.4e-11 (the slip battery above comes
+in at 6.3e-12 with its legacy 1e-7 gate), so the force gate is set at 1e-9,
+about thirty times the measurement.
 """
 from __future__ import annotations
 
@@ -35,6 +51,7 @@ from clq import pointwise as pw
 FD_REL_STEP = 1e-3        # h0 = FD_REL_STEP * eps
 EPS_OVER_L = 0.2
 TOL_FD = 1e-7
+TOL_FD_FORCE = 1e-9       # measured worst 3.4e-11 over the 18 force cases
 TOL_QUAD = 1e-6
 TRIPWIRE = 1e-2
 N_GAUSS = 40
@@ -131,6 +148,32 @@ def main():
                 rep.check_bool(f"nu={nu:.2f} p={p}: tripwire, FD-Hooke vs ELASTIC on-plane > {TRIPWIRE:.0e}",
                                d_el > TRIPWIRE, f"(rel diff {d_el:.2e})")
     print(f"  worst FD-Hooke vs total stress over all cases: {worst:.3e}")
+
+    # --- force (Kelvin single-layer) element ---------------------------------
+    # A mollified body force is NOT an eigenstrain, so there is nothing to
+    # subtract here: clq.force_stress is already C : sym(grad u_force).  The
+    # reference on the right-hand side is therefore the plain force_stress
+    # call, with no subtract_eigenstress keyword anywhere (it does not exist).
+    forces = {p: rng.standard_normal((n_nodes(p), 3)) for p in (0, 1, 2)}
+    worst_f = 0.0
+    for nu in (0.25, 0.30):
+        for p in (0, 1, 2):
+            force = forces[p]
+            fdisp = lambda pts: clq.force_displacement(pts, TRI, force, MU, nu, eps)
+            sig_fd = hooke(fd_gradient(fdisp, obs, h0), MU, nu)
+            sig_f = clq.force_stress(obs, TRI, force, MU, nu, eps)
+            for n_obs, label in enumerate(("off-plane +z", "off-plane -z", "on-plane")):
+                d = relmax(sig_fd[n_obs], sig_f[n_obs])
+                worst_f = max(worst_f, d)
+                rep.check(f"nu={nu:.2f} p={p}: FD-Hooke of force_displacement vs "
+                          f"force_stress, {label}", d, TOL_FD_FORCE)
+    print(f"  worst FD-Hooke vs force stress over all cases: {worst_f:.3e}")
+    # force_stress takes no eigenstress option: a body force is not an eigenstrain
+    try:
+        clq.force_stress(obs, TRI, forces[0], MU, 0.30, eps, subtract_eigenstress=False)
+        rep.check_bool("force_stress rejects subtract_eigenstress (no eigenstrain)", False)
+    except TypeError:
+        rep.check_bool("force_stress rejects subtract_eigenstress (no eigenstrain)", True)
 
     # --- pairing demonstration with the point-kernel quadrature route -------
     slip0 = slips[0]

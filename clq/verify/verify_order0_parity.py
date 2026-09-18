@@ -1,4 +1,4 @@
-"""Constant-slip (order 0) parity with the legacy oracles.
+"""Constant-slip / constant-force (order 0) parity with the legacy oracles.
 
   * U and H vs the msd scalar `analytical_dd_displacement` / `analytical_stress_kernel`
     and the msd batch `dd_displacement_batch` at nu = 0.25 AND nu = 0.3 (msd
@@ -6,7 +6,14 @@
   * U vs the moss scalar (corrected pairing, commit f721a6a) at both nu, 1e-12;
   * tripwire: msd's PRE-FIX contraction (lam and mu swapped on the first two
     terms, rebuilt here from `integrate_DG`) must differ by > 1e-2 at nu = 0.3
-    and coincide at nu = 0.25 -- documents why gates at nu = 1/4 are blind.
+    and coincide at nu = 0.25 -- documents why gates at nu = 1/4 are blind;
+  * FORCE (Kelvin single-layer) element: G and S vs the msd AND moss
+    `analytical_kelvin_G` / `analytical_kelvin_stress` at both nu, 1e-12.  Those
+    oracles take the observation point FIRST and carry no normal argument (the
+    force kernels have no nhat dependence).  Measured worst over the five
+    observers: G 5.0e-16, S 1.2e-15 at eps = 0.12, and G 3.1e-16, S 6.8e-16 at
+    eps = 0 off the plane -- the shared `integrate_DG`/moment machinery of the
+    three codebases agrees to rounding.
 """
 from __future__ import annotations
 
@@ -65,7 +72,26 @@ def main():
         else:
             rep.check_bool(f"nu={nu}: tripwire, pre-fix swapped form differs by > 1e-2",
                            d > 1e-2, f"(rel diff {d:.2e})")
-    # Kelvin force kernels are not part of clq; nothing else to compare.
+
+    # --- force (Kelvin single-layer) element --------------------------------
+    # analytical_kelvin_G / analytical_kelvin_stress take (obs, v1, v2, v3, mu,
+    # nu, eps): the observation point FIRST and no normal, because the force
+    # kernels carry no nhat dependence at all.  S[i,j,k] is the stress ij per
+    # unit force in direction k -- clq's index order for S as well.
+    obs_off = obs[:3]                              # eps = 0 needs off-plane rows
+    for nu in (0.25, 0.30):
+        for eps_f, rows, tag in ((eps, obs, f"eps={eps}"), (0.0, obs_off, "eps=0 off-plane")):
+            res = nodal_influence(rows, TRI, 0, MU, nu, eps_f, want=("G", "S"),
+                                  far_field="analytic")
+            G, S = res["G"][:, 0], res["S"][:, 0]
+            Gm = np.array([msd.analytical_kelvin_G(o, v1, v2, v3, MU, nu, eps_f) for o in rows])
+            Sm = np.array([msd.analytical_kelvin_stress(o, v1, v2, v3, MU, nu, eps_f) for o in rows])
+            Go = np.array([moss.analytical_kelvin_G(o, v1, v2, v3, MU, nu, eps_f) for o in rows])
+            So = np.array([moss.analytical_kelvin_stress(o, v1, v2, v3, MU, nu, eps_f) for o in rows])
+            rep.check(f"nu={nu} {tag}: G vs msd analytical_kelvin_G", relmax(G, Gm), 1e-12)
+            rep.check(f"nu={nu} {tag}: G vs moss analytical_kelvin_G", relmax(G, Go), 1e-12)
+            rep.check(f"nu={nu} {tag}: S vs msd analytical_kelvin_stress", relmax(S, Sm), 1e-12)
+            rep.check(f"nu={nu} {tag}: S vs moss analytical_kelvin_stress", relmax(S, So), 1e-12)
     rep.finish()
 
 

@@ -33,6 +33,11 @@ with ``rho^2 = d_perp^2 + h_eps^2 > 0`` constant along the edge, ``m`` odd
     series in ``(u/rho)^2``, ``rho^-m sum_j C(-m/2, j) rho^-2j [u^p/p]``,
     ``p = k + 2j + 1`` (the closed form's ``u^k`` reduction would lose
     ``(rho/u)^2`` per level there);
+  - ``rho = 0`` regime (an observer on the edge's line at ``h_eps = 0``):
+    ``R = |u|`` and the integrals are elementary powers, ``|u|^q / q`` with
+    ``q = k - m + 1`` (``log|u|`` at ``q = 0``, ``+-inf`` when the edge
+    straddles the observer -- a genuinely divergent principal value, never a
+    quiet zero).  Exact test ``rho2 == 0.0``, no tolerance;
   - large-|u| regime (same sign, ``min|u| >= SERIES_U_OVER_RHO rho``): the
     large-``|u|`` binomial series
     ``sum_j C(-m/2, j) rho^(2j) [u^q/q]_{u_a}^{u_b}``, ``q = k - m + 1 - 2j``,
@@ -257,12 +262,46 @@ def _small_u_series_dP(k: int, m: int, ua, ub, rho2, n_terms: int) -> np.ndarray
     return scale * out
 
 
+def _rho0_dP(k: int, m: int, ua, ub):
+    """``int_{ua}^{ub} u^k |u|^{-m} du`` -- the rho = 0 limit of ``P_k^m``.
+
+    With ``q = k - m + 1`` the antiderivative is ``|u|^q / q`` for ``u >= 0``
+    and ``(-1)^(k+1) |u|^q / q`` for ``u < 0`` (``log|u|`` with the same sign
+    convention at ``q = 0``, which diverges when the edge straddles ``u = 0``:
+    that is the genuinely infinite principal-value moment, returned as +-inf,
+    never as a quiet zero).
+    """
+    q = k - m + 1
+
+    def F(u):
+        au = np.abs(u)
+        if q == 0:
+            with np.errstate(divide="ignore"):
+                f = np.log(au)
+        else:
+            with np.errstate(divide="ignore"):
+                f = au ** float(q) / q
+        return np.where(u < 0.0, (-1.0) ** (k + 1) * f, f)
+
+    out = F(ub) - F(ua)
+    if q <= 0:
+        # |u|^(k-m) is not integrable at u = 0: any edge whose closed span
+        # contains the observer's foot diverges.  The antiderivative
+        # difference would cancel into a finite, WRONG number, so say +inf.
+        out = np.where((ua <= 0.0) & (ub >= 0.0), np.inf, out)
+    return out
+
+
 def edge_table(ua, ub, rho2, spec: dict[int, int]) -> dict[int, np.ndarray]:
     """Differences ``int_{ua}^{ub} u^k / R^m du`` for a batch of edges.
 
     Parameters
     ----------
-    ua, ub, rho2 : (N,) arrays with ``ub > ua`` and ``rho2 > 0``.
+    ua, ub, rho2 : (N,) arrays with ``ub > ua`` and ``rho2 >= 0``.  ``rho2 = 0``
+        (an observer on the edge's LINE with ``h_eps = 0``, which happens
+        bit-exactly at every vertex and edge midpoint of an axis-aligned
+        triangle) is handled by the elementary ``R = |u|`` forms of
+        :func:`_rho0_dP`; every other row is untouched.
     spec : {m: kmax} -- for each odd ``m`` the highest power ``k`` needed.
 
     Returns
@@ -275,14 +314,23 @@ def edge_table(ua, ub, rho2, spec: dict[int, int]) -> dict[int, np.ndarray]:
     rho = np.sqrt(rho2)
     out = {m: np.empty((ua.shape[0], kmax + 1)) for m, kmax in spec.items()}
 
-    diffs = _EdgeDiffs(ua, ub, rho2)
-    for m, kmax in spec.items():
-        for k in range(kmax + 1):
-            out[m][:, k] = diffs.dP(k, m)
+    # rho = 0 rows are excluded from the general machinery (which forms 1/rho^2)
+    # and filled from the elementary closed form below.
+    zero = rho2 == 0.0
+    fin = ~zero
+    if np.any(fin):
+        diffs = _EdgeDiffs(ua[fin], ub[fin], rho2[fin])
+        for m, kmax in spec.items():
+            for k in range(kmax + 1):
+                out[m][fin, k] = diffs.dP(k, m)
+    if np.any(zero):
+        for m, kmax in spec.items():
+            for k in range(kmax + 1):
+                out[m][zero, k] = _rho0_dP(k, m, ua[zero], ub[zero])
 
     # Small-|u| regime: both |u| <= SMALL_U_OVER_RHO * rho (rho >> |u|).
     umax = np.maximum(np.abs(ua), np.abs(ub))
-    small = umax <= defaults.SMALL_U_OVER_RHO * rho
+    small = fin & (umax <= defaults.SMALL_U_OVER_RHO * rho)
     if np.any(small):
         a = ua[small]
         b = ub[small]
@@ -294,7 +342,7 @@ def edge_table(ua, ub, rho2, spec: dict[int, int]) -> dict[int, np.ndarray]:
     # Large-|u| series regime: same sign, both |u| >= SERIES_U_OVER_RHO * rho.
     same = (ua * ub) > 0.0
     umin = np.minimum(np.abs(ua), np.abs(ub))
-    ser = same & (umin >= defaults.SERIES_U_OVER_RHO * rho)
+    ser = fin & same & (umin >= defaults.SERIES_U_OVER_RHO * rho)
     if np.any(ser):
         a = ua[ser]
         b = ub[ser]

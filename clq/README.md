@@ -1,10 +1,13 @@
-# clq — constant, linear and quadratic slip on an arbitrary triangle, in closed form
+# clq — constant, linear and quadratic slip *and force* on an arbitrary triangle, in closed form
 
-`clq` computes the displacement, the total and the elastic stress of a
-**mollified** (Cortez, `R = sqrt(r^2 + eps^2)`) dislocation on one flat
-triangle in a 3-D elastic full space, for slip that varies as a polynomial of
-degree 0, 1 or 2 over the triangle (Lagrange P0/P1/P2 nodal shape functions),
-**analytically**.  It generalises the constant-slip closed form of the
+`clq` computes the displacement and stress of a **mollified** (Cortez,
+`R = sqrt(r^2 + eps^2)`) source on one flat triangle in a 3-D elastic full
+space, **analytically**, for a density that varies as a polynomial of degree
+0, 1 or 2 over the triangle (Lagrange P0/P1/P2 nodal shape functions).  Two
+source types share the same machinery: a **dislocation** (slip) source, and a
+**force** source -- the Kelvin single layer, a force per unit area, which is
+what an equivalent-body-force BEM needs for material contrasts and
+topography.  It generalises the constant-slip closed form of the
 `msd`/`moss` research codes (manuscript appendix "Closed-form mollified
 DD-triangle integration") by carrying the same edge recurrence two orders
 higher; the derivation is in `docs/derivation.md`.
@@ -24,6 +27,11 @@ for slip in (s0, s1, s2):                              # the SAME calls for ever
     sig = clq.stress(obs, tri, slip, mu, nu, eps)               # (N,3,3)  elastic = total - C:eps*
     tot = clq.stress(obs, tri, slip, mu, nu, eps, subtract_eigenstress=False)
 inf = clq.influence(obs, tri, mu, nu, eps, order=2)   # nodal tensors U (N,K,3,3), H (N,K,3,3,3), E (N,K)
+
+f = np.array([[0.0, 0.0, 1.0]])                        # force per unit AREA, same nodal layout
+u   = clq.force_displacement(obs, tri, f, mu, nu, eps)          # (N,3)
+sig = clq.force_stress(obs, tri, f, mu, nu, eps)                # (N,3,3)   already elastic
+inf = clq.influence(obs, tri, mu, nu, eps, order=0, want=("G", "S"))   # G (N,K,3,3), S (N,K,3,3,3)
 ```
 
 The slip order is inferred from the number of nodal rows (1, 3, 6, 10, ...:
@@ -38,8 +46,8 @@ unit); the examples use L = mu = s = 1.
 | `clq/primitives.py` | edge antiderivatives `J_m, K_m, int u^k/R^m du` for every odd `m` (incl. the new `J_{-1} = int R du`), cancellation-free differences in every regime, solid angle |
 | `clq/moments.py` | in-plane moment table `M_n^{(a,b)}` to arbitrary order by the divergence-theorem recurrence; per-node weighted tables; Gauss far-field producer (hybrid beyond `D_STAR * L`) |
 | `clq/shape.py` | P0/P1/P2 (any order) Lagrange nodes and shape polynomials, interpolation, on-triangle grids |
-| `clq/kernels.py` | lift to tensor moments and the contractions: slip -> displacement, slip -> total stress, eigenstress weight |
-| `clq/api.py` | `influence`, `displacement`, `stress`, `eigenstress`, `traction` |
+| `clq/kernels.py` | lift to tensor moments and the contractions: slip -> displacement (`U`), slip -> total stress (`H`), eigenstress weight (`E`), force -> displacement (`G`), force -> stress (`S`) |
+| `clq/api.py` | `influence`, `displacement`, `stress`, `eigenstress`, `traction`, `force_displacement`, `force_stress` |
 | `clq/pointwise.py`, `clq/quadrature.py` | point kernels and Gauss quadrature used only as oracles |
 | `verify/` | PASS/FAIL gates (`python verify/run_all.py`) |
 | `examples/` | figures for one equilateral triangle and a quickstart |
@@ -54,6 +62,34 @@ elastic stress, which at interior points of the element stays finite and
 converges as `eps -> 0` (on the element boundary, where the nodal slip does
 not vanish, the elastic stress has the classical edge/vertex singularity that
 emerges as `eps -> 0`).
+
+## Force element
+
+`force` is a force per unit **area** on the triangle, with the same nodal
+layout as slip, and `u_i = sum_k G[n,k,i,j] f[k,j]`.  The sign convention is
+the Kelvin one, `div sigma + f phi_eps = 0`, so any closed surface around the
+element carries `int sigma.nhat dS = -int f dS` (gate 1e-6; measured
+1.5e-7 at R = 3L, 2.9e-9 at R = 8L).  Notes:
+
+* **No eigenstress.**  A mollified body force is a genuine body force, not an
+  eigenstrain, so `force_stress` is already the elastic stress and takes no
+  `subtract_eigenstress` argument.
+* **No normal dependence.**  Reversing the vertex order leaves `G` and `S`
+  unchanged (`U`, `H` flip).  The displacement is continuous across the layer
+  -- only the traction jumps, by `-f(z0/eps) * density`, the same profile as
+  the dislocation displacement jump -- which is why the single layer carries
+  no `1/2 I` free term in a boundary element system.
+* **Exact link to the dislocation kernel:** `U[i,j] = -n_m S[j,m,i]` to 3e-16.
+* **eps = 0 is supported on the element** for `force_displacement` (the single
+  layer is weakly singular): at `h = 0` the seeds decouple to the classical
+  Wilton polygon formula `I_1 = E_1`, and the value is reproduced to 1e-14
+  against a polar oracle at interior points, edge midpoints and vertices
+  (gate 1e-10, measured 7.8e-12 at P2, for a sliver with `h/L = 0.02`).
+  Every other kernel still raises
+  there.
+* **Cost.**  A force-only element never builds the `n = 7` table, so it is
+  materially cheaper than a dislocation element; `want=("U","S")` costs the
+  same table work as `want=("U",)`.
 
 ## Running
 
@@ -93,6 +129,8 @@ Figures are written to the clq root as `.png` and `.pdf`.
 | `verify_eigenstress.py` | exact eigenstress vs quadrature, infinite-plane limit, finiteness as eps -> 0 |
 | `verify_far_field.py` | closed form vs quadrature vs distance; hybrid crossover |
 | `verify_api.py` | order inference, errors, shapes, BEM block layout |
+| `verify_force_jump.py` | force element physics: traction jump `-f(z0/eps) f`, displacement continuity, closed-surface equilibrium, point-force limit |
+| `verify_force_on_element.py` | eps = 0 ON the element: P0/P1/P2 vs a polar oracle at interior/edge/vertex points, the `-Omega_2D` first-order coefficient, both-sided convergence, guards |
 
 ## Notes
 

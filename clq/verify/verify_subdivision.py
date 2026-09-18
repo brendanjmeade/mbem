@@ -1,15 +1,29 @@
-"""Linear / quadratic slip vs a uniform subdivision into congruent order-0
-sub-triangles (midpoint rule on the slip).
+"""Linear / quadratic nodal density vs a uniform subdivision into congruent
+order-0 sub-triangles (midpoint rule on the density).
 
-For p in {1, 2} the order-p closed form on the tilted TRI (nodal slip s_k,
+For p in {1, 2} the order-p closed form on the tilted TRI (nodal values s_k,
 eps = 0.1 L, three off-plane observers at |z| ~ 0.3 L) is compared with the
 sum over the N^2 congruent sub-triangles of the barycentric lattice of the
-ORDER-0 closed form with constant slip = clq.interpolate(TRI, s_k, centroid of
-the sub-triangle).  Only the constant-slip machinery enters the reference, so
-this is an independent check of the shape-function weighted tables.  The
-midpoint rule converges as h^2 (~ N^-2): gate 1e-3 at N = 64 for u, the total
-stress and the eigenstress, monotone decrease from N = 8 on, and the observed
-order is printed (expected ~ 2).
+ORDER-0 closed form with a constant value = clq.interpolate(TRI, s_k, centroid
+of the sub-triangle).  Only the constant-density machinery enters the
+reference, so this is an independent check of the shape-function weighted
+tables.  Five fields are swept, for both source families:
+
+    SLIP  : u, total stress, eigenstress C:eps*   (U, H, E)
+    FORCE : u_force, sigma_force                  (G, S)
+
+The force density is a force per unit AREA, exactly like slip it is a per-area
+nodal quantity, so the same sub-triangle sum applies unchanged.  The midpoint
+rule converges as h^2 (~ N^-2): gate 1e-3 at N = 64 for all five, monotone
+decrease from N = 8 on, and the observed order is printed (expected ~ 2;
+measured 2.00 for every field, with N = 64 errors 3.3e-5 (u), 1.0e-4 (sigma),
+4.3e-5 (C:eps*), 6.7e-5 (u_force), 6.0e-5 (sigma_force) at p = 2).
+
+All five come from ONE ``clq.influence(want=("U","H","E","G","S"))`` call per
+sub-triangle instead of three separate public-API calls: the tensors are
+bitwise identical (the moment table does not depend on which kernels are
+requested -- gated in verify_regressions.py) and the whole gate got faster
+even with the force fields added.
 """
 from __future__ import annotations
 
@@ -25,6 +39,9 @@ N_LIST = (2, 4, 8, 16, 32, 64)
 GATE_N = 64
 GATE_TOL = 1e-3
 MONO_FROM = 8
+WANT = ("U", "H", "E", "G", "S")
+FIELDS = (("u", "displacement"), ("sigma", "total stress"), ("eig", "eigenstress"),
+          ("u_force", "force displacement"), ("sigma_force", "force stress"))
 
 
 def subdivide(tri, n):
@@ -45,21 +62,37 @@ def subdivide(tri, n):
     return np.array(subs)
 
 
-def subdivided_sum(obs, tri, slip_nodes, n, mu, nu, eps):
-    """Sum over the n^2 sub-triangles of the order-0 clq result with constant
-    slip equal to the interpolated slip at the sub-triangle centroid."""
+def eigenstress_from_weight(E, s, tri, mu, nu):
+    """C:eps* of a CONSTANT density s on ``tri`` from the order-0 E weight,
+    written out by hand: sum_k E_k [lam (s.n) I + mu (s n^T + n s^T)]."""
+    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    n = clq.unit_normal(tri)
+    sym = 0.5 * (np.outer(s, n) + np.outer(n, s))
+    sig_k = lam * np.trace(sym) * np.eye(3) + 2.0 * mu * sym
+    return E[:, 0, None, None] * sig_k[None]
+
+
+def subdivided_sum(obs, tri, nodal, n, mu, nu, eps):
+    """Sum over the n^2 sub-triangles of the order-0 clq result with a constant
+    density equal to the interpolated nodal value at the sub-triangle centroid.
+
+    Returns the five fields of :data:`FIELDS` as a dict; one ``influence`` call
+    per sub-triangle serves both source families."""
     subs = subdivide(tri, n)
     cents = subs.mean(axis=1)                                   # (T, 3)
-    slip_c = clq.interpolate(tri, slip_nodes, cents)            # (T, 3)
-    u = np.zeros((len(obs), 3))
-    sig = np.zeros((len(obs), 3, 3))
-    eig = np.zeros((len(obs), 3, 3))
+    val_c = clq.interpolate(tri, nodal, cents)                  # (T, 3)
+    out = {"u": np.zeros((len(obs), 3)), "sigma": np.zeros((len(obs), 3, 3)),
+           "eig": np.zeros((len(obs), 3, 3)), "u_force": np.zeros((len(obs), 3)),
+           "sigma_force": np.zeros((len(obs), 3, 3))}
     for t in range(subs.shape[0]):
-        s = slip_c[t]                                           # (3,) -> constant slip
-        u += clq.displacement(obs, subs[t], s, mu, nu, eps)
-        sig += clq.stress(obs, subs[t], s, mu, nu, eps, subtract_eigenstress=False)
-        eig += clq.eigenstress(obs, subs[t], s, mu, nu, eps)
-    return u, sig, eig
+        s = val_c[t][None, :]                                   # (1, 3) constant density
+        inf = clq.influence(obs, subs[t], mu, nu, eps, order=0, want=WANT)
+        out["u"] += np.einsum("nkij,kj->ni", inf.U, s)
+        out["sigma"] += np.einsum("nkmlj,kj->nml", inf.H, s)
+        out["eig"] += eigenstress_from_weight(inf.E, s[0], subs[t], mu, nu)
+        out["u_force"] += np.einsum("nkij,kj->ni", inf.G, s)
+        out["sigma_force"] += np.einsum("nkijc,kc->nij", inf.S, s)
+    return out
 
 
 def fit_order(ns, errs):
@@ -70,7 +103,7 @@ def fit_order(ns, errs):
 
 
 def main():
-    rep = Report("linear/quadratic slip vs order-0 uniform subdivision")
+    rep = Report("linear/quadratic slip and force vs order-0 uniform subdivision")
     fr = clq.local_frame(TRI)
     L = fr.L
     eps = 0.1 * L
@@ -100,34 +133,37 @@ def main():
         1: np.array([[1.0, 0.3, -0.2], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),   # hat at v1
         2: rng.standard_normal((6, 3)),                                        # generic quadratic
     }
-    for p, slip_nodes in cases.items():
+    for p, nodal in cases.items():
         if p == 2:
-            rep.check_bool("p=2: generic nodal slip, all 18 components nonzero",
-                           np.all(slip_nodes != 0.0))
+            rep.check_bool("p=2: generic nodal values, all 18 components nonzero",
+                           np.all(nodal != 0.0))
         t0 = time.time()
-        u_ref = clq.displacement(obs, TRI, slip_nodes, MU, NU, eps)
-        sig_ref = clq.stress(obs, TRI, slip_nodes, MU, NU, eps, subtract_eigenstress=False)
-        eig_ref = clq.eigenstress(obs, TRI, slip_nodes, MU, NU, eps)
+        ref = {
+            "u": clq.displacement(obs, TRI, nodal, MU, NU, eps),
+            "sigma": clq.stress(obs, TRI, nodal, MU, NU, eps, subtract_eigenstress=False),
+            "eig": clq.eigenstress(obs, TRI, nodal, MU, NU, eps),
+            "u_force": clq.force_displacement(obs, TRI, nodal, MU, NU, eps),
+            "sigma_force": clq.force_stress(obs, TRI, nodal, MU, NU, eps),
+        }
         # the interpolant must reproduce the nodal values (independent of clq.kernels)
-        interp_nodes = clq.interpolate(TRI, slip_nodes, clq.nodes(TRI, p))
-        rep.check(f"p={p}: interpolate reproduces nodal slip", relmax(interp_nodes, slip_nodes), 1e-13)
+        interp_nodes = clq.interpolate(TRI, nodal, clq.nodes(TRI, p))
+        rep.check(f"p={p}: interpolate reproduces nodal values", relmax(interp_nodes, nodal), 1e-13)
 
         print(f"\n  p = {p}: relative error of the order-0 subdivision sum vs the order-{p} closed form")
-        print(f"  {'N':>4s} {'n_sub':>6s} {'u':>12s} {'sigma_tot':>12s} {'eigenstress':>12s}")
-        errs = {"u": [], "sigma": [], "eig": []}
+        print(f"  {'N':>4s} {'n_sub':>6s} " + " ".join(f"{k:>12s}" for k, _ in FIELDS))
+        errs = {k: [] for k, _ in FIELDS}
         for n in N_LIST:
-            u_n, sig_n, eig_n = subdivided_sum(obs, TRI, slip_nodes, n, MU, NU, eps)
-            eu, es, ee = relmax(u_n, u_ref), relmax(sig_n, sig_ref), relmax(eig_n, eig_ref)
-            errs["u"].append(eu)
-            errs["sigma"].append(es)
-            errs["eig"].append(ee)
-            print(f"  {n:4d} {n * n:6d} {eu:12.3e} {es:12.3e} {ee:12.3e}")
+            got = subdivided_sum(obs, TRI, nodal, n, MU, NU, eps)
+            row = [relmax(got[k], ref[k]) for k, _ in FIELDS]
+            for (k, _), v in zip(FIELDS, row):
+                errs[k].append(v)
+            print(f"  {n:4d} {n * n:6d} " + " ".join(f"{v:12.3e}" for v in row))
         print(f"  (p = {p} subdivision sums took {time.time() - t0:.1f} s)")
 
         idx_gate = N_LIST.index(GATE_N)
         idx_mono = N_LIST.index(MONO_FROM)
         ns_fit = N_LIST[idx_mono:]
-        for name, label in (("u", "displacement"), ("sigma", "total stress"), ("eig", "eigenstress")):
+        for name, label in FIELDS:
             e = errs[name]
             order_ls = fit_order(ns_fit, e[idx_mono:])
             order_last = np.log2(e[idx_gate - 1] / e[idx_gate])

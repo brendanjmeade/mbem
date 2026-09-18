@@ -28,6 +28,22 @@ the ``2(1-nu) eps^2 delta/R^3`` blob term) then give, per node ``k``:
 index pair of C): the slip-``j`` column is ``-C_{j m p q} n_m dG_{i p}/dx_q``.
 This is the form of moss commit f721a6a; msd's pre-fix code has lam and mu
 swapped on the first two terms (invisible at nu = 1/4).
+
+The same weighted moments give the kernels of a FORCE source (the Kelvin
+single layer), i.e. a force per unit area ``f`` distributed over the triangle:
+
+    G[i,j]     = C1 [ (c34 I1 + 2(1-nu) eps^2 I3) d_ij + T2_3[i,j] ]   (force -> displacement)
+    S[i,j,c]   = C_{ijab} G1[a,c,b]
+               = lam d_ij sum_a G1[a,c,a] + mu G1[i,c,j] + mu G1[j,c,i]  (force -> stress)
+
+``S`` reuses the very same ``G1`` as ``U`` (hence the shared block below; keep
+that expression and the in-place ``G1 *= C1`` untouched so ``U`` stays bitwise
+identical).  The force element carries no ``nhat`` dependence at all, and no
+eigenstress: a mollified body force is a genuine body force, not an
+eigenstrain, so ``S`` is already the elastic stress.  An exact identity ties
+the two families together (gated in verify_identities.py):
+
+    U[i,j] = -sum_m n_m S[j,m,i].
 """
 from __future__ import annotations
 
@@ -36,7 +52,7 @@ from itertools import product
 import numpy as np
 
 from .frame import Frame, local_frame
-from .moments import weighted_tables, kernel_degrees
+from .moments import weighted_tables, kernel_degrees, h0_floor
 from .shape import nodes
 
 
@@ -45,14 +61,22 @@ def _lame(mu, nu):
     return lam
 
 
-def lift(W: dict[int, np.ndarray], z: np.ndarray, frame: Frame, rank: int, n: int) -> np.ndarray:
+def lift(W: dict[int, np.ndarray], z: np.ndarray, frame: Frame, rank: int, n: int,
+         *, floor: int = 0, h0: np.ndarray | None = None) -> np.ndarray:
     """Rank-``rank`` tensor moment (N, K, 3, ..., 3) at ``R^-n`` from the
-    weighted table ``W[n]`` (N, K, D+1, D+1)."""
+    weighted table ``W[n]`` (N, K, D+1, D+1).
+
+    ``floor``/``h0``: on the ``h = 0`` rows the table has no entry below the
+    degree floor (it is NaN).  Such a slot always carries ``c = rank - (a+b)
+    >= 1`` normal indices and ``z`` is exactly ``0.0`` there, so the term is
+    bitwise zero -- but ``0.0 * nan`` is NaN, so it is masked rather than
+    multiplied."""
     basis = [(-1.0, frame.e1), (-1.0, frame.e2), (None, frame.nhat)]
     Wn = W[n]
     N, K = Wn.shape[:2]
     out = np.zeros((N, K) + (3,) * rank)
     zp = {}
+    masked = floor > 0 and h0 is not None and bool(np.any(h0))
     for assign in product(range(3), repeat=rank):
         a = assign.count(0)
         b = assign.count(1)
@@ -60,7 +84,11 @@ def lift(W: dict[int, np.ndarray], z: np.ndarray, frame: Frame, rank: int, n: in
         if c not in zp:
             zp[c] = z ** c
         sign = (-1.0) ** (a + b)
-        scal = sign * zp[c][:, None] * Wn[:, :, a, b]            # (N, K)
+        Wab = Wn[:, :, a, b]
+        if masked and a + b < floor:
+            assert c >= 1, "a sub-floor slot must carry a normal index"
+            Wab = np.where(h0[:, None], 0.0, Wab)
+        scal = sign * zp[c][:, None] * Wab                      # (N, K)
         vecs = [basis[s][1] for s in assign]
         outer = vecs[0]
         for v in vecs[1:]:
@@ -74,13 +102,15 @@ def nodal_influence(obs, tri, order: int, mu: float, nu: float, eps: float,
                     check_identity: bool = False):
     """Nodal influence tensors of one triangle at ``obs`` (N, 3).
 
-    Returns a dict with the requested entries
-    ``U`` (N, K, 3, 3), ``H`` (N, K, 3, 3, 3), ``E`` (N, K), plus ``nodes``.
+    Returns a dict with the requested entries -- slip source: ``U`` (N, K, 3, 3),
+    ``H`` (N, K, 3, 3, 3), ``E`` (N, K); force source: ``G`` (N, K, 3, 3),
+    ``S`` (N, K, 3, 3, 3) -- plus ``nodes``.
     """
     frame = local_frame(tri)
     obs = np.asarray(obs, float).reshape(-1, 3)
-    W, z, X, ident = weighted_tables(frame, obs, eps, order, want, far_field,
-                                     check_identity=check_identity)
+    W, z, X, ident, h0 = weighted_tables(frame, obs, eps, order, want, far_field,
+                                         check_identity=check_identity)
+    floor = h0_floor(kernel_degrees(order, want)) if np.any(h0) else {}
     lam = _lame(mu, nu)
     C1 = 1.0 / (16.0 * np.pi * mu * (1.0 - nu))
     c34 = 3.0 - 4.0 * nu
@@ -89,7 +119,7 @@ def nodal_influence(obs, tri, order: int, mu: float, nu: float, eps: float,
     eye = np.eye(3)
     out = {"nodes": nodes(tri, order), "identity_residual": ident}
 
-    if "U" in want:
+    if "U" in want or "S" in want:
         V3 = lift(W, z, frame, 1, 3)          # (N,K,3)
         V5 = lift(W, z, frame, 1, 5)
         T35 = lift(W, z, frame, 3, 5)         # (N,K,3,3,3)
@@ -99,10 +129,29 @@ def nodal_influence(obs, tri, order: int, mu: float, nu: float, eps: float,
               - 3.0 * T35
               - 6.0 * (1.0 - nu) * e2 * np.einsum("ij,nkm->nkijm", eye, V5))
         G1 *= C1
+
+    if "U" in want:
         term1 = mu * np.einsum("m,nkijm->nkij", n, G1)
         term2 = lam * np.einsum("j,nkimm->nkij", n, G1)
         term3 = mu * np.einsum("m,nkimj->nkij", n, G1)
         out["U"] = -(term1 + term2 + term3)
+
+    if "G" in want:
+        # force density -> displacement (Kelvin single layer)
+        I1g = W[1][:, :, 0, 0]
+        T23 = lift(W, z, frame, 2, 3, floor=floor.get(3, 0), h0=h0)   # (N,K,3,3)
+        G = c34 * np.einsum("ij,nk->nkij", eye, I1g) + T23
+        if eps != 0.0:
+            G = G + 2.0 * (1.0 - nu) * e2 * np.einsum("ij,nk->nkij",
+                                                      eye, W[3][:, :, 0, 0])
+        out["G"] = C1 * G
+
+    if "S" in want:
+        # force density -> stress: S[i,j,c] = C_ijab G1[a,c,b]
+        trG1 = np.einsum("nkaca->nkc", G1)
+        out["S"] = (lam * np.einsum("ij,nkc->nkijc", eye, trG1)
+                    + mu * np.einsum("nkicj->nkijc", G1)
+                    + mu * np.einsum("nkjci->nkijc", G1))
 
     if "H" in want:
         I3 = W[3][:, :, 0, 0]

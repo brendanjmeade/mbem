@@ -59,6 +59,18 @@ def kelvin_dG(d, mu, nu, eps):
     return C1 * DG
 
 
+def force_stress_point(d, mu, nu, eps):
+    """S[n, i, j, c] = C_ijab dG_ac/dx_b: stress ij at x per unit point force
+    in direction c at y (the Kelvin single layer's stress kernel)."""
+    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    DG = kelvin_dG(d, mu, nu, eps)                 # [n,i,j,m] = dG_ij/dx_m
+    tr = np.einsum("naca->nc", DG)
+    eye = np.eye(3)
+    return (lam * np.einsum("ij,nc->nijc", eye, tr)
+            + mu * np.einsum("nicj->nijc", DG)
+            + mu * np.einsum("njci->nijc", DG))
+
+
 def kelvin_d2G(d, mu, nu, eps):
     """D2G[n, r, p, s, q] = d^2 G_rp / dx_s dx_q."""
     d = np.asarray(d, float).reshape(-1, 3)

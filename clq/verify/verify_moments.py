@@ -2,7 +2,22 @@
 slip, on the tilted triangle: off-plane observers (1e-10), on-plane
 mollified observers inside/outside/at a vertex/on an edge (quadrature-limited,
 1e-7 with h = eps = 0.15 L and a 160x160 rule), the two-route M^{(1,1)}
-identity (1e-13), and an order-3 table smoke test (1e-9)."""
+identity (1e-13), and an order-3 table smoke test (1e-9).
+
+The slip degrees ``kernel_degrees(p, ("U","H","E"))`` reach n = 3, 5, 7 only.
+The FORCE (Kelvin single-layer) element reads two rows they never touch, so
+they get their own sweep here:
+
+    kernel_degrees(2, ("G","S")) == {1: 2, 3: 4, 5: 5}
+
+-- the n = 1 row at DEGREE 2 (the only kernel that reads n = 1 above degree 0),
+which via ``_close_degrees`` pulls in n = -1 (positive powers of R,
+``I_{-1} = (E_{-1} + h^2 I_1)/3``, seeded downward instead of upward).  Both
+rows are compared entry by entry against the same Gauss reference, at
+eps = 0.1 off the plane (worst 1.2e-13, gated 1e-11), at h = eps = 0.15 L on
+the plane (1.7e-14, gated 1e-12) and at eps = 0 off the plane (1.2e-13,
+gated 1e-11).  Without this sweep the n = 1 and n = -1 rows are exercised only
+indirectly, through the assembled G kernel."""
 from __future__ import annotations
 
 import numpy as np
@@ -78,6 +93,34 @@ def main():
         rep.check_bool("eps=0 on the plane raises ValueError", False)
     except ValueError:
         rep.check_bool("eps=0 on the plane raises ValueError", True)
+
+    # --- force (Kelvin single-layer) degrees: the n = 1 and n = -1 rows -------
+    degF = kernel_degrees(2, ("G", "S"))
+    rep.check_bool("kernel_degrees(2, ('G','S')) == {1: 2, 3: 4, 5: 5}",
+                   degF == {1: 2, 3: 4, 5: 5}, f"(got {degF})")
+    rep.check_bool("kernel_degrees(0, ('S',)) == kernel_degrees(0, ('U',)) "
+                   "(S and U share G1)",
+                   kernel_degrees(0, ("S",)) == kernel_degrees(0, ("U",)),
+                   f"(S {kernel_degrees(0, ('S',))}, U {kernel_degrees(0, ('U',))})")
+    obs_f = np.array([[0.60, -0.10, 0.60], [2.0, 1.5, 3.0], [-0.4, 0.0, -0.8]])
+    tabF = MomentTable(fr, obs_f, 0.1, degF, check_identity=True)
+    rep.check_bool("force degrees close to n = 1 (degree 2) and n = -1",
+                   tabF.degrees.get(1, -1) == 2 and -1 in tabF.degrees,
+                   f"(closed degrees {tabF.degrees})")
+    rep.check("P2 force table (n = 1, -1, 3, 5), off-plane, vs 200x200 Gauss",
+              worst(tabF, quad_moments(fr, obs_f, 0.1, tabF.degrees, 200)), 1e-11)
+    rep.check("two-route M(1,1) identity (force degrees)", tabF.identity_residual, 1e-13)
+    eps_f = 0.15 * fr.L
+    obs_fon = np.array([v1 + 0.3 * (v2 - v1) + 0.3 * (v3 - v1),
+                        v1 + 1.2 * (v2 - v1) - 0.4 * (v3 - v1),
+                        v1,
+                        0.5 * (v2 + v3)])
+    tabF_on = MomentTable(fr, obs_fon, eps_f, degF)
+    rep.check("P2 force table, on-plane h=eps=0.15L, vs 160x160 Gauss",
+              worst(tabF_on, quad_moments(fr, obs_fon, eps_f, tabF_on.degrees, 160)), 1e-12)
+    tabF_0 = MomentTable(fr, obs_f[[0, 2]], 0.0, degF)
+    rep.check("P2 force table, eps=0 off-plane, vs 200x200 Gauss",
+              worst(tabF_0, quad_moments(fr, obs_f[[0, 2]], 0.0, tabF_0.degrees, 200)), 1e-11)
     rep.finish()
 
 

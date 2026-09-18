@@ -27,6 +27,10 @@ def quadrature_influence(obs, tri, order, mu, nu, eps, n_gauss=40, want=("U", "H
         H = np.zeros((N, K, 3, 3, 3))
     if "E" in want:
         E = np.zeros((N, K))
+    if "G" in want:
+        G = np.zeros((N, K, 3, 3))
+    if "S" in want:
+        S = np.zeros((N, K, 3, 3, 3))
     for q in range(y.shape[0]):
         d = obs - y[q]
         wk = wq[q] * Nq[q]                           # (K,)
@@ -36,10 +40,18 @@ def quadrature_influence(obs, tri, order, mu, nu, eps, n_gauss=40, want=("U", "H
             H += np.einsum("k,nmlj->nkmlj", wk, pw.dd_stress_point(d, fr.nhat, mu, nu, eps))
         if "E" in want:
             E += np.einsum("k,n->nk", wk, pw.blob(d, eps))
+        if "G" in want:
+            G += np.einsum("k,nij->nkij", wk, pw.kelvin_G(d, mu, nu, eps))
+        if "S" in want:
+            S += np.einsum("k,nijc->nkijc", wk, pw.force_stress_point(d, mu, nu, eps))
     if "U" in want:
         out["U"] = U
     if "H" in want:
         out["H"] = H
     if "E" in want:
         out["E"] = E
+    if "G" in want:
+        out["G"] = G
+    if "S" in want:
+        out["S"] = S
     return out

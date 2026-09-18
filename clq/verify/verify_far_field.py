@@ -1,20 +1,29 @@
 """Far-field accuracy sweep of the closed-form ("analytic") moment producer,
 the Gauss ("quadrature") producer and the "hybrid" crossover.
 
-TRI, eps = 0.05 L, nu = 0.3, slip orders p = 0, 1, 2 (generic nodal slips,
+TRI, eps = 0.05 L, nu = 0.3, nodal orders p = 0, 1, 2 (generic nodal values,
 seed 0).  Observers at D/L in {2, 5, 10, 20, 50, 100, 200, 500, 1000} from the
 centroid in three directions: broadside (nhat), along the longest edge, and an
-oblique global direction (0.3, 0.5, 0.81)/|.|.  The per-node tensors U (N,K,3,3)
-and H (N,K,3,3,3) of every producer are compared with
-``clq.quadrature.quadrature_influence`` (point kernels x shape functions,
-n_gauss = 40 for D/L <= 10, 24 beyond) by ``relmax``.
+oblique global direction (0.3, 0.5, 0.81)/|.|.  Four per-node tensors of every
+producer are compared with ``clq.quadrature.quadrature_influence`` (point
+kernels x shape functions, n_gauss = 40 for D/L <= 10, 24 beyond) by
+``relmax``: the SLIP tensors U (N,K,3,3) and H (N,K,3,3,3), and the FORCE
+(Kelvin single-layer) tensors G (N,K,3,3) and S (N,K,3,3,3).
 
-Gates
+Gates (all four tensors, same thresholds)
   * analytic branch: relmax <= 1e-8 for every D/L <= defaults.D_STAR;
   * hybrid branch:   relmax <= 1e-8 for every D/L in the sweep;
   * quadrature producer: relmax <= 1e-9 for every D/L >= 5;
   * hybrid == analytic below D_STAR and == quadrature above (branch identity);
   * reference self-consistency (n_gauss 40 vs 60 at D/L = 2, 24 vs 40 at 20).
+
+The force tensors lose digits with distance the same way the slip ones do, but
+about an order of magnitude more slowly, so they need no separate thresholds:
+within D_STAR = 10 the worst analytic-branch value at p = 2 is 2.9e-10 for
+G/S against 4.6e-9 for U/H, and TOL_ANALYTIC = 1e-8 carries over unchanged.
+The quadrature producer sits at ~5e-15 for G and S.  The slip and force gates
+are reported separately so a regression in one family cannot hide behind the
+other.
 
 For information the sweep prints the D/L at which the analytic branch first
 exceeds 1e-8 and 1e-6.  This documents the cancellation in the
@@ -39,7 +48,7 @@ NU = 0.3
 EPS_OVER_L = 0.05
 RATIOS = [2, 5, 10, 20, 50, 100, 200, 500, 1000]
 ORDERS = (0, 1, 2)
-WANT = ("U", "H")
+WANT = ("U", "H", "G", "S")
 N_REF_NEAR, N_REF_FAR = 40, 24        # reference rule for D/L <= 10 / beyond
 TOL_ANALYTIC = 1e-8                   # within D_STAR
 TOL_HYBRID = 1e-8                     # everywhere
@@ -60,16 +69,16 @@ def directions(fr):
 
 
 def reference(obs, near_mask, p, eps):
-    """quadrature_influence with n_gauss = 40 (near) / 24 (far)."""
+    """quadrature_influence with n_gauss = 40 (near) / 24 (far), all of WANT."""
     K = (p + 1) * (p + 2) // 2
-    U = np.empty((obs.shape[0], K, 3, 3))
-    H = np.empty((obs.shape[0], K, 3, 3, 3))
+    shapes = {"U": (3, 3), "H": (3, 3, 3), "G": (3, 3), "S": (3, 3, 3)}
+    ref = {k: np.empty((obs.shape[0], K) + shapes[k]) for k in WANT}
     for mask, n in ((near_mask, N_REF_NEAR), (~near_mask, N_REF_FAR)):
         if np.any(mask):
             r = quadrature_influence(obs[mask], TRI, p, MU, NU, eps, n_gauss=n, want=WANT)
-            U[mask] = r["U"]
-            H[mask] = r["H"]
-    return U, H
+            for k in WANT:
+                ref[k][mask] = r[k]
+    return ref
 
 
 def per_obs(a, b):
@@ -102,7 +111,7 @@ def main():
     for p in ORDERS:
         K = (p + 1) * (p + 2) // 2
         slip = rng.standard_normal((K, 3))
-        Uref, Href = reference(obs, near_ref, p, eps)
+        ref = reference(obs, near_ref, p, eps)
         res = {}
         for ff in ("analytic", "quadrature", "hybrid"):
             res[ff] = nodal_influence(obs, TRI, p, MU, NU, eps, want=WANT, far_field=ff)
@@ -110,47 +119,52 @@ def main():
         for r_chk, n_ref, n_fine in ((2.0, N_REF_NEAR, 60), (20.0, N_REF_FAR, 40)):
             sel = ratio_of == r_chk
             fine = quadrature_influence(obs[sel], TRI, p, MU, NU, eps, n_gauss=n_fine, want=WANT)
-            ref_self[(p, r_chk)] = max(relmax(fine["U"], Uref[sel]), relmax(fine["H"], Href[sel]))
-        eU = {ff: per_obs(res[ff]["U"], Uref) for ff in res}
-        eH = {ff: per_obs(res[ff]["H"], Href) for ff in res}
+            ref_self[(p, r_chk)] = max(relmax(fine[k], ref[k][sel]) for k in WANT)
+        err = {k: {ff: per_obs(res[ff][k], ref[k]) for ff in res} for k in WANT}
         # slip-contracted fields (information only)
-        u_ref = np.einsum("nkij,kj->ni", Uref, slip)
-        s_ref = np.einsum("nkmlj,kj->nml", Href, slip)
+        u_ref = np.einsum("nkij,kj->ni", ref["U"], slip)
+        s_ref = np.einsum("nkmlj,kj->nml", ref["H"], slip)
         u_an = np.einsum("nkij,kj->ni", res["analytic"]["U"], slip)
         s_an = np.einsum("nkmlj,kj->nml", res["analytic"]["H"], slip)
         e_slip = np.maximum(per_obs(u_an, u_ref), per_obs(s_an, s_ref))
-        # branch identity of the hybrid producer
+        # branch identity of the hybrid producer, over all four tensors
         # hybrid crossover uses the effective distance sqrt(D^2 + eps^2) (clq.moments.weighted_tables)
         below = np.sqrt(D_actual ** 2 + EPS_OVER_L ** 2) <= defaults.D_STAR
-        idU = per_obs(res["hybrid"]["U"], res["analytic"]["U"])
-        idH = per_obs(res["hybrid"]["H"], res["analytic"]["H"])
-        idq_U = per_obs(res["hybrid"]["U"], res["quadrature"]["U"])
-        idq_H = per_obs(res["hybrid"]["H"], res["quadrature"]["H"])
-        ident = np.where(below, np.maximum(idU, idH), np.maximum(idq_U, idq_H))
+        ident = np.zeros(obs.shape[0])
+        for k in WANT:
+            ident = np.maximum(ident, np.where(
+                below, per_obs(res["hybrid"][k], res["analytic"][k]),
+                per_obs(res["hybrid"][k], res["quadrature"][k])))
         worst[(p, "identity")] = float(ident.max())
         for n in range(obs.shape[0]):
             rows[(ratio_of[n], dir_of[n], p)] = dict(
-                U_an=eU["analytic"][n], H_an=eH["analytic"][n],
-                U_qd=eU["quadrature"][n], H_qd=eH["quadrature"][n],
-                hyb=max(eU["hybrid"][n], eH["hybrid"][n]),
+                U_an=err["U"]["analytic"][n], H_an=err["H"]["analytic"][n],
+                U_qd=err["U"]["quadrature"][n], H_qd=err["H"]["quadrature"][n],
+                G_an=err["G"]["analytic"][n], S_an=err["S"]["analytic"][n],
+                G_qd=err["G"]["quadrature"][n], S_qd=err["S"]["quadrature"][n],
+                hyb=max(err[k]["hybrid"][n] for k in WANT),
                 slip=e_slip[n])
 
     # ---- table -------------------------------------------------------------
     print()
-    print(f"  {'D/L':>6s} {'dir':8s} {'p':>2s} | {'analytic U':>11s} {'analytic H':>11s} | "
-          f"{'quadr. U':>11s} {'quadr. H':>11s} | {'hybrid':>9s} | {'slip-contr. an.':>15s}")
-    print("  " + "-" * 100)
+    print(f"  {'D/L':>6s} {'dir':8s} {'p':>2s} | {'analytic U':>11s} {'analytic H':>11s} "
+          f"{'analytic G':>11s} {'analytic S':>11s} | {'quadr. U':>11s} {'quadr. H':>11s} "
+          f"{'quadr. G':>11s} {'quadr. S':>11s} | {'hybrid':>9s} | {'slip-contr. an.':>15s}")
+    print("  " + "-" * 150)
     for r in RATIOS:
         for name, _ in dirs:
             for p in ORDERS:
                 v = rows[(float(r), name, p)]
-                print(f"  {r:6d} {name:8s} {p:2d} | {v['U_an']:11.2e} {v['H_an']:11.2e} | "
-                      f"{v['U_qd']:11.2e} {v['H_qd']:11.2e} | {v['hyb']:9.2e} | {v['slip']:15.2e}")
-        print("  " + "-" * 100)
+                print(f"  {r:6d} {name:8s} {p:2d} | {v['U_an']:11.2e} {v['H_an']:11.2e} "
+                      f"{v['G_an']:11.2e} {v['S_an']:11.2e} | "
+                      f"{v['U_qd']:11.2e} {v['H_qd']:11.2e} "
+                      f"{v['G_qd']:11.2e} {v['S_qd']:11.2e} | {v['hyb']:9.2e} | {v['slip']:15.2e}")
+        print("  " + "-" * 150)
 
     # ---- information: where the analytic branch first exceeds 1e-8 / 1e-6 ----
-    an_by_ratio = {r: max(max(rows[(float(r), nm, p)]["U_an"], rows[(float(r), nm, p)]["H_an"])
-                          for nm, _ in dirs for p in ORDERS) for r in RATIOS}
+    an_by_ratio = {r: max(rows[(float(r), nm, p)][f"{k}_an"]
+                          for nm, _ in dirs for p in ORDERS for k in ("U", "H", "G", "S"))
+                   for r in RATIOS}
     print()
     print("  analytic branch, worst over directions and orders:")
     print("   " + "  ".join(f"D/L={r}: {an_by_ratio[r]:.1e}" for r in RATIOS))
@@ -174,17 +188,19 @@ def main():
                     best, arg = val, (r, nm)
             return best, arg
 
-        val, arg = w(lambda r: r <= defaults.D_STAR, ("U_an", "H_an"))
-        rep.check(f"p={p}: analytic branch, D/L <= {defaults.D_STAR:g}", val, TOL_ANALYTIC,
-                  f"worst at D/L={arg[0]:g} {arg[1]}")
+        for fam, an_keys, qd_keys in (("slip U/H", ("U_an", "H_an"), ("U_qd", "H_qd")),
+                                      ("force G/S", ("G_an", "S_an"), ("G_qd", "S_qd"))):
+            val, arg = w(lambda r: r <= defaults.D_STAR, an_keys)
+            rep.check(f"p={p}: analytic branch {fam}, D/L <= {defaults.D_STAR:g}",
+                      val, TOL_ANALYTIC, f"worst at D/L={arg[0]:g} {arg[1]}")
+            val, arg = w(lambda r: r >= QUAD_FROM, qd_keys)
+            rep.check(f"p={p}: quadrature producer {fam}, D/L >= {QUAD_FROM:g}",
+                      val, TOL_QUAD, f"worst at D/L={arg[0]:g} {arg[1]}")
         val, arg = w(lambda r: True, ("hyb",))
-        rep.check(f"p={p}: hybrid branch, all D/L", val, TOL_HYBRID,
+        rep.check(f"p={p}: hybrid branch (all four tensors), all D/L", val, TOL_HYBRID,
                   f"worst at D/L={arg[0]:g} {arg[1]}")
-        val, arg = w(lambda r: r >= QUAD_FROM, ("U_qd", "H_qd"))
-        rep.check(f"p={p}: quadrature producer, D/L >= {QUAD_FROM:g}", val, TOL_QUAD,
-                  f"worst at D/L={arg[0]:g} {arg[1]}")
-        rep.check(f"p={p}: hybrid == analytic below / quadrature above D_STAR",
-                  worst[(p, "identity")], TOL_IDENTITY)
+        rep.check(f"p={p}: hybrid == analytic below / quadrature above D_STAR "
+                  f"(all four tensors)", worst[(p, "identity")], TOL_IDENTITY)
     for p in ORDERS:
         rep.check(f"p={p}: reference 40x40 vs 60x60 at D/L = 2",
                   ref_self[(p, 2.0)], TOL_REF_SELF)

@@ -16,7 +16,20 @@
     gives the same displacement / stress (1e-13, partition of unity);
   * BEM block ``U.transpose(0,2,1,3).reshape(3N,3K) @ slip.ravel()`` equals
     ``displacement`` (1e-14), same for the stress block from H;
-  * ``nodes(tri, 2)`` = vertices, then midpoints of edges 12, 23, 31.
+  * ``nodes(tri, 2)`` = vertices, then midpoints of edges 12, 23, 31;
+  * FORCE (Kelvin single-layer) surface: ``force_displacement`` /
+    ``force_stress`` infer the order from a (3,) / (1,3) / (3,3) / (6,3)
+    nodal force density exactly as the slip entry points do, squeeze a single
+    (3,) observer the same way, raise ValueError on the same bad shapes (with
+    "force" -- not "slip" -- named in the message wherever the API spells the
+    argument out), and reduce to the same BEM block layout,
+    ``G.transpose(0,2,1,3).reshape(3N,3K) @ force.ravel()``.  ``influence``
+    with ``want=("G",)`` leaves U, H, E and S as ``None``.  Finally
+    ``force_stress`` must REJECT ``subtract_eigenstress`` with a TypeError: a
+    mollified body force is a genuine body force, not an eigenstrain, so there
+    is no eigenstress to subtract and the keyword does not exist (the slip
+    ``stress`` does take it -- both halves are gated so the asymmetry cannot
+    be "fixed" away silently).
 """
 from __future__ import annotations
 
@@ -33,6 +46,21 @@ def raises(fn, exc=ValueError):
     except exc:
         return True
     except Exception as e:                     # noqa: BLE001 - report the wrong type
+        print(f"      (raised {type(e).__name__}: {e})")
+        return False
+    return False
+
+
+def raises_with(fn, word, exc=ValueError):
+    """True if ``fn()`` raises ``exc`` whose message contains ``word``."""
+    try:
+        fn()
+    except exc as e:
+        ok = word in str(e)
+        if not ok:
+            print(f"      ({type(e).__name__} message lacks {word!r}: {e})")
+        return ok
+    except Exception as e:                     # noqa: BLE001
         print(f"      (raised {type(e).__name__}: {e})")
         return False
     return False
@@ -303,9 +331,112 @@ def main():
                    all(np.all(np.isfinite(clq.displacement(obs, tri, slip6, MU, nu, eps, far_field=ff)))
                        for ff in ("hybrid", "analytic", "quadrature")))
 
+    # ------------------------------------------------------------------ (10)
+    # FORCE (Kelvin single-layer) entry points.  Same order inference, same
+    # squeeze, same BEM block layout, same validation -- and one deliberate
+    # asymmetry: no subtract_eigenstress.
+    worst_force = 0.0
+    for shape, p_expect in (((3,), 0), ((1, 3), 0), ((3, 3), 1), ((6, 3), 2)):
+        force = rng.standard_normal(shape)
+        K = 1 if len(shape) == 1 else shape[0]
+        inf = clq.influence(obs, tri, MU, nu, eps, order=p_expect, want=("G",))
+        rep.check_bool(f"influence(order={p_expect}, want=('G',)): G shape, U/H/E/S None",
+                       inf.G.shape == (N, K, 3, 3) and inf.U is None and inf.H is None
+                       and inf.E is None and inf.S is None,
+                       f"(G {None if inf.G is None else inf.G.shape})")
+        u_ref = np.einsum("nkij,kj->ni", inf.G, np.atleast_2d(force))
+        u = clq.force_displacement(obs, tri, force, MU, nu, eps)
+        d = relmax(u, u_ref)
+        worst_force = max(worst_force, d)
+        rep.check(f"force_displacement(force {shape}) vs influence(order={p_expect})", d, 1e-13)
+        u2 = clq.force_displacement(obs, tri, force, MU, nu, eps, order=p_expect)
+        rep.check(f"force_displacement(force {shape}, order={p_expect}) identical",
+                  relmax(u2, u), 1e-15)
+        infS = clq.influence(obs, tri, MU, nu, eps, order=p_expect, want=("S",))
+        rep.check_bool(f"influence(order={p_expect}, want=('S',)): S shape, U/H/E/G None",
+                       infS.S.shape == (N, K, 3, 3, 3) and infS.U is None
+                       and infS.H is None and infS.E is None and infS.G is None)
+        rep.check(f"force_stress(force {shape}) vs einsum(S, force)",
+                  relmax(clq.force_stress(obs, tri, force, MU, nu, eps),
+                         np.einsum("nkijc,kc->nij", infS.S, np.atleast_2d(force))), 1e-13)
+    # validation: "force", not "slip", wherever the API names the argument
+    for fn, name in ((clq.force_displacement, "force_displacement"),
+                     (clq.force_stress, "force_stress")):
+        rep.check_bool(f"{name}: force of shape (3,2) raises ValueError naming 'force'",
+                       raises_with(lambda fn=fn: fn(obs, tri, rng.standard_normal((3, 2)),
+                                                    MU, nu, eps), "force"))
+        rep.check_bool(f"{name}: force of shape (2,) raises ValueError naming 'force'",
+                       raises_with(lambda fn=fn: fn(obs, tri, np.ones(2), MU, nu, eps), "force"))
+        # these two go through order_from_count / the order check, which are
+        # argument-name agnostic: gate the exception, not the wording
+        rep.check_bool(f"{name}: force of shape (4,3) raises ValueError",
+                       raises(lambda fn=fn: fn(obs, tri, rng.standard_normal((4, 3)),
+                                               MU, nu, eps)))
+        rep.check_bool(f"{name}: order=0 with a (3,3) force raises ValueError",
+                       raises(lambda fn=fn: fn(obs, tri, rng.standard_normal((3, 3)),
+                                               MU, nu, eps, order=0)))
+        rep.check_bool(f"{name}: far_field='bogus' raises ValueError",
+                       raises(lambda fn=fn: fn(obs, tri, slip1, MU, nu, eps, far_field="bogus")))
+        rep.check_bool(f"{name}: eps < 0 raises ValueError",
+                       raises(lambda fn=fn: fn(obs, tri, slip1, MU, nu, -0.05)))
+    # the one deliberate asymmetry with the slip path
+    force6 = rng.standard_normal((6, 3))
+    for flag in (True, False):
+        rep.check_bool(f"force_stress(subtract_eigenstress={flag}) raises TypeError",
+                       raises(lambda flag=flag: clq.force_stress(obs, tri, force6, MU, nu, eps,
+                                                                 subtract_eigenstress=flag),
+                              exc=TypeError))
+    rep.check_bool("stress(subtract_eigenstress=...) DOES exist (asymmetry is deliberate)",
+                   np.all(np.isfinite(clq.stress(obs, tri, slip6, MU, nu, eps,
+                                                 subtract_eigenstress=False))))
+    # squeeze: a single (3,) observer
+    uf1 = clq.force_displacement(obs[3], tri, force6, MU, nu, eps)
+    sf1 = clq.force_stress(obs[3], tri, force6, MU, nu, eps)
+    ufN = clq.force_displacement(obs, tri, force6, MU, nu, eps)
+    sfN = clq.force_stress(obs, tri, force6, MU, nu, eps)
+    rep.check_bool("single observer: force_displacement shape (3,), force_stress (3,3)",
+                   uf1.shape == (3,) and sf1.shape == (3, 3), f"(got {uf1.shape}, {sf1.shape})")
+    rep.check_bool("batched observer: force shapes (N,3) / (N,3,3)",
+                   ufN.shape == (N, 3) and sfN.shape == (N, 3, 3))
+    rep.check("single observer force_displacement == batched row", relmax(uf1, ufN[3]), 1e-14)
+    rep.check("single observer force_stress == batched row", relmax(sf1, sfN[3]), 1e-14)
+    rep.check_bool("(1,3) observer: force_displacement shape (1,3)",
+                   clq.force_displacement(obs[3:4], tri, force6, MU, nu, eps).shape == (1, 3))
+    # constant force density written at three orders (partition of unity)
+    f0 = rng.standard_normal(3)
+    uf_ref = clq.force_displacement(obs, tri, f0[None, :], MU, nu, eps)
+    sf_ref = clq.force_stress(obs, tri, f0[None, :], MU, nu, eps)
+    rep.check("(3,) force == (1,3) force: displacement",
+              relmax(clq.force_displacement(obs, tri, f0, MU, nu, eps), uf_ref), 1e-15)
+    for K in (3, 6):
+        fK = np.tile(f0, (K, 1))
+        rep.check(f"constant force via ({K},3) == (1,3): displacement",
+                  relmax(clq.force_displacement(obs, tri, fK, MU, nu, eps), uf_ref), 1e-13)
+        rep.check(f"constant force via ({K},3) == (1,3): stress",
+                  relmax(clq.force_stress(obs, tri, fK, MU, nu, eps), sf_ref), 1e-13)
+    # BEM block reshape, force side
+    for p in (0, 1, 2):
+        K = clq.n_nodes(p)
+        f = rng.standard_normal((K, 3))
+        inf = clq.influence(obs_t, TRI, MU, nu_t, eps_t, order=p, want=("G", "S"))
+        Nt = obs_t.shape[0]
+        Gblock = inf.G.transpose(0, 2, 1, 3).reshape(3 * Nt, 3 * K)
+        d = relmax((Gblock @ f.ravel()).reshape(Nt, 3),
+                   clq.force_displacement(obs_t, TRI, f, MU, nu_t, eps_t))
+        worst_force = max(worst_force, d)
+        rep.check(f"order {p}: G block (3N,3K) @ force.ravel() == force_displacement", d, 1e-14)
+        Sblock = inf.S.transpose(0, 2, 3, 1, 4).reshape(9 * Nt, 3 * K)
+        d = relmax((Sblock @ f.ravel()).reshape(Nt, 3, 3),
+                   clq.force_stress(obs_t, TRI, f, MU, nu_t, eps_t))
+        worst_force = max(worst_force, d)
+        rep.check(f"order {p}: S block (9N,3K) @ force.ravel() == force_stress", d, 1e-14)
+        k, j = K - 1, 2
+        rep.check(f"order {p}: G block column (k={k}, j={j}) == G[:, k, :, j]",
+                  relmax(Gblock[:, 3 * k + j].reshape(Nt, 3), inf.G[:, k, :, j]), 1e-15)
+
     print(f"  worst: order-inference parity {worst_infer:.2e}, eps=0 limit {worst_eps0:.2e}, "
           f"elastic/total split {worst_split:.2e}, partition of unity {worst_pou:.2e}, "
-          f"BEM block {worst_block:.2e}")
+          f"BEM block {worst_block:.2e}, force surface {worst_force:.2e}")
     rep.finish()
 
 

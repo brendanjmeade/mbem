@@ -36,12 +36,11 @@ class DenseBackend:
     what creates the spurious material-resonance bands. Calibration
     repairs the identity by construction.
 
-    CAUTION: for all-Neumann models (e.g. the free-surface spheres) the
-    exact identity makes rigid translations an EXACT null space; use
-    "calibrated" there only with a deflation/anchor (future work).
+    On all-Neumann models the exact identity makes rigid translations an
+    EXACT null space: "calibrated" there requires ``deflate=True``.
     """
 
-    def __init__(self, mode: str = "basis", jump: str = "half",
+    def __init__(self, mode: str = "basis", jump: str = "calibrated",
                  deflate: bool = False):
         # "legacy": legacy assembly calls (oracle parity; scalar eps).
         # "basis":  numba basis stacks, cached for cheap material rebuilds
@@ -49,8 +48,11 @@ class DenseBackend:
         # "direct": numba in-loop assembly, no basis storage — the
         #           memory-light choice for one-shot large dense solves;
         #           rebuild_for_materials re-assembles (still fast).
+        # jump:    "calibrated" annihilates constant fields exactly; "half"
+        #           with eps/h > ~0.5 is NON-convergent (the backends warn).
         # deflate: solve the rigid-translation-bordered system — REQUIRED
-        #           for jump="calibrated" on all-Neumann models.
+        #           for jump="calibrated" on all-Neumann models (the
+        #           assembled operator raises otherwise).
         if mode not in ("legacy", "basis", "direct"):
             raise ValueError(mode)
         if jump not in ("half", "calibrated"):
@@ -60,17 +62,6 @@ class DenseBackend:
         self.deflate = deflate
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledDense":
-        if self.jump == "calibrated" and not self.deflate:
-            from ..model.core import BCType
-            anchored = any(p.bc is BCType.PRESCRIBED_DISPLACEMENT
-                           for r in system.model.regions
-                           for p in r.patches)
-            if not anchored:
-                import warnings
-                warnings.warn(
-                    "jump='calibrated' on an all-Neumann model: rigid "
-                    "translations become an EXACT null space; pass "
-                    "deflate=True (bordered solve) or anchor a patch")
         return AssembledDense(system, eps, self.mode, jump=self.jump,
                               deflate=self.deflate)
 
@@ -81,6 +72,47 @@ def _eps_for(eps, patch) -> np.ndarray:
     else:
         e = eps
     return kb.resolve_eps(e, patch.mesh)
+
+
+def require_anchor_or_deflate(system: BlockSystem, jump: str, deflate: bool):
+    """``jump="calibrated"`` on an un-anchored (all-Neumann) model makes
+    rigid translations an EXACT null space of A; refuse to solve it without
+    ``deflate`` (the factorization would return |u| ~ 1e9 km). Shared by both
+    backends: dense checks at assembly, H at ``solve`` where ``deflate`` lives.
+    """
+    if jump == "calibrated" and not deflate and not system.model.is_anchored():
+        raise ValueError(
+            "jump='calibrated' on an all-Neumann model (no "
+            "PRESCRIBED_DISPLACEMENT patch): rigid translations are an EXACT "
+            "null space of the calibrated operator. Pass deflate=True "
+            "(bordered / projected solve) or prescribe displacement on a "
+            "patch.")
+
+
+def warn_half_jump_eps(system: BlockSystem, eps, jump: str):
+    """``jump="half"`` with eps/h above ``defaults.HALF_JUMP_MAX_EPS_OVER_H``
+    on any source patch is NON-convergent under h-refinement: warn, naming
+    the offending patch. Shared by both backends.
+    """
+    if jump != "half":
+        return
+    worst_name, worst = None, 0.0
+    for r in system.model.regions:
+        for p in list(r.patches) + list(r.faults):
+            try:
+                ratio = float(np.max(_eps_for(eps, p)
+                                     / kb.element_sizes(p.mesh)))
+            except (KeyError, ValueError):
+                continue          # the backend reports a bad spec itself
+            if ratio > worst:
+                worst_name, worst = p.name, ratio
+    if worst > defaults.HALF_JUMP_MAX_EPS_OVER_H:
+        import warnings
+        warnings.warn(
+            f"jump='half' with eps/h = {worst:.2f} on patch '{worst_name}' "
+            f"(limit {defaults.HALF_JUMP_MAX_EPS_OVER_H}): this combination "
+            f"was measured NON-convergent under h-refinement; use "
+            f"jump='calibrated' or a smaller eps")
 
 
 def translation_basis(layout) -> np.ndarray:
@@ -100,8 +132,12 @@ def translation_basis(layout) -> np.ndarray:
 
 class AssembledDense:
     def __init__(self, system: BlockSystem, eps, mode: str,
-                 jump: str = "half", deflate: bool = False,
+                 jump: str = "calibrated", deflate: bool = False,
                  _basis_cache: dict | None = None):
+        if jump not in ("half", "calibrated"):
+            raise ValueError(jump)
+        require_anchor_or_deflate(system, jump, deflate)
+        warn_half_jump_eps(system, eps, jump)
         self.system = system
         self.layout = system.layout
         self.eps = eps

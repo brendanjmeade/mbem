@@ -80,12 +80,27 @@ def check_deflation():
     layout = system.layout
     Z = translation_basis(layout)
 
-    # un-deflated calibrated all-Neumann: the backend must warn
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    # un-deflated calibrated all-Neumann: every entry point must REFUSE (a
+    # warning on the front class alone is bypassed by direct construction)
+    try:
         DenseBackend("direct", jump="calibrated").assemble(system, EPS)
-        warned = any("null space" in str(x.message) for x in w)
-    print(f"    all-Neumann calibrated warns without deflate: {warned}")
+        refused_d = False
+    except ValueError as exc:
+        refused_d = "null space" in str(exc)
+    try:
+        AssembledDense(system, EPS, "direct", jump="calibrated")
+        refused_a = False
+    except ValueError as exc:
+        refused_a = "null space" in str(exc)
+    try:
+        HBackend(eta=0.8, tol=1e-6, jump="calibrated").assemble(
+            system, EPS).solve(rtol=1e-9)
+        refused_h = False
+    except ValueError as exc:
+        refused_h = "null space" in str(exc)
+    warned = refused_d and refused_a and refused_h
+    print(f"    all-Neumann calibrated REFUSED without deflate: dense front "
+          f"{refused_d}, AssembledDense {refused_a}, HBackend.solve {refused_h}")
 
     dense = AssembledDense(system, EPS, "direct", jump="calibrated",
                            deflate=True)

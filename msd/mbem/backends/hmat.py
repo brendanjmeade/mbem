@@ -36,9 +36,11 @@ class HBackend:
                  eta: float = defaults.ADMISSIBILITY_ETA,
                  max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
                  n_workers: int | None = None,
-                 jump: str = "half",
+                 jump: str = "calibrated",
                  storage: str = "basis",
                  verbose: bool = False):
+        # jump: "calibrated" (as for the dense backend); an all-Neumann
+        # model then needs solve(deflate=True), and solve refuses otherwise.
         # storage="basis": geometry-only per-basis factors (B-fold
         # memory, free material recombination -- best for sweeps).
         # storage="combined": material-combined payloads only (1x
@@ -66,7 +68,10 @@ def _coeffs(kernel: str, mat) -> np.ndarray:
 
 class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
-                 jump: str = "half", storage: str = "basis", _shared=None):
+                 jump: str = "calibrated", storage: str = "basis",
+                 _shared=None):
+        from .dense import warn_half_jump_eps
+        warn_half_jump_eps(system, eps, jump)
         self.system = system
         self.layout = system.layout
         self.eps = eps
@@ -299,6 +304,8 @@ class AssembledH:
         P A P y = P b with P = I - Z Z^T and returns the zero-mean-
         translation representative P y.
         """
+        from .dense import require_anchor_or_deflate
+        require_anchor_or_deflate(self.system, self.jump, deflate)
         if self._precond is None:
             self._precond = BlockGaussSeidel(self, max_dense=precond_max_dense,
                                              hodlr_max=precond_hodlr_max,

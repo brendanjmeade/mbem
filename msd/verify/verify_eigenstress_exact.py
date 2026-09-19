@@ -240,7 +240,11 @@ def d_near_edge_disagreement():
     nt = fault.n_triangles
     slip = np.broadcast_to(SLIP * np.asarray(s_hat, float), (nt, 3)).copy()
     h = kb.element_sizes(fault)
-    eps_arr = defaults.EPS_OVER_H * h              # msd's own eps='auto' policy
+    # The disagreement bands below were MEASURED at eps/h = 1.25 (the former
+    # eps='auto' policy) and are pinned to that literal, not to
+    # defaults.EPS_OVER_H: at eps/h = 0.3 the ratio drops to 1.27 and the
+    # check would fail for a non-bug.
+    eps_arr = 1.25 * h
     e_scalar = float(eps_arr.mean())
     cen = np.ascontiguousarray(fault.centroids())
     ex = _stress_from_source(cen, fault, slip, "eigen", MU, 0.30, eps_arr)

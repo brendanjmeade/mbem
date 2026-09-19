@@ -110,7 +110,7 @@ def check_end_to_end():
     print(f"    fault-zone model: {n} unknowns")
 
     dense = AssembledDense(system, EPS, "direct", jump="half")
-    hasm = HBackend(eta=0.8, tol=TOL).assemble(system, EPS)
+    hasm = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
 
     op_err = _relmax(hasm.to_dense(), dense.A)
     rhs_err = _relmax(hasm.b, dense.b)
@@ -134,13 +134,13 @@ def check_rebuild():
     model = _build_zone_model(mat_a)
     system = generate_system(model)
 
-    h1 = HBackend(eta=0.8, tol=TOL).assemble(system, EPS)
+    h1 = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
     h2 = h1.rebuild_for_materials({"zone": mat_b})
     sol_rebuild, rep_r = h2.solve(rtol=1e-9)
 
     model_b = _build_zone_model(mat_b)
     system_b = generate_system(model_b)
-    fresh = HBackend(eta=0.8, tol=TOL).assemble(system_b, EPS)
+    fresh = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system_b, EPS)
     sol_fresh, rep_f = fresh.solve(rtol=1e-9)
 
     worst = max(_relmax(sol_rebuild[k], sol_fresh[k]) for k in sol_fresh
@@ -159,7 +159,7 @@ def check_views_bounded():
 
     model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0))
     system = generate_system(model)
-    h = HBackend(eta=0.8, tol=TOL).assemble(system, EPS)
+    h = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
     sol_first, _ = h.solve(rtol=1e-9)
 
     mus = np.linspace(8.0, 24.0, 50)
@@ -357,7 +357,7 @@ def check_bj_rung():
     print(f"    {system.layout.n_unknowns} unknowns; "
           f"largest super-block (top) = {top_dofs} DOFs")
 
-    hasm = HBackend(eta=0.8, tol=TOL).assemble(system, EPS)
+    hasm = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
     sol_ref = AssembledDense(system, EPS, "direct", jump="half").solve()
 
     # max_dense=1500 forces the top super-block OFF the dense-LU rung so

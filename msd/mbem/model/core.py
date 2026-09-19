@@ -267,3 +267,10 @@ class RegionModel:
 
     def sigma_table(self) -> dict[tuple[str, str], int]:
         return dict(self._sigma)
+    def is_anchored(self) -> bool:
+        """True if some patch prescribes displacement. On an un-anchored
+        model ``jump="calibrated"`` makes rigid translations an exact null
+        space, so the backends require ``deflate=True`` there."""
+        return any(p.bc is BCType.PRESCRIBED_DISPLACEMENT
+                   for r in self.regions for p in r.patches)
+

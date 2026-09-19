@@ -88,7 +88,22 @@ BASIS_PARITY_RTOL = 1e-13
 BASIS_PARITY_RTOL_NEAR_FLUID = 1e-10
 
 # --- Mollification ----------------------------------------------------
-EPS_OVER_H = 1.25             # per-element eps_j = EPS_OVER_H * h_j (opt-in)
+# eps="auto": per-element eps_j = EPS_OVER_H * h_j (h_j = mean edge).
+# Basis (icosphere vs exact Kelvin, 1280 tri; eps/h = 0.05 / 0.1 / 0.3 / 1.25):
+# Dirichlet interior u 9.6e-4 / 8.9e-4 / 6.5e-3 / 5.2e-2 (floor <= 0.125),
+# Neumann surface u 6.9e-3 / 9.5e-3 / 2.2e-2 / 7.5e-2, cond(A) on the fault
+# box 37 / 44 / 108 / 1.7e4 -- smaller eps/h is BETTER conditioned. On-fault
+# stress wants eps <= ~0.07 h (rim) and eps_top <= 0.125 h near a trace.
+EPS_OVER_H = 0.1
+# jump="half" with eps/h above this on any source patch is NON-convergent
+# under h-refinement (measured on a manufactured uniform-strain solution);
+# the backends warn. jump="calibrated" (the default) has no such limit.
+HALF_JUMP_MAX_EPS_OVER_H = 0.5
+# Volume evaluation warns when an observation point lies within this many
+# local h (mean edge) of a BOUNDARY patch, by exact point-to-triangle
+# distance: the piecewise-constant density limits the representation there
+# (~2e-1 relative stress error at d/h = 0.25 with eps/h = 0.3; ~10 % at 0.5).
+NEAR_BOUNDARY_H_RATIO = 0.5
 
 # --- Not here ---------------------------------------------------------
 # The fault SIGN CONVENTION is not a tolerance and does not live here:

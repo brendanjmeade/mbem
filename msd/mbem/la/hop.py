@@ -6,8 +6,8 @@ admissible blocks as per-basis low-rank factors (see :mod:`.aca`),
 near-field leaf blocks as exact dense basis stacks. A material enters
 only through its coefficient vector: the per-material view combines the
 factors (with one QR+SVD re-truncation per low-rank block) and is
-cached, so the SAME object serves every region material and every
-Laplace sample.
+cached, so the SAME object serves every region material. Coefficients
+are real (both backends allocate real accumulators).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from .. import defaults
+from ..kernels import KERNEL_T, kernel_n_basis
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
 from .aca import BasisLR, BlockEvalCache, compress_block, recompress
@@ -41,14 +42,14 @@ class _BasisEval:
         self.normals = normals
         self.eps = eps_arr
         self.kernel = kernel
-        self.n_basis = 6 if kernel == "H" else 3
+        self.n_basis = kernel_n_basis(kernel)      # raises on a bad tag
 
     def stack(self, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
         """(B, 3*len(rows), 3*len(cols)) exact basis sub-stack."""
         xf = self.x_field[rows]
         tv = self.tri_verts[cols]
         ee = self.eps[cols]
-        if self.kernel == "H":
+        if self.kernel == KERNEL_T:
             return tk.t_basis_matrices(xf, tv, self.normals[cols], ee)
         return tk.u_basis_matrices(xf, tv, ee)
 
@@ -59,7 +60,7 @@ class _BasisEval:
         xf = self.x_field[rows]
         tv = self.tri_verts[cols]
         ee = self.eps[cols]
-        if self.kernel == "H":
+        if self.kernel == KERNEL_T:
             return tk.t_basis_matrices_serial(xf, tv, self.normals[cols], ee)
         return tk.u_basis_matrices_serial(xf, tv, ee)
 
@@ -116,10 +117,10 @@ class PairCompressed:
         self.blocks = self._compress_all()
 
         # Per-material views: LRU-bounded. Unbounded caching leaked one
-        # full recombined operator PER MATERIAL across a Laplace sweep;
+        # full recombined operator PER MATERIAL across a material sweep;
         # the LRU keeps the working set of a solve (every distinct
         # coefficient vector the terms + preconditioner touch) while old
-        # sweep samples age out.
+        # sweep materials age out.
         self._views: OrderedDict[bytes, list] = OrderedDict()
 
         if storage == "combined":
@@ -206,14 +207,8 @@ class PairCompressed:
                 U_cat = np.hstack([c[b] * payload.U[b]
                                    for b in range(self.n_basis)])
                 V_cat = np.hstack(payload.V)
-                if np.iscomplexobj(U_cat):
-                    # complex coeffs: keep concatenated factors
-                    # (recompress is real-QR based; rank cost is
-                    # acceptable for the Laplace sweep)
-                    view.append((rdofs, cdofs, U_cat, V_cat))
-                else:
-                    U, V = recompress(U_cat, V_cat, self.tol)
-                    view.append((rdofs, cdofs, U, V))
+                U, V = recompress(U_cat, V_cat, self.tol)
+                view.append((rdofs, cdofs, U, V))
             else:
                 M_eff = np.tensordot(c, payload, axes=1)
                 view.append((rdofs, cdofs, M_eff, None))
@@ -245,8 +240,7 @@ class PairCompressed:
     # -- operations -----------------------------------------------------
 
     def matvec(self, coeffs: np.ndarray, x: np.ndarray) -> np.ndarray:
-        dtype = np.result_type(np.asarray(coeffs).dtype, x.dtype, np.float64)
-        y = np.zeros(self.shape[0], dtype=dtype)
+        y = np.zeros(self.shape[0])
         for rdofs, cdofs, A, V in self._view(coeffs):
             if V is None:
                 y[rdofs] += A @ x[cdofs]
@@ -255,9 +249,7 @@ class PairCompressed:
         return y
 
     def to_dense(self, coeffs: np.ndarray) -> np.ndarray:
-        M = np.zeros(self.shape,
-                     dtype=np.result_type(np.asarray(coeffs).dtype,
-                                          np.float64))
+        M = np.zeros(self.shape)
         for rdofs, cdofs, A, V in self._view(coeffs):
             if V is None:
                 M[np.ix_(rdofs, cdofs)] += A

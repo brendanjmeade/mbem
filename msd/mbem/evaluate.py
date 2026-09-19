@@ -50,9 +50,36 @@ from __future__ import annotations
 
 import numpy as np
 
+from .kernels import KERNEL_T, KERNEL_U, KERNELS
 from .kernels import basis as kb
 from .model import BCType, Region, RegionModel
 from .selfcheck import ensure_fault_convention
+
+
+def _region(model: RegionModel, region: Region | str) -> Region:
+    """``region`` itself, or the model's region of that name."""
+    if not isinstance(region, str):
+        return region
+    for r in model.regions:
+        if r.name == region:
+            return r
+    raise KeyError(f"no region named {region!r} "
+                   f"(regions: {[r.name for r in model.regions]})")
+
+
+def _density(patch, kind: str, solution: dict) -> np.ndarray:
+    """The (N,3) density of ``kind`` on a patch: ``"u"`` / ``"t"`` is the
+    prescribed value when the BC fixes it, else the solved slot;
+    ``"slip"`` is a fault's value."""
+    if kind == "slip":
+        return patch.value_array()
+    fixed = {"u": BCType.PRESCRIBED_DISPLACEMENT,
+             "t": BCType.FREE_TRACTION}
+    if kind not in fixed:
+        raise ValueError(f"unknown density kind {kind!r}")
+    if patch.bc is fixed[kind]:
+        return patch.value_array()
+    return solution[f"{kind}:{patch.name}"]
 
 
 def _warn_near_boundary(points, region):
@@ -99,12 +126,14 @@ def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr):
     tri_verts, normals = kb._source_arrays(src_mesh)
     density = np.ascontiguousarray(np.asarray(density, float).reshape(-1, 3))
     points = np.ascontiguousarray(np.asarray(points, float))
-    if kernel == "t":
+    if kernel == KERNEL_T:
         c = kb.t_coeffs(material.mu, material.lam)
         return tk.t_disp_contract(points, tri_verts, normals, eps_arr,
                                   density, *c)
-    g = kb.u_coeffs(material.mu, material.lam)
-    return tk.u_disp_contract(points, tri_verts, eps_arr, density, *g)
+    if kernel == KERNEL_U:
+        g = kb.u_coeffs(material.mu, material.lam)
+        return tk.u_disp_contract(points, tri_verts, eps_arr, density, *g)
+    raise ValueError(f"unknown kernel {kernel!r}; expected one of {KERNELS}")
 
 
 def evaluate_displacement(model: RegionModel, region: Region | str,
@@ -114,8 +143,7 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
 
     ``solution`` is the slot dict returned by a backend solve.
     """
-    if isinstance(region, str):
-        region = next(r for r in model.regions if r.name == region)
+    region = _region(model, region)
     if region.faults:
         ensure_fault_convention()
     points = np.asarray(points, dtype=float)
@@ -123,39 +151,27 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
         _warn_near_boundary(points, region)
     u = np.zeros((points.shape[0], 3))
 
-    def eps_for(patch):
-        e = eps[patch.name] if isinstance(eps, dict) else eps
-        return kb.resolve_eps(e, patch.mesh)
-
     mat = region.material
     for p in region.patches:
         sigma = float(model.orientation(region, p))
-        # u_p term
-        if p.bc is BCType.PRESCRIBED_DISPLACEMENT:
-            u_p = p.value_array()
-        else:
-            u_p = solution[f"u:{p.name}"]
+        u_p = _density(p, "u", solution)
         if np.any(u_p):
-            u -= sigma * _disp_from_source(points, p.mesh, u_p, "t",
-                                           mat, eps_for(p))
-        # t_p term
-        if p.bc is BCType.FREE_TRACTION:
-            t_p = p.value_array()
-        else:
-            t_p = solution[f"t:{p.name}"]
+            u -= sigma * _disp_from_source(points, p.mesh, u_p, KERNEL_T,
+                                           mat, kb.resolve_patch_eps(eps, p))
+        t_p = _density(p, "t", solution)
         if np.any(t_p):
-            u += sigma * _disp_from_source(points, p.mesh, t_p, "u",
-                                           mat, eps_for(p))
+            u += sigma * _disp_from_source(points, p.mesh, t_p, KERNEL_U,
+                                           mat, kb.resolve_patch_eps(eps, p))
 
     # Faults carry an orientation too (FAULT_ORIENTATION), so this is
     # literally the u_p branch above with sigma supplied by the same
     # accessor -- no second statement of the fault sign convention.
     for f in region.faults:
         sigma = float(model.orientation(region, f))
-        slip = f.value_array()
+        slip = _density(f, "slip", solution)
         if np.any(slip):
-            u -= sigma * _disp_from_source(points, f.mesh, slip, "t",
-                                           mat, eps_for(f))
+            u -= sigma * _disp_from_source(points, f.mesh, slip, KERNEL_T,
+                                           mat, kb.resolve_patch_eps(eps, f))
 
     return u
 
@@ -196,7 +212,10 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
                                         density, mu, nu)
         return dd_stress_contract(points, verts, normals, eps_arr,
                                   density, mu, nu)
-    return kelvin_stress_contract(points, verts, eps_arr, density, mu, nu)
+    elif kernel == "force":
+        return kelvin_stress_contract(points, verts, eps_arr, density, mu, nu)
+    raise ValueError(f"unknown stress kernel {kernel!r}; "
+                     f"expected 'dd', 'force' or 'eigen'")
 
 
 def _double_layer_stress(points, src_mesh, jump, sigma, mu, nu, eps_arr,
@@ -249,8 +268,7 @@ class DisplacementEvaluator:
                  tol: float = None, n_workers: int | None = None,
                  warn_near: bool = True):
         from . import defaults
-        if isinstance(region, str):
-            region = next(r for r in model.regions if r.name == region)
+        region = _region(model, region)
         if region.faults:
             ensure_fault_convention("compressed")
         if warn_near:
@@ -264,28 +282,27 @@ class DisplacementEvaluator:
         arrays = kb.MeshArrays()
         tree_cache: dict = {}
 
-        def eps_for(patch):
-            e = eps[patch.name] if isinstance(eps, dict) else eps
-            return kb.resolve_eps(e, patch.mesh)
-
         self._terms = []       # (sign, patch-or-fault, kernel, pair)
         for p in region.patches:
             sigma = float(model.orientation(region, p))
             self._terms.append(
                 ("u", p, -sigma, PairCompressed(
-                    self.cloud, p.mesh, "H", eps_for(p), tol=tol,
+                    self.cloud, p.mesh, KERNEL_T, kb.resolve_patch_eps(eps, p),
+                    tol=tol,
                     tree_cache=tree_cache, arrays=arrays,
                     n_workers=n_workers)))
             self._terms.append(
                 ("t", p, +sigma, PairCompressed(
-                    self.cloud, p.mesh, "U", eps_for(p), tol=tol,
+                    self.cloud, p.mesh, KERNEL_U, kb.resolve_patch_eps(eps, p),
+                    tol=tol,
                     tree_cache=tree_cache, arrays=arrays,
                     n_workers=n_workers)))
         for f in region.faults:
             self._terms.append(
                 ("slip", f, -float(model.orientation(region, f)),
                  PairCompressed(
-                    self.cloud, f.mesh, "H", eps_for(f), tol=tol,
+                    self.cloud, f.mesh, KERNEL_T, kb.resolve_patch_eps(eps, f),
+                    tol=tol,
                     tree_cache=tree_cache, arrays=arrays,
                     n_workers=n_workers)))
 
@@ -295,20 +312,8 @@ class DisplacementEvaluator:
         uc = np.asarray(kb.u_coeffs(mat.mu, mat.lam))
         u = np.zeros(3 * self.cloud.n_triangles)
         for kind, src, sign, pair in self._terms:
-            if kind == "u":
-                dens = (src.value_array()
-                        if src.bc is BCType.PRESCRIBED_DISPLACEMENT
-                        else solution[f"u:{src.name}"])
-                coeffs = tc
-            elif kind == "t":
-                dens = (src.value_array()
-                        if src.bc is BCType.FREE_TRACTION
-                        else solution[f"t:{src.name}"])
-                coeffs = uc
-            else:
-                dens = src.value_array()
-                coeffs = tc
-            dens = np.asarray(dens, float).ravel()
+            coeffs = uc if kind == "t" else tc
+            dens = np.asarray(_density(src, kind, solution), float).ravel()
             if np.any(dens):
                 u += sign * pair.matvec(coeffs, dens)
         return u.reshape(-1, 3)
@@ -337,8 +342,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
 
     ``solution`` is the slot dict returned by a backend solve.
     """
-    if isinstance(region, str):
-        region = next(r for r in model.regions if r.name == region)
+    region = _region(model, region)
     if region.faults:
         ensure_fault_convention("stress")
     points = np.asarray(points, dtype=float)
@@ -346,40 +350,33 @@ def evaluate_stress(model: RegionModel, region: Region | str,
         _warn_near_boundary(points, region)
     sig = np.zeros((points.shape[0], 3, 3))
 
-    def eps_for(patch):
-        e = eps[patch.name] if isinstance(eps, dict) else eps
-        return kb.resolve_eps(e, patch.mesh)
-
     mat = region.material
     mu, nu = mat.mu, mat.nu
     for p in region.patches:
         sigma = float(model.orientation(region, p))
         # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
         # the boundary u_p is a jump exactly as a fault slip is.
-        if p.bc is BCType.PRESCRIBED_DISPLACEMENT:
-            u_p = p.value_array()
-        else:
-            u_p = solution[f"u:{p.name}"]
+        u_p = _density(p, "u", solution)
         if np.any(u_p):
             sig += _double_layer_stress(points, p.mesh, u_p, sigma, mu, nu,
-                                        eps_for(p), subtract_anelastic)
+                                        kb.resolve_patch_eps(eps, p),
+                                        subtract_anelastic)
         # t_p term (single layer): + sigma * SG @ t_p
-        if p.bc is BCType.FREE_TRACTION:
-            t_p = p.value_array()
-        else:
-            t_p = solution[f"t:{p.name}"]
+        t_p = _density(p, "t", solution)
         if np.any(t_p):
-            sig += sigma * _stress_from_source(points, p.mesh, t_p, "force",
-                                               mu, nu, eps_for(p))
+            sig += sigma * _stress_from_source(
+                points, p.mesh, t_p, "force", mu, nu,
+                kb.resolve_patch_eps(eps, p))
 
     # As in evaluate_displacement: the fault term is the u_p branch with
     # sigma = FAULT_ORIENTATION through the same accessor and the same
     # double-layer helper, so the convention is never stated twice.
     for f in region.faults:
         sigma = float(model.orientation(region, f))
-        slip = f.value_array()
+        slip = _density(f, "slip", solution)
         if np.any(slip):
             sig += _double_layer_stress(points, f.mesh, slip, sigma, mu, nu,
-                                        eps_for(f), subtract_anelastic)
+                                        kb.resolve_patch_eps(eps, f),
+                                        subtract_anelastic)
 
     return sig

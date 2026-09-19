@@ -1,9 +1,9 @@
 """Single source of truth for mbem tolerances and thresholds.
 
-Every numeric default a solver, compressor, or pipeline uses must live
-here, so the whole stack can be audited (and a test can assert nothing
-drifts). Values follow the approved plan: solution accuracy target ~1e-6,
-linear-algebra layers run with ~100x margin under it.
+Every numeric default a solver, compressor, or pipeline uses lives here,
+and every name here is read by some caller, so the whole stack can be
+audited in one place. Solution accuracy target ~1e-6; linear-algebra
+layers run with ~100x margin under it.
 """
 
 # --- Accuracy targets -------------------------------------------------
@@ -12,7 +12,7 @@ GMRES_RTOL = 1e-8             # true-residual stop (100x margin)
 GMRES_RESTART = 200
 GMRES_MAXITER = 600
 # Stop FGMRES if the residual fails to improve by STAGNATION_FACTOR
-# over STAGNATION_WINDOW iterations (previously hardcoded in solver.py).
+# over STAGNATION_WINDOW iterations.
 GMRES_STAGNATION_WINDOW = 100
 GMRES_STAGNATION_FACTOR = 10.0
 
@@ -26,10 +26,6 @@ COND_WARN_THRESHOLD = 1e10
 
 # --- Compression ------------------------------------------------------
 BLOCK_COMPRESSION_TOL = 1e-8  # rel-Frobenius per admissible block
-# Relaxed preset for very large models: 100x looser than the default but
-# still 100x under SOLUTION_RTOL; cuts low-rank ranks (and memory) 30-50%.
-# Pass explicitly: HBackend(tol=defaults.BLOCK_COMPRESSION_TOL_RELAXED).
-BLOCK_COMPRESSION_TOL_RELAXED = 1e-6
 CLUSTER_MIN_LEAF = 32         # elements per leaf cluster
 ADMISSIBILITY_ETA = 2.0
 # Admissible blocks smaller than this (elements per side) are stored
@@ -77,15 +73,6 @@ PRECOND_HODLR_MAX_DOF = 150_000
 # --- HODLR ladder rung ------------------------------------------------
 HODLR_PRECOND_TOL = 1e-2      # loose tol when used as a preconditioner
 HODLR_LEAF_ELEMS = 96         # dense leaf size (elements)
-
-# --- Basis-recombination parity gates (Phase 1) -----------------------
-# Direct vs basis assembly differ only in floating-point evaluation
-# order. At moderate nu the agreement is machine precision; near the
-# fluid limit (nu -> 1/2) the lam*C1 coefficient amplifies cancellation
-# between the N[P1]/N[P2] (trace) basis terms by ~|lam*C1|/|c_R2|, so the
-# gate loosens accordingly (still far below any physical tolerance).
-BASIS_PARITY_RTOL = 1e-13
-BASIS_PARITY_RTOL_NEAR_FLUID = 1e-10
 
 # --- Mollification ----------------------------------------------------
 # eps="auto": per-element eps_j = EPS_OVER_H * h_j (h_j = mean edge).

@@ -3,13 +3,14 @@
 The diagonal super-block of an interface patch is the LOCAL 2x2
 transmission system in its (u, t) unknowns,
 
-    [ 1/2 I + sA*H^A_pp    -sA*G^A_pp ]
-    [ 1/2 I + sB*H^B_pp    -sB*G^B_pp ]
+    [ D + sA*H^A_pp    -sA*G^A_pp ]
+    [ D + sB*H^B_pp    -sB*G^B_pp ]
 
-which is well-posed even where a first-kind G block alone is nearly
-singular (it discretizes the locally well-posed two-sided transmission
-problem) and contrast-robust. Non-interface slots form their own
-super-blocks (second-kind 1/2 I + sigma H for u-slots; -sigma G for a
+(D the collocation diagonal of ``equations.term_diagonal``), which is
+well-posed even where a first-kind G block alone is nearly singular (it
+discretizes the locally well-posed two-sided transmission problem) and
+contrast-robust. Non-interface slots form their own super-blocks
+(second-kind D + sigma H for u-slots; -sigma G for a
 prescribed-displacement t-slot). One forward GS sweep in slot order —
 the region graph of layered models is a path, so the sweep approximates
 chain elimination.
@@ -27,9 +28,11 @@ import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
 from .. import defaults
+from ..kernels import KERNEL_T, kernel_coeffs
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
 from ..model.core import BCType
+from ..model.equations import term_diagonal
 from .cluster import build_cluster_tree
 from .hodlr import HodlrSolver
 
@@ -55,27 +58,20 @@ class _SBEvaluator:
         self.n_elems = patch.n_triangles
 
         kind_off = {s.kind: 3 * idx for idx, s in enumerate(slots)}
-        calibrated = getattr(assembled, "jump", "half") == "calibrated"
+        calib = getattr(assembled, "calib", None)
         self.recipes = []
         for t in terms:
             mat = assembled.materials[t.region.name]
-            # Collocation diagonal for this term: the classical +1/2 I,
-            # or -- calibrated backends -- the per-element rigid-body
-            # diagonal C (Nq,3,3) of this term's (region, patch) row,
-            # so the preconditioner solves the SAME local operator the
-            # outer iteration applies.
-            C = None
-            if t.diag_half and calibrated:
-                C = assembled._calib_row(t.region, patch)
+            # The term's own collocation diagonal (classical or
+            # calibrated), so the preconditioner solves the SAME local
+            # operator the outer iteration applies.
             self.recipes.append((
                 t.kernel,
-                kb.t_coeffs(mat.mu, mat.lam) if t.kernel == "H"
-                else kb.u_coeffs(mat.mu, mat.lam),
+                kernel_coeffs(t.kernel, mat),
                 t.scale,
                 kind_off[t.row.kind],
                 kind_off[t.col.kind],
-                t.diag_half,
-                C,
+                term_diagonal(t, calib),
             ))
 
         # concat -> interleaved permutation (length d * n_elems):
@@ -96,8 +92,8 @@ class _SBEvaluator:
         nv = self.normals[cols]
         ee = self.eps[cols]
         same = rows[:, None] == cols[None, :]
-        for kernel, coeffs, scale, r_off, c_off, diag_half, C in self.recipes:
-            if kernel == "H":
+        for kernel, coeffs, scale, r_off, c_off, D in self.recipes:
+            if kernel == KERNEL_T:
                 blk = tk.t_matrix_direct(xf, tv, nv, ee, *coeffs)
             else:
                 blk = tk.u_matrix_direct(xf, tv, ee, *coeffs)
@@ -105,17 +101,12 @@ class _SBEvaluator:
                 for b in range(3):
                     out[r_off + a::self.d, c_off + b::self.d] += \
                         scale * blk[a::3, b::3]
-            if diag_half:
+            if D is not None:
                 ii, jj = np.where(same)
-                if C is None:
-                    for a in range(3):
+                for a in range(3):
+                    for b in range(3):
                         out[self.d * ii + r_off + a,
-                            self.d * jj + c_off + a] += 0.5
-                else:
-                    for a in range(3):
-                        for b in range(3):
-                            out[self.d * ii + r_off + a,
-                                self.d * jj + c_off + b] += C[rows[ii], a, b]
+                            self.d * jj + c_off + b] += D[rows[ii], a, b]
         return out
 
 
@@ -132,13 +123,6 @@ class _SuperBlock:
             off += s.size
         self.solve_fn = None
         self.lower_terms = []   # terms with col in an earlier super-block
-
-
-def _term_coeffs(term, materials):
-    mat = materials[term.region.name]
-    if term.kernel == "H":
-        return kb.t_coeffs(mat.mu, mat.lam)
-    return kb.u_coeffs(mat.mu, mat.lam)
 
 
 class BlockGaussSeidel:
@@ -261,7 +245,8 @@ class BlockGaussSeidel:
             rk = r[sb.global_idx].astype(z.dtype, copy=True)
             for term in sb.lower_terms:
                 pair = self.asm.pair_for(term)
-                coeffs = _term_coeffs(term, self.asm.materials)
+                coeffs = kernel_coeffs(term.kernel,
+                                       self.asm.materials[term.region.name])
                 xseg = z[term.col.offset:term.col.stop]
                 contrib = term.scale * pair.matvec(coeffs, xseg)
                 r0 = sb.local_offset[term.row.name]

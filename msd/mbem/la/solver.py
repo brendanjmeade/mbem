@@ -13,7 +13,7 @@ the legacy stack. Differences that matter:
   stops and says so instead of burning maxiter.
 * Every solve returns a ``SolveReport``; nothing is silently swallowed.
 
-Supports real and complex systems (dtype follows the inputs).
+Real systems only (both backends assemble real operators).
 """
 
 from __future__ import annotations
@@ -59,8 +59,10 @@ def fgmres(A, b, M=None, x0=None,
     M_mv = _as_matvec(M) if M is not None else (lambda v: v)
 
     b = np.asarray(b)
+    if np.iscomplexobj(b):
+        raise TypeError("fgmres is real-only")
     n = b.shape[0]
-    dtype = np.result_type(b.dtype, np.float64)
+    dtype = np.float64
     b_norm = np.linalg.norm(b)
     if b_norm == 0.0:
         return np.zeros(n, dtype=dtype), SolveReport(True, 0, 0.0, 0.0)
@@ -100,13 +102,13 @@ def fgmres(A, b, M=None, x0=None,
                 H[i, j] = np.vdot(V[i], w)
                 w -= H[i, j] * V[i]
             H[j + 1, j] = np.linalg.norm(w)
-            if H[j + 1, j].real > 1e-300:
+            if H[j + 1, j] > 1e-300:
                 V[j + 1] = w / H[j + 1, j]
 
             # Apply accumulated Givens rotations, then form a new one
             for i in range(j):
                 t = cs[i] * H[i, j] + sn[i] * H[i + 1, j]
-                H[i + 1, j] = -np.conj(sn[i]) * H[i, j] + cs[i] * H[i + 1, j]
+                H[i + 1, j] = -sn[i] * H[i, j] + cs[i] * H[i + 1, j]
                 H[i, j] = t
             denom = np.sqrt(np.abs(H[j, j]) ** 2 + np.abs(H[j + 1, j]) ** 2)
             if denom == 0.0:
@@ -115,12 +117,12 @@ def fgmres(A, b, M=None, x0=None,
             cs[j] = np.abs(H[j, j]) / denom if np.abs(H[j, j]) > 0 else 0.0
             if np.abs(H[j, j]) > 0:
                 phase = H[j, j] / np.abs(H[j, j])
-                sn[j] = phase * np.conj(H[j + 1, j]) / denom
+                sn[j] = phase * H[j + 1, j] / denom
             else:
                 sn[j] = 1.0
             H[j, j] = cs[j] * H[j, j] + sn[j] * H[j + 1, j]
             H[j + 1, j] = 0.0
-            g[j + 1] = -np.conj(sn[j]) * g[j]
+            g[j + 1] = -sn[j] * g[j]
             g[j] = cs[j] * g[j]
 
             total_iters += 1

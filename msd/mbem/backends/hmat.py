@@ -12,23 +12,23 @@ from __future__ import annotations
 import numpy as np
 
 from .. import defaults
+from ..kernels import KERNEL_T, kernel_coeffs
 from ..kernels import basis as kb
 from ..la.hop import PairCompressed
 from ..la.preconditioner import BlockGaussSeidel
 from ..la.solver import fgmres
-from ..model.equations import BlockSystem
+from ..model.equations import (BlockSystem, add_block_diagonal,
+                               add_jump_rhs, calibrated_diagonal,
+                               diagonal_matvec, term_diagonal)
 
 
 class HBackend:
-    """``jump="half"`` is the classical 1/2 I collocation term;
+    """``jump="half"`` is the classical collocation free term;
     ``jump="calibrated"`` replaces it with the rigid-body-calibrated
-    diagonal ``C_q = -sum_p sigma(R,p) * rowsum_j H_qp`` (the same
-    calibration as the dense backend). The row sums are taken through
-    the COMPRESSED H pairs, so the operator that is actually applied
-    annihilates constant displacement fields exactly; pairs absent from
-    the compressed set (zero-valued prescribed patches appear in neither
-    terms nor rhs) are summed with the exact matrix-free contraction
-    kernels. Same all-Neumann null-space caveat as the dense backend.
+    diagonal of ``equations.calibrated_diagonal``, row-summed through the
+    COMPRESSED H pairs so the operator actually applied annihilates
+    constant displacement fields exactly. Same all-Neumann null-space
+    caveat as the dense backend.
     """
 
     def __init__(self, tol: float = defaults.BLOCK_COMPRESSION_TOL,
@@ -37,10 +37,12 @@ class HBackend:
                  max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
                  n_workers: int | None = None,
                  jump: str = "calibrated",
+                 deflate: bool = False,
                  storage: str = "basis",
                  verbose: bool = False):
-        # jump: "calibrated" (as for the dense backend); an all-Neumann
-        # model then needs solve(deflate=True), and solve refuses otherwise.
+        # jump / deflate: as for the dense backend; an all-Neumann model
+        # with jump="calibrated" needs deflate=True (assembly refuses
+        # otherwise), and solve then projects the translations out.
         # storage="basis": geometry-only per-basis factors (B-fold
         # memory, free material recombination -- best for sweeps).
         # storage="combined": material-combined payloads only (1x
@@ -53,24 +55,24 @@ class HBackend:
         self.opts = dict(tol=tol, min_leaf=min_leaf, eta=eta,
                          max_admissible=max_admissible, n_workers=n_workers)
         self.jump = jump
+        self.deflate = deflate
         self.storage = storage
         self.verbose = verbose
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledH":
         return AssembledH(system, eps, self.opts, self.verbose,
-                          jump=self.jump, storage=self.storage)
-
-
-def _coeffs(kernel: str, mat) -> np.ndarray:
-    return kb.t_coeffs(mat.mu, mat.lam) if kernel == "H" \
-        else kb.u_coeffs(mat.mu, mat.lam)
+                          jump=self.jump, deflate=self.deflate,
+                          storage=self.storage)
 
 
 class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
-                 jump: str = "calibrated", storage: str = "basis",
-                 _shared=None):
-        from .dense import warn_half_jump_eps
+                 jump: str = "calibrated", deflate: bool = False,
+                 storage: str = "basis", _shared=None):
+        from .dense import require_anchor_or_deflate, warn_half_jump_eps
+        if jump not in ("half", "calibrated"):
+            raise ValueError(jump)
+        require_anchor_or_deflate(system, jump, deflate)
         warn_half_jump_eps(system, eps, jump)
         self.system = system
         self.layout = system.layout
@@ -78,7 +80,9 @@ class AssembledH:
         self.opts = opts
         self.verbose = verbose
         self.jump = jump
+        self.deflate = deflate
         self.storage = storage
+        self.report = None
         self.materials = {r.name: r.material for r in system.model.regions}
 
         if _shared is None:
@@ -123,14 +127,14 @@ class AssembledH:
 
         for t in list(self.system.terms) + list(self.system.rhs_terms):
             key = (id(t.field_patch), id(t.source_patch), t.kernel)
-            _add(key, _coeffs(t.kernel, self.materials[t.region.name]))
+            _add(key, kernel_coeffs(t.kernel, self.materials[t.region.name]))
         if self.jump == "calibrated":
             for region in self.system.model.regions:
                 c = kb.t_coeffs(self.materials[region.name].mu,
                                 self.materials[region.name].lam)
                 for q in region.patches:
                     for p in region.patches:
-                        _add((id(q), id(p), "H"), c)
+                        _add((id(q), id(p), KERNEL_T), c)
         return combos
 
     def _refresh_material_state(self):
@@ -143,149 +147,91 @@ class AssembledH:
             for key, pair in self._pairs.items():
                 pair.warm_views(combos.get(key, []))
         self.calib = self._calibration() if self.jump == "calibrated" \
-            else {}
+            else None
         self.b = self._build_rhs()
 
     # -- calibrated jump ------------------------------------------------
 
     def _calibration(self) -> dict:
-        """{(id(region), id(q)): C (Nq,3,3)}: the rigid-body-calibrated
-        collocation diagonal per BIE row (region, collocation patch q).
-
-        C = -sum_{p in dR} sigma(R,p) * rowsum_j H_qp, evaluated as
-        three constant-field matvecs per (q,p) through the COMPRESSED
-        pair when it exists (so the applied operator annihilates
-        constants exactly), or through the exact matrix-free
-        t_disp_contract for pairs the system never built (zero-valued
-        prescribed-displacement patches).
+        """``calibrated_diagonal`` with the H row-sums taken as three
+        constant-field matvecs through the COMPRESSED pair when it exists
+        (so the operator actually applied annihilates constants exactly),
+        or through the exact matrix-free ``t_disp_contract`` for pairs the
+        system never built (zero-valued prescribed-displacement patches).
         """
         from ..kernels import tri_kernels as tk
 
-        model = self.system.model
         arrays = kb.MeshArrays()
-        calib: dict = {}
-        for region in model.regions:
+
+        def rowsum(region, q, p):
             mat = self.materials[region.name]
             coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
-            for q in region.patches:
-                Nq = q.n_triangles
-                C = np.zeros((Nq, 3, 3))
-                xq = None
-                for p in region.patches:
-                    sigma = float(model.orientation(region, p))
-                    pair = self._pairs.get((id(q), id(p), "H"))
-                    for k in range(3):
-                        if pair is not None:
-                            const = np.zeros(3 * p.n_triangles)
-                            const[k::3] = 1.0
-                            col = pair.matvec(coeffs, const)
-                        else:
-                            if xq is None:
-                                xq = arrays.field_points(q.mesh)
-                            tv, nrm = arrays.source_arrays(p.mesh)
-                            dens = np.zeros((p.n_triangles, 3))
-                            dens[:, k] = 1.0
-                            col = tk.t_disp_contract(
-                                xq, tv, nrm, self.eps_for(p), dens,
-                                *coeffs).ravel()
-                        C[:, :, k] -= sigma * col.reshape(Nq, 3)
-                calib[(id(region), id(q))] = C
-        return calib
+            pair = self._pairs.get((id(q), id(p), KERNEL_T))
+            S = np.zeros((q.n_triangles, 3, 3))
+            for k in range(3):
+                if pair is not None:
+                    const = np.zeros(3 * p.n_triangles)
+                    const[k::3] = 1.0
+                    col = pair.matvec(coeffs, const)
+                else:
+                    xq = arrays.field_points(q.mesh)
+                    tv, nrm = arrays.source_arrays(p.mesh)
+                    dens = np.zeros((p.n_triangles, 3))
+                    dens[:, k] = 1.0
+                    col = tk.t_disp_contract(xq, tv, nrm, self.eps_for(p),
+                                             dens, *coeffs).ravel()
+                S[:, :, k] = col.reshape(q.n_triangles, 3)
+            return S
 
-    def _calib_row(self, region, q):
-        return self.calib[(id(region), id(q))]
+        return calibrated_diagonal(self.system, rowsum)
 
     # -- helpers --------------------------------------------------------
 
     def eps_for(self, patch) -> np.ndarray:
-        e = self.eps[patch.name] if isinstance(self.eps, dict) else self.eps
-        return kb.resolve_eps(e, patch.mesh)
+        return kb.resolve_patch_eps(self.eps, patch)
 
     def pair_for(self, term) -> PairCompressed:
         return self._pairs[(id(term.field_patch), id(term.source_patch),
                             term.kernel)]
 
     def _build_rhs(self) -> np.ndarray:
-        calibrated = self.jump == "calibrated"
         b = np.zeros(self.layout.n_unknowns)
         for rt in self.system.rhs_terms:
             pair = self.pair_for(rt)
             mat = self.materials[rt.region.name]
-            contrib = rt.scale * pair.matvec(_coeffs(rt.kernel, mat),
+            contrib = rt.scale * pair.matvec(kernel_coeffs(rt.kernel, mat),
                                              rt.vector)
             b[rt.row.offset:rt.row.stop] += contrib
-            if rt.add_half_of_vector and not calibrated:
-                b[rt.row.offset:rt.row.stop] += rt.scale_half * rt.vector
-        if calibrated:
-            # prescribed-displacement collocation rows: the calibrated
-            # diagonal multiplies the KNOWN u_bar, so it lands on the RHS
-            # (mirrors AssembledDense._apply_calibration).
-            layout = self.layout
-            for region in self.system.model.regions:
-                for q in region.patches:
-                    if layout.has_slot(q, "u"):
-                        continue
-                    u_bar = q.value_array()
-                    if not np.any(u_bar):
-                        continue
-                    C = self._calib_row(region, q)
-                    row = layout.row_slot(region, q)
-                    b[row.offset:row.stop] -= np.einsum(
-                        "nij,nj->ni", C, u_bar).ravel()
+        add_jump_rhs(self.system, self.calib, b)
         return b
 
     # -- operator ---------------------------------------------------
 
     def matvec(self, x: np.ndarray) -> np.ndarray:
-        calibrated = self.jump == "calibrated"
         y = np.zeros_like(x)
         for term in self.system.terms:
             pair = self.pair_for(term)
             mat = self.materials[term.region.name]
             seg = x[term.col.offset:term.col.stop]
             y[term.row.offset:term.row.stop] += \
-                term.scale * pair.matvec(_coeffs(term.kernel, mat), seg)
-            if term.diag_half and not calibrated:
-                y[term.row.offset:term.row.stop] += 0.5 * seg
-        if calibrated:
-            layout = self.layout
-            for region in self.system.model.regions:
-                for q in region.patches:
-                    if not layout.has_slot(q, "u"):
-                        continue
-                    C = self._calib_row(region, q)
-                    row = layout.row_slot(region, q)
-                    col = layout.slot(q, "u")
-                    seg = x[col.offset:col.stop].reshape(-1, 3)
-                    y[row.offset:row.stop] += np.einsum(
-                        "nij,nj->ni", C, seg).ravel()
+                term.scale * pair.matvec(kernel_coeffs(term.kernel, mat), seg)
+            D = term_diagonal(term, self.calib)
+            if D is not None:
+                y[term.row.offset:term.row.stop] += diagonal_matvec(D, seg)
         return y
 
     def to_dense(self) -> np.ndarray:
-        calibrated = self.jump == "calibrated"
         n = self.layout.n_unknowns
         A = np.zeros((n, n))
         for term in self.system.terms:
             pair = self.pair_for(term)
             mat = self.materials[term.region.name]
-            blk = pair.to_dense(_coeffs(term.kernel, mat))
+            blk = pair.to_dense(kernel_coeffs(term.kernel, mat))
             A[term.row.offset:term.row.stop,
               term.col.offset:term.col.stop] += term.scale * blk
-            if term.diag_half and not calibrated:
-                idx = np.arange(term.row.size)
-                A[term.row.offset + idx, term.col.offset + idx] += 0.5
-        if calibrated:
-            layout = self.layout
-            for region in self.system.model.regions:
-                for q in region.patches:
-                    if not layout.has_slot(q, "u"):
-                        continue
-                    C = self._calib_row(region, q)
-                    row = layout.row_slot(region, q)
-                    col = layout.slot(q, "u")
-                    for i in range(q.n_triangles):
-                        A[row.offset + 3 * i:row.offset + 3 * i + 3,
-                          col.offset + 3 * i:col.offset + 3 * i + 3] += C[i]
+            D = term_diagonal(term, self.calib)
+            if D is not None:
+                add_block_diagonal(A, term.row.offset, term.col.offset, D)
         return A
 
     # -- solve -------------------------------------------------------
@@ -295,22 +241,20 @@ class AssembledH:
               maxiter: int = defaults.GMRES_MAXITER,
               x0: np.ndarray | None = None,
               precond_max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
-              precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
-              deflate: bool = False):
-        """Preconditioned FGMRES. Returns (slot dict, SolveReport).
+              precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF):
+        """Preconditioned FGMRES; returns {slot_name: (N_patch, 3) array}
+        and leaves ``self.report`` (the ``SolveReport``).
 
-        ``deflate=True`` projects the rigid-translation null space out
+        With ``deflate`` the rigid-translation null space is projected out
         of the iteration (all-Neumann + calibrated models): solves
         P A P y = P b with P = I - Z Z^T and returns the zero-mean-
         translation representative P y.
         """
-        from .dense import require_anchor_or_deflate
-        require_anchor_or_deflate(self.system, self.jump, deflate)
         if self._precond is None:
             self._precond = BlockGaussSeidel(self, max_dense=precond_max_dense,
                                              hodlr_max=precond_hodlr_max,
                                              verbose=self.verbose)
-        if deflate:
+        if self.deflate:
             from .dense import translation_basis
             Z = translation_basis(self.layout)
 
@@ -327,15 +271,16 @@ class AssembledH:
                                rtol=rtol, restart=restart, maxiter=maxiter)
         if self.verbose:
             print(f"  {report}")
-        out = {s.name: x[s.offset:s.stop].reshape(-1, 3)
-               for s in self.layout.slots}
-        return out, report
+        self.report = report
+        return {s.name: x[s.offset:s.stop].reshape(-1, 3)
+                for s in self.layout.slots}
 
     # -- viscoelastic hook --------------------------------------------
 
     def rebuild_for_materials(self, material_map: dict) -> "AssembledH":
         new = AssembledH(self.system, self.eps, self.opts, self.verbose,
-                         jump=self.jump, storage=self.storage,
+                         jump=self.jump, deflate=self.deflate,
+                         storage=self.storage,
                          _shared=(self._pairs, self._tree_cache))
         for name, mat in material_map.items():
             if name not in new.materials:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import defaults
+from .kernels import kernel_n_basis
 from .kernels import basis as kb
 from .la.cluster import build_cluster_tree, build_partition
 
@@ -64,7 +65,7 @@ def estimate_memory(system, mode: str = "direct",
         basis_bytes = 0
         if mode == "basis":
             for fp, sp, kern in _pair_keys(system).values():
-                B = 6 if kern == "H" else 3
+                B = kernel_n_basis(kern)
                 basis_bytes += B * (3 * fp.n_triangles) \
                     * (3 * sp.n_triangles) * 8
         out["basis_bytes"] = basis_bytes
@@ -83,7 +84,7 @@ def estimate_memory(system, mode: str = "direct",
         dense_bytes = 0
         lowrank_bytes = 0
         for fp, sp, kern in _pair_keys(system).values():
-            B = 6 if kern == "H" else 3
+            B = kernel_n_basis(kern)
             mult = B if storage == "basis" else 1
             part = build_partition(_tree(fp.mesh), _tree(sp.mesh),
                                    eta=eta, max_admissible=max_admissible)
@@ -106,11 +107,14 @@ def estimate_memory(system, mode: str = "direct",
     return out
 
 
-def choose_dense_mode(system, budget_fraction: float = 0.5) -> str:
-    """"basis" if its stacks fit within ``budget_fraction`` of RAM
-    (cheap material rebuilds), else "direct" (memory-light). Falls back
-    to "direct" when RAM cannot be determined and the stacks exceed
-    16 GB."""
+def choose_dense_mode(system, budget_fraction: float = 0.5,
+                      need_rebuild: bool = False) -> str:
+    """"direct" (memory-light, the default everywhere) unless the caller
+    needs cheap material rebuilds (``need_rebuild``) AND the "basis" stacks
+    fit within ``budget_fraction`` of RAM (16 GB when RAM is unknown); a
+    rebuild that does not fit falls back to "direct" with a warning."""
+    if not need_rebuild:
+        return "direct"
     est = estimate_memory(system, mode="basis")
     ram = total_ram_bytes()
     limit = budget_fraction * ram if ram else 16e9
@@ -119,5 +123,6 @@ def choose_dense_mode(system, budget_fraction: float = 0.5) -> str:
     import warnings
     warnings.warn(
         f"basis-mode stacks would need {est['total_bytes']/1e9:.1f} GB "
-        f"(> {limit/1e9:.1f} GB budget); using mode='direct'")
+        f"(> {limit/1e9:.1f} GB budget); using mode='direct' (material "
+        f"rebuilds will re-assemble)")
     return "direct"

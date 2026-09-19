@@ -1,28 +1,40 @@
 """Dense backend for BlockSystem: direct LU solve at oracle-parity quality.
 
-Two assembly modes:
+Three assembly modes:
+
+* ``mode="direct"`` (default) — numba in-loop assembly, no basis storage:
+  the memory-light choice for one-shot solves; ``rebuild_for_materials``
+  re-assembles (still fast).
 
 * ``mode="legacy"`` — every (field, source, kernel, material) block is
   produced by the legacy ``mollified_bem.assemble_BEM_matrices`` call,
   giving entrywise-identical blocks to the hand-written assemblers
-  (the Phase-2 parity gate). Global scalar eps only.
+  (the parity gate). Global scalar eps only.
 
 * ``mode="basis"`` — geometry-only basis stacks are assembled ONCE per
   (field, source, kernel) pair with the numba kernels and recombined
-  per material. ``rebuild_for_materials`` then re-solves with new
-  region materials at recombination cost (no re-integration) — the
-  primitive the viscoelastic Laplace sweep needs. Supports per-source-
-  element eps arrays keyed by patch name.
+  per material (~9x the memory of one dense matrix across the pair
+  set). ``rebuild_for_materials`` then re-solves with new region
+  materials at recombination cost (no re-integration) — the primitive
+  a material sweep needs.
+
+Both backends share one API: ``Backend(jump=..., deflate=...).assemble(
+system, eps).solve()`` returns the slot dict and leaves ``asm.report``.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
 from .. import defaults
+from ..kernels import KERNEL_T
 from ..kernels import basis as kb
-from ..model.equations import BlockSystem
+from ..model.equations import (BlockSystem, add_block_diagonal,
+                               add_jump_rhs, calibrated_diagonal,
+                               term_diagonal)
 
 
 class DenseBackend:
@@ -40,19 +52,14 @@ class DenseBackend:
     EXACT null space: "calibrated" there requires ``deflate=True``.
     """
 
-    def __init__(self, mode: str = "basis", jump: str = "calibrated",
+    def __init__(self, mode: str = "direct", jump: str = "calibrated",
                  deflate: bool = False):
-        # "legacy": legacy assembly calls (oracle parity; scalar eps).
-        # "basis":  numba basis stacks, cached for cheap material rebuilds
-        #           (memory ~9x one dense matrix across the pair set).
-        # "direct": numba in-loop assembly, no basis storage — the
-        #           memory-light choice for one-shot large dense solves;
-        #           rebuild_for_materials re-assembles (still fast).
+        # mode:    "direct" / "legacy" / "basis" (module docstring).
         # jump:    "calibrated" annihilates constant fields exactly; "half"
         #           with eps/h > ~0.5 is NON-convergent (the backends warn).
         # deflate: solve the rigid-translation-bordered system — REQUIRED
-        #           for jump="calibrated" on all-Neumann models (the
-        #           assembled operator raises otherwise).
+        #           for jump="calibrated" on all-Neumann models (assembly
+        #           refuses otherwise).
         if mode not in ("legacy", "basis", "direct"):
             raise ValueError(mode)
         if jump not in ("half", "calibrated"):
@@ -66,19 +73,11 @@ class DenseBackend:
                               deflate=self.deflate)
 
 
-def _eps_for(eps, patch) -> np.ndarray:
-    if isinstance(eps, dict):
-        e = eps[patch.name]
-    else:
-        e = eps
-    return kb.resolve_eps(e, patch.mesh)
-
-
 def require_anchor_or_deflate(system: BlockSystem, jump: str, deflate: bool):
     """``jump="calibrated"`` on an un-anchored (all-Neumann) model makes
     rigid translations an EXACT null space of A; refuse to solve it without
-    ``deflate`` (the factorization would return |u| ~ 1e9 km). Shared by both
-    backends: dense checks at assembly, H at ``solve`` where ``deflate`` lives.
+    ``deflate`` (the factorization would return |u| ~ 1e9 km). Both backends
+    check at construction, where ``deflate`` lives.
     """
     if jump == "calibrated" and not deflate and not system.model.is_anchored():
         raise ValueError(
@@ -100,9 +99,9 @@ def warn_half_jump_eps(system: BlockSystem, eps, jump: str):
     for r in system.model.regions:
         for p in list(r.patches) + list(r.faults):
             try:
-                ratio = float(np.max(_eps_for(eps, p)
+                ratio = float(np.max(kb.resolve_patch_eps(eps, p)
                                      / kb.element_sizes(p.mesh)))
-            except (KeyError, ValueError):
+            except ValueError:
                 continue          # the backend reports a bad spec itself
             if ratio > worst:
                 worst_name, worst = p.name, ratio
@@ -130,6 +129,17 @@ def translation_basis(layout) -> np.ndarray:
     return Z
 
 
+@dataclass
+class DenseSolveReport:
+    """``asm.report`` of a dense solve: the 1-norm condition estimate
+    (LAPACK gecon on the LU, essentially free); the compressed backend's
+    counterpart is ``la.solver.SolveReport``."""
+    cond_estimate: float
+
+    def __str__(self):
+        return f"dense LU: cond ~ {self.cond_estimate:.2e}"
+
+
 class AssembledDense:
     def __init__(self, system: BlockSystem, eps, mode: str,
                  jump: str = "calibrated", deflate: bool = False,
@@ -153,6 +163,7 @@ class AssembledDense:
         # basis cache: (id(field), id(source), kernel) -> UBasis | TBasis
         self._basis = _basis_cache if _basis_cache is not None else {}
         self._lu = None
+        self.report = None
         self.A = None
         self.b = None
         self._build()
@@ -163,7 +174,7 @@ class AssembledDense:
         import mollified_bem as mb
         if isinstance(self.eps, (dict, str)):
             raise ValueError("legacy mode supports only global scalar eps")
-        kern = "T" if kernel == "H" else "U"
+        kern = "T" if kernel == KERNEL_T else "U"
         return mb.assemble_BEM_matrices(field_patch.mesh, source_patch.mesh,
                                         material, float(self.eps), kern)
 
@@ -171,8 +182,8 @@ class AssembledDense:
         key = (id(field_patch), id(source_patch), kernel)
         b = self._basis.get(key)
         if b is None:
-            eps_arr = _eps_for(self.eps, source_patch)
-            if kernel == "H":
+            eps_arr = kb.resolve_patch_eps(self.eps, source_patch)
+            if kernel == KERNEL_T:
                 b = kb.assemble_t_basis(field_patch.mesh, source_patch.mesh,
                                         eps_arr, arrays=self._arrays)
             else:
@@ -182,8 +193,8 @@ class AssembledDense:
         return b.combine(material)
 
     def _block_direct(self, field_patch, source_patch, kernel, material):
-        eps_arr = _eps_for(self.eps, source_patch)
-        if kernel == "H":
+        eps_arr = kb.resolve_patch_eps(self.eps, source_patch)
+        if kernel == KERNEL_T:
             return kb.assemble_t_matrix(field_patch.mesh, source_patch.mesh,
                                         material, eps_arr,
                                         arrays=self._arrays)
@@ -206,9 +217,8 @@ class AssembledDense:
                       kernel, region):
         """``_block`` through a per-build cache keyed on
         (field, source, kernel, material) identity. Shared by the system
-        terms, the RHS terms, AND the calibration pass -- calibration
-        needs the same H blocks the equations do, and re-assembling them
-        (the old behaviour) doubled the direct-mode assembly cost."""
+        terms, the RHS terms and the calibration row-sums, which need the
+        same H blocks the equations do."""
         mat = self.materials[region.name]
         ck = (id(field_patch), id(source_patch), kernel, id(mat))
         blk = cache.get(ck)
@@ -230,7 +240,15 @@ class AssembledDense:
         block_cache: dict = {}
         self._arrays = kb.MeshArrays()
 
-        calibrated = self.jump == "calibrated"
+        # Calibrated jump: row-sum the same H blocks the equations use
+        # (through the cache, so nothing is assembled twice).
+        self.calib = None
+        if self.jump == "calibrated":
+            def rowsum(region, q, p):
+                blk = self._cached_block(block_cache, q, p, KERNEL_T, region)
+                return blk.reshape(q.n_triangles, 3, p.n_triangles,
+                                   3).sum(axis=2)
+            self.calib = calibrated_diagonal(self.system, rowsum)
 
         A = np.zeros((n, n))
         for t in self.system.terms:
@@ -239,9 +257,9 @@ class AssembledDense:
             r0, r1 = t.row.offset, t.row.stop
             c0, c1 = t.col.offset, t.col.stop
             A[r0:r1, c0:c1] += t.scale * blk
-            if t.diag_half and not calibrated:
-                idx = np.arange(r1 - r0)
-                A[r0 + idx, c0 + idx] += 0.5
+            D = term_diagonal(t, self.calib)
+            if D is not None:
+                add_block_diagonal(A, r0, c0, D)
 
         b = np.zeros(n)
         for rt in self.system.rhs_terms:
@@ -249,64 +267,18 @@ class AssembledDense:
                                      rt.source_patch, rt.kernel, rt.region)
             r0, r1 = rt.row.offset, rt.row.stop
             b[r0:r1] += rt.scale * (blk @ rt.vector)
-            if rt.add_half_of_vector and not calibrated:
-                b[r0:r1] += rt.scale_half * rt.vector
-
-        if calibrated:
-            self._apply_calibration(A, b, block_cache)
+        add_jump_rhs(self.system, self.calib, b)
 
         self._arrays = None          # end of assembly scope
         self.A = A
         self.b = b
 
-    def _apply_calibration(self, A: np.ndarray, b: np.ndarray,
-                           block_cache: dict) -> None:
-        """Rigid-body jump calibration.
-
-        For each BIE row (region R, collocation patch q), set the
-        collocation diagonal C_q so that a constant displacement field
-        over ALL of dR (unknown and prescribed alike) with zero
-        tractions is annihilated exactly:
-
-            C_q = - sum_{p in dR} sigma(R,p) * rowsum_j H^{m(R)}_{qp}
-
-        replacing the 1/2 I of the classical jump relation. The sums
-        include prescribed-displacement patches (their H term lives on
-        the RHS, so the constant-field identity needs them here too).
-        """
-        layout = self.layout
-        model = self.system.model
-        for region in model.regions:
-            for q in region.patches:
-                row = layout.row_slot(region, q)
-                Nq = q.n_triangles
-                C = np.zeros((Nq, 3, 3))
-                for p in region.patches:
-                    sigma = float(model.orientation(region, p))
-                    blk = self._cached_block(block_cache, q, p, "H", region)
-                    C -= sigma * blk.reshape(Nq, 3, p.n_triangles,
-                                             3).sum(axis=2)
-                if layout.has_slot(q, "u"):
-                    col = layout.slot(q, "u")
-                    for i in range(Nq):
-                        A[row.offset + 3 * i: row.offset + 3 * i + 3,
-                          col.offset + 3 * i: col.offset + 3 * i + 3] \
-                            += C[i]
-                else:
-                    u_bar = q.value_array()
-                    if np.any(u_bar):
-                        contrib = np.einsum("nij,nj->ni", C, u_bar)
-                        b[row.offset:row.stop] -= contrib.ravel()
-
     # -- solve -------------------------------------------------------
 
     def solve(self) -> dict:
-        """LU-solve; returns {slot_name: (N_patch, 3) array}.
-
-        Also stores ``self.cond_estimate`` (1-norm condition estimate,
-        essentially free from the LU via LAPACK gecon) — the
-        viscoelastic pipeline uses it to detect samples polluted by the
-        spurious discretization resonance.
+        """LU-solve; returns {slot_name: (N_patch, 3) array} and leaves
+        ``self.report`` (a ``DenseSolveReport`` with ``cond_estimate``,
+        used to flag samples polluted by discretization resonance).
         """
         if self._lu is None:
             if self.deflate:
@@ -325,13 +297,12 @@ class AssembledDense:
             from scipy.linalg import get_lapack_funcs
             gecon = get_lapack_funcs(("gecon",), (self._lu[0],))[0]
             rcond, info = gecon(self._lu[0], anorm, norm="1")
-            self.cond_estimate = (1.0 / rcond) if (info == 0 and rcond > 0) \
-                else np.inf
-            if self.cond_estimate > defaults.COND_WARN_THRESHOLD:
+            cond = (1.0 / rcond) if (info == 0 and rcond > 0) else np.inf
+            self.report = DenseSolveReport(cond_estimate=float(cond))
+            if cond > defaults.COND_WARN_THRESHOLD:
                 import warnings
                 warnings.warn(
-                    f"dense solve: condition estimate "
-                    f"{self.cond_estimate:.2e} exceeds "
+                    f"dense solve: condition estimate {cond:.2e} exceeds "
                     f"{defaults.COND_WARN_THRESHOLD:.0e}; the solution may "
                     f"miss the {defaults.SOLUTION_RTOL:.0e} accuracy target "
                     f"(thin panels, near-fluid material, un-anchored "
@@ -373,6 +344,7 @@ class AssembledDense:
             new.materials[name] = mat
         new._basis = self._basis          # shared geometry cache
         new._lu = None
+        new.report = None
         new.A = None
         new.b = None
         new._build()

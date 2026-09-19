@@ -1,61 +1,20 @@
-"""Legacy-signature wrappers over the region-graph core.
+"""Worked example of building a RegionModel: the vertical fault-zone box.
 
-Each ``solve_*_v2`` accepts the same arguments (and returns the same
-shapes) as its frozen legacy counterpart, but routes through
-RegionModel -> generate_system -> DenseBackend. ``mode="legacy"`` uses
-the legacy assembly calls (entrywise parity); ``mode="basis"`` uses the
-numba material-basis path (fast, rebuildable for new materials).
+Three regions side by side joined by two vertical INTERFACE planes --
+a topology the frozen legacy solvers cannot express. Used by the
+backend gates (verify_dense_backend, verify_hbackend).
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from .backends import DenseBackend
-from .model import BCType, Patch, Region, RegionModel, generate_system
+from .model import BCType, Patch, Region, RegionModel
 
 
 def _slip_value(fault_mesh, fault_slip_vector, slip_magnitude) -> np.ndarray:
     v = slip_magnitude * np.asarray(fault_slip_vector, dtype=float)
     return np.broadcast_to(v, (fault_mesh.n_triangles, 3))
-
-
-def build_three_region_box_model(meshes, fault_mesh, fault_slip_vector,
-                                 slip_magnitude, material_1, material_2,
-                                 material_3, fault_region="layer1"):
-    top = Patch("top", meshes["top"], BCType.FREE_TRACTION)
-    s1 = Patch("sides1", meshes["sides"][1], BCType.FREE_TRACTION)
-    s2 = Patch("sides2", meshes["sides"][2], BCType.FREE_TRACTION)
-    s3 = Patch("sides3", meshes["sides"][3], BCType.FREE_TRACTION)
-    i1 = Patch("interface1", meshes["interfaces"][1], BCType.INTERFACE)
-    i2 = Patch("interface2", meshes["interfaces"][2], BCType.INTERFACE)
-    base = Patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)
-    fault = Patch("fault", fault_mesh, BCType.FAULT,
-                  value=_slip_value(fault_mesh, fault_slip_vector,
-                                    slip_magnitude))
-
-    top_v = meshes["top"].vertices
-    cx = 0.5 * (top_v[:, 0].min() + top_v[:, 0].max()) \
-        + 0.11 * (top_v[:, 0].max() - top_v[:, 0].min())
-    cy = 0.5 * (top_v[:, 1].min() + top_v[:, 1].max()) \
-        + 0.07 * (top_v[:, 1].max() - top_v[:, 1].min())
-    z_top = float(top_v[:, 2].mean())
-    z1 = float(meshes["interfaces"][1].vertices[:, 2].mean())
-    z2 = float(meshes["interfaces"][2].vertices[:, 2].mean())
-    z_bot = float(meshes["base"].vertices[:, 2].mean())
-
-    flt = {name: [fault] if name == fault_region else []
-           for name in ("layer1", "layer2", "layer3")}
-    R1 = Region("layer1", material_1, [top, s1, i1],
-                probe_point=np.array([cx, cy, 0.5 * (z_top + z1)]),
-                faults=flt["layer1"])
-    R2 = Region("layer2", material_2, [i1, s2, i2],
-                probe_point=np.array([cx, cy, 0.5 * (z1 + z2)]),
-                faults=flt["layer2"])
-    R3 = Region("layer3", material_3, [i2, s3, base],
-                probe_point=np.array([cx, cy, 0.5 * (z2 + z_bot)]),
-                faults=flt["layer3"])
-    return RegionModel([R1, R2, R3])
 
 
 def build_vertical_fault_zone_model(x_range, y_range, z_bottom,
@@ -145,18 +104,3 @@ def build_vertical_fault_zone_model(x_range, y_range, z_bottom,
         probe_point=np.array([0.5 * (a + x1), cy, zmid]))
 
     return RegionModel([left, zone, right])
-
-
-def solve_three_region_box_v2(meshes, fault_mesh, fault_normal,
-                              fault_slip_vector, slip_magnitude,
-                              material_1, material_2, material_3, eps,
-                              mode="basis", return_assembled=False):
-    """Build a three-region box model and solve it with the dense backend.
-    Returns the raw slot->array solution dict (and the assembled operator
-    if return_assembled)."""
-    model = build_three_region_box_model(
-        meshes, fault_mesh, fault_slip_vector, slip_magnitude,
-        material_1, material_2, material_3)
-    asm = DenseBackend(mode).assemble(generate_system(model), eps)
-    sol = asm.solve()
-    return (sol, asm) if return_assembled else sol

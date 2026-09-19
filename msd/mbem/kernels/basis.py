@@ -7,7 +7,7 @@ The mollified Kelvin U/T influence matrices decompose exactly as
 with GEOMETRY-ONLY basis matrices B_k (3 for the U kernel, 6 for the T
 kernel; eps^2 is baked into the relevant B_k). Assemble the basis once
 per (field mesh, source mesh, eps) and recombine for every region
-material and every Laplace sample — including complex mu_tilde(s).
+material. Materials are real; both backends allocate real accumulators.
 
 BINDING RULES (from the approved plan's cross-review):
   * coefficients are computed from (mu, lam) directly — NEVER via a
@@ -28,7 +28,7 @@ from . import tri_kernels as tk
 
 
 # ---------------------------------------------------------------------
-# Material coefficient functions (complex-safe)
+# Material coefficient functions
 # ---------------------------------------------------------------------
 
 def _mu_lam(material=None, mu=None, lam=None):
@@ -159,7 +159,7 @@ def resolve_eps(eps, mesh) -> np.ndarray:
     (h_j = mean edge length). "auto" keeps eps/h fixed under mesh
     grading and h-refinement -- coarse far-field panels are not
     under-mollified and fine fault-zone panels are not over-mollified.
-    Per-patch dicts are split by the callers before reaching here.
+    Per-patch dicts are split by ``resolve_patch_eps``.
     """
     if isinstance(eps, str):
         if eps != "auto":
@@ -167,6 +167,20 @@ def resolve_eps(eps, mesh) -> np.ndarray:
         return np.ascontiguousarray(
             defaults.EPS_OVER_H * element_sizes(mesh))
     return as_eps_array(eps, mesh.n_triangles)
+
+
+def resolve_patch_eps(spec, patch) -> np.ndarray:
+    """Resolve the eps spec of one patch or fault to its (N_src,) array.
+
+    A dict is keyed by patch name and must name every patch it is used
+    for; anything else is the spec of every patch (``resolve_eps``).
+    """
+    if isinstance(spec, dict):
+        if patch.name not in spec:
+            raise ValueError(f"eps dict has no entry for patch "
+                             f"{patch.name!r} (keys: {sorted(spec)})")
+        spec = spec[patch.name]
+    return resolve_eps(spec, patch.mesh)
 
 
 # ---------------------------------------------------------------------

@@ -74,7 +74,9 @@ before and after touching assembly, compression or evaluation.
    exact finite-triangle form (`eigenstress_contract`), per element with the
    element's own eps. Stress presented as elastic must have it subtracted.
 4. **eps is per source element.** Scalar, `(N_src,)` array, per-patch dict or
-   `"auto"` (= 0.1 h, basis in `defaults.py`). Displacement floors at
+   `"auto"` (= 0.1 h on a boundary patch; on a FAULT one value, 0.07 min h,
+   because per-element widths smear a uniform slip unequally and put tens
+   of percent on the on-fault stress; basis in `defaults.py`). Displacement floors at
    eps/h ~ 0.125 and conditioning improves as eps/h drops; on-fault stress
    wants eps <= ~0.07 h on the fault and <= 0.125 h on a top patch near a
    trace, and the first element row below a free surface is trustworthy only

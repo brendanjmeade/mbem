@@ -74,6 +74,11 @@ def check_resolve():
                   np.linalg.norm(tv[:, 2] - tv[:, 1], axis=1),
                   np.linalg.norm(tv[:, 0] - tv[:, 2], axis=1)]).mean(axis=0)
     ok &= np.allclose(auto, defaults.EPS_OVER_H * h, rtol=1e-14)
+    # on a FAULT patch "auto" is one value, FAULT_EPS_OVER_H * min(h)
+    from mbem.model import BCType, Patch
+    fa = kb.resolve_patch_eps("auto", Patch("f", mesh, BCType.FAULT))
+    ok &= fa.shape == (n,) and np.all(fa == fa[0]) and np.isclose(
+        fa[0], defaults.FAULT_EPS_OVER_H * h.min())
     print(f"    auto eps range: [{auto.min():.3f}, {auto.max():.3f}] "
           f"(EPS_OVER_H={defaults.EPS_OVER_H})")
 
@@ -154,8 +159,8 @@ def check_end_to_end():
     # WIRING: "auto" must be exactly the explicit per-element array
     explicit = {p.name: defaults.EPS_OVER_H * kb.element_sizes(p.mesh)
                 for p in region.patches}
-    for f in region.faults:
-        explicit[f.name] = defaults.EPS_OVER_H * kb.element_sizes(f.mesh)
+    for f in region.faults:        # a fault gets ONE eps: FAULT_EPS_OVER_H * min(h)
+        explicit[f.name] = defaults.FAULT_EPS_OVER_H * float(kb.element_sizes(f.mesh).min())
     sol_exp = AssembledDense(system, explicit, "direct",
                              jump="calibrated").solve()
     same = all(np.array_equal(sol_auto[k], sol_exp[k]) for k in sol_auto)

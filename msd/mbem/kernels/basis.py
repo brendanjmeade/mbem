@@ -173,13 +173,20 @@ def resolve_patch_eps(spec, patch) -> np.ndarray:
     """Resolve the eps spec of one patch or fault to its (N_src,) array.
 
     A dict is keyed by patch name and must name every patch it is used
-    for; anything else is the spec of every patch (``resolve_eps``).
+    for; anything else is the spec of every patch (``resolve_eps``). On a
+    FAULT, ``"auto"`` is one value, ``FAULT_EPS_OVER_H * min(h)`` (see
+    ``defaults``), not a per-element width.
     """
+    from ..model.core import BCType
+
     if isinstance(spec, dict):
         if patch.name not in spec:
             raise ValueError(f"eps dict has no entry for patch "
                              f"{patch.name!r} (keys: {sorted(spec)})")
         spec = spec[patch.name]
+    if isinstance(spec, str) and spec == "auto" and patch.bc is BCType.FAULT:
+        h = element_sizes(patch.mesh)
+        return np.full(h.size, defaults.FAULT_EPS_OVER_H * float(h.min()))
     return resolve_eps(spec, patch.mesh)
 
 

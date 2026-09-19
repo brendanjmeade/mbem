@@ -12,24 +12,27 @@ frozen as an oracle once P1/P2 are ported.
   (`evaluate_stress`, default). Raw totals are kernel demos only.
 * Fault slip sense: `Patch.value = u(-n) - u(+n) = -b`; `ddbem`/`clq` use `+b`.
   `mbem.selfcheck` pins it; never restate it.
-* eps/h: `eps="auto"` = 0.1 h; on-fault stress wants <= 0.07 h on the fault and
-  <= 0.125 h on a top patch near a trace (`msd/CLAUDE.md`, envelope section).
+* eps/h: `eps="auto"` = 0.1 h on boundary patches and ONE value 0.07 min h on
+  a fault (per-element widths on a uniform-slip fault are wrong); a top patch
+  near a trace wants <= 0.125 h (`msd/CLAUDE.md` rule 4).
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one.
 
 ## Open — correctness
 
-1. **Production eps** (fault box: eps/h = 0.42 on the fault, 0.35 on the top)
-   sits above every rule: trace-adjacent surface displacement −13 % vs the
-   half-space classical (0.5 % at eps/h = 0.12); on-fault sigma_xy +5–15 % in
-   the top 6 km. Decision needed before any paper number is re-quoted.
+1. Production eps (decided: `"auto"` everywhere — 0.1 h on the boundary
+   patches, one 0.07 min h on the fault; the 200-km box unchanged). Fault box
+   vs the half space: trace-adjacent surface u −8 % → −0.1 %, on-fault
+   sigma_xy at 8–18 km within 1 %; what remains in the top ~h_top is item 2.
 2. **First element row below a free surface**: on-fault sigma_xy +30–46 % at
    every h and eps (P0 staircase of the top layer, amplified by the
    image/total ratio ~D/2z). Measured cures: P1 top density at eps/h <= 0.125
    (to the floor) or h_top <= h_f/4 with eps_f <= 0.07 h_f and eps_top <=
    0.125 h_top (+4.5 %). Refining h_top alone, or a mirror source, does not work.
-3. Box truncation: surface displacement −4 % (32–64 km), −19 % (64–128),
-   −39 % (128–200) on the 200-km box — the manuscript's "ample box" claim.
+3. Box truncation (decided: the 200-km box stays): surface displacement is
+   −4 % (32–64 km), −19 % (64–128), −39 % (128–200) vs the half space, so
+   the manuscript's "ample box" sentence should be softened to a measured
+   statement; the far field is not to be quoted against half-space values.
 4. Copy parity: five kernel copies in `moss`/`medt_paper` have no gate;
    `mode="basis"`/`"legacy"` of the dense backend are compared to nothing.
 5. Near-trace displacement band (|x| < 1.5 eps) has no independent anchor.

@@ -37,7 +37,6 @@ from mbem.backends.dense import AssembledDense
 from mbem.kernels import basis as kb
 from mbem.model import BCType, Patch, Region, RegionModel, generate_system
 
-EPS = 4.0
 MAT_HOST = mb.ElasticMaterial(mu=30.0, lam=30.0)
 MAT_INC = mb.ElasticMaterial(mu=0.3, lam=0.3)     # mu_host / 100
 OUT = pathlib.Path(__file__).parent / "fig06_assessment.npz"
@@ -82,8 +81,8 @@ def build_model(meshes, fault_mesh, s_hat, mat_inc=None):
     return RegionModel([host, inclusion])
 
 
-def rowsum_violations(model):
-    print("=== jump-identity violations (eps = %.1f) ===" % EPS, flush=True)
+def rowsum_violations(model, eps):
+    print("=== jump-identity violations ===", flush=True)
     worst = 0.0
     for region in model.regions:
         for q in region.patches:
@@ -93,7 +92,7 @@ def rowsum_violations(model):
                 sigma = model.orientation(region, p)
                 H = kb.assemble_t_matrix(
                     xq, p.mesh, region.material,
-                    kb.as_eps_array(EPS, p.n_triangles))
+                    kb.resolve_patch_eps(eps, p))
                 total += sigma * H.reshape(xq.shape[0], 3, p.n_triangles,
                                            3).sum(axis=2)
             total += 0.5 * np.eye(3)[None, :, :]
@@ -116,14 +115,15 @@ def main():
     system = generate_system(model)
     print(f"unknowns: {system.layout.n_unknowns}")
 
-    worst_viol = rowsum_violations(model)
+    eps = "auto"
+    worst_viol = rowsum_violations(model, eps)
 
     results = {}
     conds = {}
     basis_cache: dict = {}
     for jump in ("half", "calibrated"):
         t0 = time.time()
-        asm = AssembledDense(system, EPS, "basis", jump=jump,
+        asm = AssembledDense(system, eps, "basis", jump=jump,
                              _basis_cache=basis_cache)
         sol_het = asm.solve()
         cond_het = asm.report.cond_estimate

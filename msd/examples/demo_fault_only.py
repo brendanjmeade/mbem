@@ -29,9 +29,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                         # noqa: E402
-from _fault_box import build_fault_box, build_model               # noqa: E402
+from _fault_box import build_fault_box, build_model  # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.evaluate import _stress_from_source                     # noqa: E402
+from mbem.model import BCType, Patch                             # noqa: E402
+from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 
 try:
@@ -40,7 +42,6 @@ try:
 except Exception:
     pass
 
-EPS = 3.0                       # km
 SLIP_MAG = 0.01                 # km == 10 m
 MAT = mb.ElasticMaterial(mu=30.0, lam=30.0)    # nu = 1/4
 KM_TO_MM = 1.0e6
@@ -49,10 +50,10 @@ VIEW = 100.0                    # km plotting half-window
 GRID_N = 161
 
 
-def free_surface_stress(meshes, sol):
+def free_surface_stress(meshes, sol, eps):
     """Elastic surface stress on a regular grid: interpolate the free-surface
     displacement, apply the free-surface Hooke law to the in-plane gradients,
-    then remove the anelastic eigenstress."""
+    then remove the anelastic eigenstress (``eps`` is the solve's spec)."""
     top = meshes["top"]
     c = top.centroids()
     u = sol["u:top"]
@@ -90,7 +91,7 @@ def free_surface_stress(meshes, sol):
     fault = meshes["fault"]
     slip_tri = np.broadcast_to(slip_cart, (fault.n_triangles, 3))
     sig_el = sig + _stress_from_source(obs, fault, slip_tri, "eigen", mu, MAT.nu,
-                                       np.full(fault.n_triangles, EPS))
+                                       kb.resolve_patch_eps(eps, Patch("fault", fault, BCType.FAULT)))
     comps = {"xx": sig_el[:, 0, 0], "yy": sig_el[:, 1, 1], "xy": sig_el[:, 0, 1]}
     S = {k: (v * GPA_TO_MPA).reshape(X.shape) for k, v in comps.items()}
     # Mask the thin surface-breaking fault strip: the slip is DISCONTINUOUS
@@ -108,11 +109,13 @@ def main():
                              edge_near=15.0, edge_far=35.0)
     model = build_model(meshes, SLIP_MAG, MAT)
     system = generate_system(model)
+    eps = "auto"
     nt = {k: meshes[k].n_triangles for k in ("top", "sides", "base", "fault")}
-    print(f"meshes: {nt}; unknowns: {system.layout.n_unknowns}", flush=True)
+    print(f"meshes: {nt}; unknowns: {system.layout.n_unknowns}; "
+          f"fault eps {kb.resolve_patch_eps(eps, model.regions[0].faults[0])[0]:.3f} km", flush=True)
 
     t0 = time.time()
-    asm = AssembledDense(system, EPS, "direct", jump="calibrated")
+    asm = AssembledDense(system, eps, "direct", jump="calibrated")
     sol = asm.solve()
     print(f"solved in {time.time()-t0:.0f} s; cond ~ {asm.report.cond_estimate:.2e}",
           flush=True)
@@ -122,7 +125,7 @@ def main():
     tri = mtri.Triangulation(top.vertices[:, 0], top.vertices[:, 1],
                              top.triangles)
     u = sol["u:top"] * KM_TO_MM
-    X, Y, S = free_surface_stress(meshes, sol)
+    X, Y, S = free_surface_stress(meshes, sol, eps)
 
     fig, axes = plt.subplots(2, 3, figsize=(11.0, 7.2),
                              gridspec_kw=dict(wspace=0.32, hspace=0.28))

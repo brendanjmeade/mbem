@@ -12,7 +12,9 @@ inclusion rim by >=125 km, the box edges by 100 km, and the fault trace
 by 10 km — the trace itself stays flat).
 
 Four solves on the SAME refined triangulation (warped vs flat, het vs
-homogeneous inclusion), all with the calibrated formulation:
+homogeneous inclusion), all with the calibrated formulation and the
+``eps="auto"`` (0.1 h on every boundary and interface patch, one
+0.07 min h on the fault):
 
     (topo, het)   (topo, hom)   (flat, het)   (flat, hom)
 
@@ -47,7 +49,6 @@ from mbem.model import generate_system
 from mbem.topography import (apply_topography, assert_zero_clearance,
                              gaussian_bump)
 
-EPS = 3.0
 BUMP_CENTER = (0.0, -50.0)     # on the fault trace ("on-fault" hill)
 BUMP_HEIGHT = 2.0          # km of relief
 BUMP_SIGMA = 30.0          # km
@@ -130,7 +131,8 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
         print(f"[{surface}] unknowns: {system.layout.n_unknowns}",
               flush=True)
 
-        asm = AssembledDense(system, EPS, "direct", jump="calibrated")
+        asm = AssembledDense(system, "auto", "direct",
+                             jump="calibrated")
         sol = asm.solve()
         conds[f"{surface}_het"] = asm.report.cond_estimate
         for p in ("host_top", "inclusion_top"):

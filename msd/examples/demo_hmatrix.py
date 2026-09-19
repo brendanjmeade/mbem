@@ -8,8 +8,8 @@ compressed FGMRES solution reproduces the dense LU reference.
 
 Notes
 -----
-* HBackend uses the half-jump formulation, so the dense reference here also
-  uses jump="half" (an apples-to-apples comparison of the SAME operator).
+* Both backends are built with jump="half" here (an apples-to-apples
+  comparison of the SAME operator; the backends default to "calibrated").
 * eta=0.8 (stricter admissibility) routes near-field blocks to exact dense;
   this is required for correctness -- the looser default admissibility can
   accept inaccurate low-rank factors for a near-field block.
@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                       # noqa: E402
-from assess_fig06_inclusion import build, build_model, EPS      # noqa: E402
+from assess_fig06_inclusion import build, build_model           # noqa: E402
 from mbem.backends import AssembledDense, HBackend              # noqa: E402
 from mbem.model import generate_system                          # noqa: E402
 
@@ -58,14 +58,15 @@ def main():
                         mat_inc=mb.ElasticMaterial(mu=MU_INC, lam=MU_INC))
     system = generate_system(model)
     n = system.layout.n_unknowns
-    print(f"fault + mu/10 inclusion: {n} unknowns, eps={EPS}", flush=True)
+    print(f"fault + mu/10 inclusion: {n} unknowns, eps=auto", flush=True)
 
     t0 = time.time()
-    dense = AssembledDense(system, EPS, "direct", jump="half").solve()
+    dense = AssembledDense(system, "auto", "direct", jump="half").solve()
     print(f"dense LU (half jump): {time.time()-t0:.0f} s", flush=True)
 
     t0 = time.time()
-    hasm = HBackend(eta=0.8, tol=1e-6, verbose=False).assemble(system, EPS)
+    hasm = HBackend(eta=0.8, tol=1e-6, jump="half",
+                    verbose=False).assemble(system, "auto")
     sol = hasm.solve(rtol=1e-8)
     report = hasm.report
     t_h = time.time() - t0

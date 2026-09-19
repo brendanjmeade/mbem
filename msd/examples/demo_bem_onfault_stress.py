@@ -11,11 +11,12 @@ The fault box has a FREE TOP surface at z=0, i.e. it is a half-space, so the
 independent reference is cutde's half-space triangular dislocation
 (tde_reference.py, halfspace=True).  We show:
 
-  (a) on-fault elastic shear at the fault center converges with eps and lands
+  (a) on-fault elastic shear at the fault center converges with eps (a scalar
+      ladder, then the production spec eps="auto") and lands
       on the half-space value (to box-truncation accuracy);
-  (b) the down-dip on-fault elastic shear profile matches the half-space
-      dislocation; the full-space TDE is drawn too, so the gap between them is
-      the free-surface contribution the BEM captures.
+  (b) the down-dip on-fault elastic shear profile at the production eps
+      matches the half-space dislocation; the full-space TDE is drawn too, so
+      the gap between them is the free-surface contribution the BEM captures.
 
 The mbem fault (-H@slip) and cutde's TDE use OPPOSITE slip-sign conventions, so
 the reference is sign-aligned to the BEM with a global g = +-1 measured at one
@@ -40,9 +41,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                        # noqa: E402
-from _fault_box import build_fault_box, build_model              # noqa: E402
+from _fault_box import build_fault_box, build_model  # noqa: E402
 from mbem.backends.dense import AssembledDense                   # noqa: E402
 from mbem.evaluate import evaluate_stress                        # noqa: E402
+from mbem.kernels import basis as kb                             # noqa: E402
 from mbem.model import generate_system                           # noqa: E402
 from tde_reference import classical_tde_stress                   # noqa: E402
 
@@ -63,7 +65,7 @@ GPA_TO_MPA = 1.0e3
 FAULT_HALF_LEN = 20.0
 FAULT_DEPTH = 20.0
 EDGE_FAULT = 2.0                                  # fault element size h (km)
-EPS_LADDER = [4.0, 3.0, 2.0, 1.5, 1.0]           # km, small vs fault (depth 20)
+EPS_LADDER = [4.0, 3.0, 2.0, 1.5, 1.0]           # km scalars; eps="auto" last
 
 
 def resolved_shear(sig, n_hat, s_hat):
@@ -109,9 +111,11 @@ def main():
 
     # Reconcile the BEM<->cutde slip-sign convention at one off-fault point.
     off = np.array([[15.0, 6.0, -28.0]])
-    asm0 = AssembledDense(system, 3.0, "direct", jump="calibrated")
+    eps_prod = "auto"
+    eps_f_prod = float(kb.resolve_patch_eps(eps_prod, region.faults[0])[0])
+    asm0 = AssembledDense(system, eps_prod, "direct", jump="calibrated")
     sol0 = asm0.solve()
-    ev_off = resolved_shear(evaluate_stress(model, region, sol0, off, 3.0,
+    ev_off = resolved_shear(evaluate_stress(model, region, sol0, off, eps_prod,
                                             subtract_anelastic=True),
                             n_hat, s_hat)[0] * GPA_TO_MPA
     g = float(np.sign(ev_off * ref_shear(off, True)[0]))
@@ -120,10 +124,13 @@ def main():
     hs_center = g * ref_shear(center, True)[0]
 
     # ---- (a) eps sweep: BEM on-fault elastic shear at the center ----
+    # (spec, fault eps for the axis): the scalar ladder, then eps="auto".
+    ladder = [(e, e) for e in EPS_LADDER] + [(eps_prod, eps_f_prod)]
+    eps_axis = [e for _, e in ladder]
     print("\n  BEM on-fault CENTER elastic shear vs eps")
-    print(f"    {'eps (km)':>9} {'tau_center (MPa)':>18}")
+    print(f"    {'eps_f (km)':>10} {'tau_center (MPa)':>18}")
     tau_center = []
-    for eps in EPS_LADDER:
+    for eps, eps_f in ladder:
         t0 = time.time()
         asm = AssembledDense(system, eps, "direct", jump="calibrated")
         sol = asm.solve()
@@ -131,7 +138,7 @@ def main():
                               subtract_anelastic=True)
         tau = resolved_shear(sig, n_hat, s_hat)[0] * GPA_TO_MPA
         tau_center.append(tau)
-        print(f"    {eps:9.3g} {tau:18.5f}   ({time.time()-t0:.0f}s)",
+        print(f"    {eps_f:10.3g} {tau:18.5f}   ({time.time()-t0:.0f}s)",
               flush=True)
     tau_center = np.array(tau_center)
     print(f"\n    half-space TDE reference      : {hs_center:.5f} MPa")
@@ -139,11 +146,9 @@ def main():
           f"{abs(tau_center[-1] - hs_center):.3e} MPa "
           f"({abs(tau_center[-1]/hs_center - 1)*100:.1f} %)\n")
 
-    # ---- (b) down-dip profile at the finest eps ----
-    eps_f = EPS_LADDER[-1]
-    asm = AssembledDense(system, eps_f, "direct", jump="calibrated")
-    sol = asm.solve()
-    sig_dd = evaluate_stress(model, region, sol, dd, eps_f,
+    # ---- (b) down-dip profile at the production eps (the last rung's sol) --
+    eps_f = eps_f_prod
+    sig_dd = evaluate_stress(model, region, sol, dd, eps_prod,
                              subtract_anelastic=True)
     tau_dd = resolved_shear(sig_dd, n_hat, s_hat) * GPA_TO_MPA
     tau_hs = g * ref_shear(dd, True)
@@ -155,11 +160,11 @@ def main():
 
     ax0.axhline(hs_center, color=HS_C, lw=1.0, ls="--",
                 label="half-space TDE")
-    ax0.plot(EPS_LADDER, tau_center, "s-", color=BEM_C, lw=1.4, ms=5,
+    ax0.plot(eps_axis, tau_center, "s-", color=BEM_C, lw=1.4, ms=5,
              label="BEM (elastic)")
-    ax0.set_xlabel(r"$\varepsilon$ (km)")
+    ax0.set_xlabel(r"fault $\varepsilon$ (km)")
     ax0.set_ylabel(r"on-fault center shear $\tau$ (MPa)")
-    ax0.set_xticks([1, 2, 3, 4])
+    ax0.set_xticks([0, 1, 2, 3, 4])
     sp = max(abs(tau_center.max() - tau_center.min()), 1e-3)
     ax0.set_ylim(min(tau_center.min(), hs_center) - 1.2 * sp,
                  max(tau_center.max(), hs_center) + 1.2 * sp)
@@ -167,7 +172,7 @@ def main():
     ax0.legend(frameon=False, fontsize=8, loc="best")
     ax0.text(0.96, 0.06,
              f"$\\to$ half-space\n({abs(tau_center[-1]/hs_center - 1)*100:.1f}% "
-             f"at $\\varepsilon={EPS_LADDER[-1]:g}$;\nrest is box truncation)",
+             f"at $\\varepsilon={eps_f:.2g}$;\nrest is box truncation)",
              transform=ax0.transAxes, ha="right", va="bottom", fontsize=7.0,
              color=BEM_C)
     ax0.text(0.04, 0.96, "a", transform=ax0.transAxes, ha="left", va="top")
@@ -175,7 +180,7 @@ def main():
     ax1.plot(tau_fs, depth, ":", color=FS_C, lw=1.4, label="full-space TDE")
     ax1.plot(tau_hs, depth, "--", color=HS_C, lw=1.4, label="half-space TDE")
     ax1.plot(tau_dd, depth, "o-", color=BEM_C, lw=1.3, ms=3.5,
-             label=fr"BEM ($\varepsilon={eps_f:g}$)")
+             label=fr"BEM ($\varepsilon={eps_f:.2g}$)")
     ax1.invert_yaxis()
     ax1.set_xlabel(r"on-fault shear $\tau$ (MPa)")
     ax1.set_ylabel(r"depth (km)")

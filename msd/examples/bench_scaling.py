@@ -7,7 +7,7 @@ fault-box model (free top, prescribed base, buried strike-slip fault):
   dense_asm AssembledDense(mode="direct", jump="calibrated")  [demo config]
   dense_lu  LU factor + solve (+ cond estimate)
   h_asm     HBackend(eta=0.8, tol=1e-6) compression
-  h_solve   preconditioned FGMRES (jump="half" operator)
+  h_solve   preconditioned FGMRES (calibrated operator, same as dense)
   eval_u    evaluate_displacement on a surface grid
   eval_sig  evaluate_stress at fault centroids (elastic)
 
@@ -41,7 +41,7 @@ sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                        # noqa: E402
 from mbem.kernels import KERNEL_T                                 # noqa: E402
-from _fault_box import build_fault_box, build_model               # noqa: E402
+from _fault_box import build_fault_box, build_model  # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.evaluate import evaluate_displacement, evaluate_stress  # noqa: E402
@@ -49,7 +49,6 @@ from mbem.model import generate_system                            # noqa: E402
 
 MAT = mb.ElasticMaterial(mu=30.0, lam=30.0)
 SLIP = 0.01
-EPS = 3.0
 
 # Mesh ladder: (edge_fault, edge_near, edge_far, edge_side) — each step
 # refines edges by ~1.6x (~2.6x more triangles).
@@ -77,6 +76,7 @@ def bench_size(cfg: dict) -> dict:
                              near_field_radius=50.0, **cfg)
     model = build_model(meshes, SLIP, MAT)
     system = generate_system(model)
+    eps = "auto"
     rec["system_s"] = time.perf_counter() - t0
     rec["n_tris"] = int(sum(meshes[k].n_triangles
                             for k in ("top", "sides", "base", "fault")))
@@ -84,7 +84,7 @@ def bench_size(cfg: dict) -> dict:
 
     # -- dense direct + calibrated (the demo configuration) ----------
     t0 = time.perf_counter()
-    dense = AssembledDense(system, EPS, "direct", jump="calibrated")
+    dense = AssembledDense(system, eps, "direct", jump="calibrated")
     rec["dense_asm_s"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
@@ -94,7 +94,7 @@ def bench_size(cfg: dict) -> dict:
 
     # -- H backend ----------------------------------------------------
     t0 = time.perf_counter()
-    hasm = HBackend(eta=0.8, tol=1e-6).assemble(system, EPS)
+    hasm = HBackend(eta=0.8, tol=1e-6).assemble(system, eps)
     rec["h_asm_s"] = time.perf_counter() - t0
     rec["h_nbytes_mb"] = hasm.nbytes() / 1e6
     rec["h_lowrank"] = int(sum(p.n_lowrank for p in hasm._pairs.values()))
@@ -115,7 +115,7 @@ def bench_size(cfg: dict) -> dict:
                              np.full(X.size, -30.0)])
     region = model.regions[0]
     t0 = time.perf_counter()
-    evaluate_displacement(model, region, sol, obs_u, EPS)
+    evaluate_displacement(model, region, sol, obs_u, eps)
     rec["eval_u_s"] = time.perf_counter() - t0
     rec["n_eval_u"] = int(obs_u.shape[0])
 
@@ -123,7 +123,7 @@ def bench_size(cfg: dict) -> dict:
     obs_s = c[np.linspace(0, len(c) - 1, min(N_EVAL_SIG, len(c)),
                           dtype=int)]
     t0 = time.perf_counter()
-    evaluate_stress(model, region, sol, obs_s, EPS)
+    evaluate_stress(model, region, sol, obs_s, eps)
     rec["eval_sig_s"] = time.perf_counter() - t0
     rec["n_eval_sig"] = int(obs_s.shape[0])
 

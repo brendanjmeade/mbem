@@ -82,6 +82,12 @@ HODLR_LEAF_ELEMS = 96         # dense leaf size (elements)
 # box 37 / 44 / 108 / 1.7e4 -- smaller eps/h is BETTER conditioned. On-fault
 # stress wants eps <= ~0.07 h (rim) and eps_top <= 0.125 h near a trace.
 EPS_OVER_H = 0.1
+# On a FAULT, "auto" is ONE value for the whole surface, FAULT_EPS_OVER_H *
+# min(h): per-element widths smear a uniform slip unequally across shared
+# edges and the on-fault stress is off by tens of percent (58 % measured at
+# 0.07 h per element, where any single scalar is exact); 0.07 keeps the rim
+# rule on every element.
+FAULT_EPS_OVER_H = 0.07
 # jump="half" with eps/h above this on any source patch is NON-convergent
 # under h-refinement (measured on a manufactured uniform-strain solution);
 # the backends warn. jump="calibrated" (the default) has no such limit.

@@ -90,6 +90,7 @@ from local_box_mesh_eq import (                                   # noqa: E402
 )
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.evaluate import evaluate_displacement, evaluate_stress  # noqa: E402
+from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.model import (                                          # noqa: E402
     BCType,
     Patch,
@@ -106,6 +107,8 @@ JUMPS = ("half", "calibrated")
 
 # ---------------------------------------------------------------- anchor A --
 SLIP = 0.01                        # km == 10 m
+# Anchor A runs at eps="auto" (the production rule: 0.1 h on the boundary
+# patches, one 0.07 min h on the fault); EPS_A is the scalar B6 uses.
 EPS_A = 3.0                        # km, == the fault element size
 FAULT_BOX_KW = dict(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
                     fault_depth=18.0, edge_fault=3.0, edge_near=12.0,
@@ -116,17 +119,16 @@ FAULT_BOX_KW = dict(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
 # were fitted from the data the gate would be sign-blind, which is the very
 # defect it exists to catch.
 CUTDE_SLIP_SIGN = -1.0
-# Surface points closer to the trace than this are mollification-limited: the
-# mollified slip smears the surface step over ~eps, so msd under-predicts the
-# jump there by construction while cutde's singular kernel does not.  Measured:
-# including them drops the cosine from 0.9995 to 0.956 while leaving the median
-# unchanged, i.e. it is a near-field amplitude deficit, not a direction error.
-TRACE_EXCLUSION = 1.5 * EPS_A
+# Surface points within this many FAULT eps of the trace are mollification-
+# limited (the smeared slip under-predicts the surface step there); at the
+# production eps the band excludes only the x = 0 centroids beyond the fault
+# ends, and the trace-adjacent elements sit within 1 % of cutde.
+TRACE_EXCLUSION_EPS = 1.5
 
-COS_TOL = 0.995        # measured worst 0.99908 (surface) / 0.99951 (interior);
-#                        a sign flip drives this negative, so the margin is huge
-MED_TOL_SURF = 0.12    # measured worst 0.046 -- box truncation + mollification
-MED_TOL_EVAL = 0.10    # measured worst 0.019
+COS_TOL = 0.9998       # measured worst 1-cos 9.8e-5 (surface) / 8.0e-5 (interior);
+#                        a sign flip drives the cosine negative
+MED_TOL_SURF = 0.10    # measured worst 0.051 -- box truncation
+MED_TOL_EVAL = 0.04    # measured worst 0.019
 
 # ---------------------------------------------------------------- anchor B --
 BOX_L, BOX_H, BOX_EDGE = 40.0, 40.0, 10.0
@@ -235,9 +237,12 @@ def a_external_cutde(meshes):
         return
     fault = meshes["fault"]
     slip_vec = SLIP * np.asarray(meshes["s_hat"], float)
+    eps = "auto"
+    exclusion = TRACE_EXCLUSION_EPS * float(
+        kb.resolve_patch_eps(eps, Patch("fault", meshes["fault"], BCType.FAULT))[0])
 
     top_c = meshes["top"].centroids()
-    keep = np.abs(top_c[:, 0]) > TRACE_EXCLUSION
+    keep = np.abs(top_c[:, 0]) > exclusion
     obs_surf = top_c[keep].copy()
     obs_surf[:, 2] = -1.0e-6            # cutde wants z < 0; msd's are at z = 0
 
@@ -245,7 +250,7 @@ def a_external_cutde(meshes):
     obs_int = np.column_stack([rng.uniform(-60.0, 60.0, 80),
                                rng.uniform(-60.0, 60.0, 80),
                                rng.uniform(-45.0, -12.0, 80)])
-    obs_int = obs_int[np.abs(obs_int[:, 0]) > TRACE_EXCLUSION]
+    obs_int = obs_int[np.abs(obs_int[:, 0]) > exclusion]
 
     for nu in NU_LIST:
         mat = material(nu)
@@ -255,9 +260,9 @@ def a_external_cutde(meshes):
         ref_surf = _cutde_halfspace_disp(obs_surf, fault, slip_vec, nu)
         ref_int = _cutde_halfspace_disp(obs_int, fault, slip_vec, nu)
         for jump in JUMPS:
-            sol = AssembledDense(system, EPS_A, "direct", jump=jump).solve()
+            sol = AssembledDense(system, eps, "direct", jump=jump).solve()
             u_surf = sol["u:top"][keep]
-            u_int = evaluate_displacement(model, region, sol, obs_int, EPS_A,
+            u_int = evaluate_displacement(model, region, sol, obs_int, eps,
                                           warn_near=False)
             tag = f"nu={nu:.2f} {jump:10s}"
             check(f"A1 surface u vs cutde: 1-cos          {tag}",
@@ -284,16 +289,19 @@ def a_slip_sense(meshes):
     n_hat = np.asarray(meshes["n_hat"], float)
     s_hat = np.asarray(meshes["s_hat"], float)
     assert np.allclose(n_hat, [1.0, 0.0, 0.0]) and np.allclose(s_hat, [0, 1, 0])
+    eps = "auto"
+    exclusion = TRACE_EXCLUSION_EPS * float(
+        kb.resolve_patch_eps(eps, Patch("fault", meshes["fault"], BCType.FAULT))[0])
     c = meshes["top"].centroids()
     band = np.abs(c[:, 1]) < 6.0
-    plus = band & (c[:, 0] > TRACE_EXCLUSION) & (c[:, 0] < 20.0)
-    minus = band & (c[:, 0] < -TRACE_EXCLUSION) & (c[:, 0] > -20.0)
+    plus = band & (c[:, 0] > exclusion) & (c[:, 0] < 20.0)
+    minus = band & (c[:, 0] < -exclusion) & (c[:, 0] > -20.0)
 
     for nu in NU_LIST:
         model = build_model(meshes, SLIP, material(nu))
         system = generate_system(model)
         for jump in JUMPS:
-            u = AssembledDense(system, EPS_A, "direct", jump=jump).solve()["u:top"]
+            u = AssembledDense(system, eps, "direct", jump=jump).solve()["u:top"]
             up = float(u[plus, 1].mean())
             um = float(u[minus, 1].mean())
             tag = f"nu={nu:.2f} {jump:10s}"

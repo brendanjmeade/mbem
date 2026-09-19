@@ -24,17 +24,21 @@ representation, term by term:
 where SG is the integrated Kelvin force-stress kernel
 (``analytical_kelvin_stress``) and SH is the integrated displacement-
 discontinuity stress kernel (``analytical_stress_kernel``) -- the SAME
-kernel that maps a fault slip to stress. Inside the ~eps fault zone the
-slip term returns the TOTAL stress (elastic + the anelastic eigenstress
-C:eps_star, which peaks at (3/4) mu s / eps and diverges as eps -> 0);
-with ``subtract_anelastic`` the eigenstress of each region fault is
-removed, leaving the genuine ELASTIC stress -- the on-fault,
-Coulomb-relevant field. The subtraction is a no-op away from a fault, so
-it is safe to apply for off-fault observation points too.
+kernel that maps a fault slip to stress. Every SH term is a mollified
+DOUBLE LAYER: within ~3 eps of its surface it returns the TOTAL stress,
+elastic plus the anelastic eigenstress C:eps_star of the smeared jump
+((3/4) mu |jump| / eps at the surface, divergent as eps -> 0). For a fault
+the jump is the slip; for a boundary patch it is u_p itself (the field
+inside R against zero outside), and its smeared eigenstress is non-physical
+inside the body. ``subtract_anelastic`` (default) removes the eigenstress of
+EVERY double layer, boundary patches and faults alike, leaving the ELASTIC
+stress: the on-fault Coulomb field, and an interior field near boundaries
+that converges under refinement (``verify/verify_boundary_eigenstress.py``).
+It is a no-op farther than a few eps from every surface.
 
 The eigenstress used here is the EXACT finite-triangle form
 (``tri_kernels.eigenstress_contract``: (15 eps^4/8pi) I7 per element,
-summed over every fault element, each with its own eps), NOT the
+summed over every source element, each with its own eps), NOT the
 infinite-plane / nearest-triangle approximation of the frozen
 ``anelastic.py``. The two agree deep inside a large element (the
 d/L -> 0 limit) and differ by up to ~2x near element edges -- i.e. over
@@ -51,35 +55,36 @@ from .model import BCType, Region, RegionModel
 from .selfcheck import ensure_fault_convention
 
 
-def _warn_near_boundary(points, region, model=None):
-    """Warn when observation points sit closer than ~0.5 local h to a
-    BOUNDARY patch: the volume representation is mesh-limited there (the
-    piecewise-constant boundary density cannot resolve the c=1/2 -> 1
-    boundary-jump transition closer than ~h; shrinking eps does NOT help
-    and inflates the traction components -- session-verified). Faults
-    are exempt: on-fault evaluation is legitimate (the eigenstress
-    subtraction handles the fault's own near field).
+def _warn_near_boundary(points, region):
+    """Warn when observation points lie within NEAR_BOUNDARY_H_RATIO local
+    h (mean edge) of a BOUNDARY patch (exact point-to-triangle distance):
+    the piecewise-constant density limits the volume representation there
+    (see ``defaults``). Faults are exempt: on-fault evaluation is legitimate
+    (the eigenstress subtraction handles the fault's own near field).
     """
-    from scipy.spatial import cKDTree
+    from . import defaults
+    from .geometry import distance_to_mesh
 
-    n_close = 0
-    worst = np.inf
+    ratio_max = defaults.NEAR_BOUNDARY_H_RATIO
+    points = np.asarray(points, float).reshape(-1, 3)
+    close = np.zeros(points.shape[0], bool)
+    worst, names = np.inf, []
     for p in region.patches:
-        c = np.asarray(p.mesh.centroids(), float)
-        h = kb.element_sizes(p.mesh)
-        d, idx = cKDTree(c).query(points, k=1)
-        ratio = d / h[idx]
-        n_close += int(np.sum(ratio < 0.5))
-        if ratio.size:
+        d, idx = distance_to_mesh(points, p.mesh)
+        ratio = d / kb.element_sizes(p.mesh)[idx]
+        if ratio.size and ratio.min() < ratio_max:
+            close |= ratio < ratio_max
             worst = min(worst, float(ratio.min()))
-    if n_close:
+            names.append(p.name)
+    if close.any():
         import warnings
         warnings.warn(
-            f"{n_close} observation point(s) lie within 0.5*local-h of a "
-            f"boundary patch (min d/h = {worst:.2f}): the volume "
-            f"representation is MESH-limited there (expect the c=1/2 "
-            f"boundary-jump error; refine the patch or evaluate deeper -- "
-            f"smaller eps does not help)")
+            f"{int(close.sum())} of {close.size} observation point(s) lie "
+            f"within {ratio_max}*local-h of boundary patch(es) "
+            f"{', '.join(names)} (min d/h = {worst:.2f}): the "
+            f"piecewise-constant boundary density limits the volume "
+            f"representation there (~2e-1 relative stress error at "
+            f"d/h = 0.25 measured); refine the patch or evaluate deeper")
 
 
 def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr):
@@ -194,6 +199,23 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
     return kelvin_stress_contract(points, verts, eps_arr, density, mu, nu)
 
 
+def _double_layer_stress(points, src_mesh, jump, sigma, mu, nu, eps_arr,
+                         subtract_anelastic):
+    """``-sigma * Sdd @ jump`` for one mollified double layer (boundary
+    ``u_p`` or fault ``slip``); with ``subtract_anelastic`` its divergent
+    on-surface part ``-sigma * C:eps_star`` is removed by adding
+    ``+sigma * C:eps_star`` (``kernel="eigen"`` returns +C:eps_star). The
+    one place this pairing is written; the sign is pinned by finiteness as
+    eps -> 0 (``verify_eigenstress_exact.py`` [e]).
+    """
+    sig = -sigma * _stress_from_source(points, src_mesh, jump, "dd",
+                                       mu, nu, eps_arr)
+    if subtract_anelastic:
+        sig += sigma * _stress_from_source(points, src_mesh, jump, "eigen",
+                                           mu, nu, eps_arr)
+    return sig
+
+
 class PointCloud:
     """Adapter presenting raw observation points as a 'mesh' whose
     centroids are the points -- the field side of PairCompressed only
@@ -224,12 +246,15 @@ class DisplacementEvaluator:
 
     def __init__(self, model: RegionModel, region: Region | str,
                  points: np.ndarray, eps,
-                 tol: float = None, n_workers: int | None = None):
+                 tol: float = None, n_workers: int | None = None,
+                 warn_near: bool = True):
         from . import defaults
         if isinstance(region, str):
             region = next(r for r in model.regions if r.name == region)
         if region.faults:
             ensure_fault_convention("compressed")
+        if warn_near:
+            _warn_near_boundary(points, region)
         self.model = model
         self.region = region
         self.cloud = PointCloud(points)
@@ -300,13 +325,15 @@ def evaluate_stress(model: RegionModel, region: Region | str,
 
     Mirrors :func:`evaluate_displacement` with the stress operator applied
     to every term. With ``subtract_anelastic`` (default) the EXACT
-    finite-triangle eigenstress of each region fault is removed, so the
-    returned field is the ELASTIC stress -- finite and eps-independent on
-    the fault. Set it False to get the raw TOTAL stress (which diverges
-    like 1/eps on the fault). A graded / per-element fault eps is fine:
-    the eigenstress is summed element by element with each element's own
-    eps (this restriction existed only for the frozen scalar-eps
-    ``anelastic.py`` approximation).
+    finite-triangle eigenstress of EVERY double layer -- each boundary
+    patch's u_p and each fault's slip -- is removed, so the returned field
+    is the ELASTIC stress: finite and eps-independent on a fault, and
+    convergent under refinement near a boundary patch. Set it False to get
+    the raw TOTAL stress (which diverges like 1/eps on the fault and
+    carries a spurious ~mu |u_p| Phi_eps(d) within ~3 eps of every patch).
+    A graded / per-element eps is fine: the eigenstress is summed element
+    by element with each element's own eps (this restriction existed only
+    for the frozen scalar-eps ``anelastic.py`` approximation).
 
     ``solution`` is the slot dict returned by a backend solve.
     """
@@ -327,14 +354,15 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     mu, nu = mat.mu, mat.nu
     for p in region.patches:
         sigma = float(model.orientation(region, p))
-        # u_p term (double layer): - sigma * SH @ u_p
+        # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
+        # the boundary u_p is a jump exactly as a fault slip is.
         if p.bc is BCType.PRESCRIBED_DISPLACEMENT:
             u_p = p.value_array()
         else:
             u_p = solution[f"u:{p.name}"]
         if np.any(u_p):
-            sig -= sigma * _stress_from_source(points, p.mesh, u_p, "dd",
-                                               mu, nu, eps_for(p))
+            sig += _double_layer_stress(points, p.mesh, u_p, sigma, mu, nu,
+                                        eps_for(p), subtract_anelastic)
         # t_p term (single layer): + sigma * SG @ t_p
         if p.bc is BCType.FREE_TRACTION:
             t_p = p.value_array()
@@ -345,35 +373,13 @@ def evaluate_stress(model: RegionModel, region: Region | str,
                                                mu, nu, eps_for(p))
 
     # As in evaluate_displacement: the fault term is the u_p branch with
-    # sigma = FAULT_ORIENTATION, read through the same accessor.
+    # sigma = FAULT_ORIENTATION through the same accessor and the same
+    # double-layer helper, so the convention is never stated twice.
     for f in region.faults:
         sigma = float(model.orientation(region, f))
         slip = f.value_array()
         if np.any(slip):
-            sig -= sigma * _stress_from_source(points, f.mesh, slip, "dd",
-                                               mu, nu, eps_for(f))
-            if subtract_anelastic:
-                # The fault stress term above is -sigma*Sdd@slip (mirroring
-                # the -sigma*H@slip displacement term), so its divergent
-                # on-fault part is -sigma * C:eps_star; removing it adds
-                # +sigma * C:eps_star -- the SAME sigma, so the eigenstress
-                # never states the convention a second time either.
-                # (kernel="eigen" returns +C:eps_star, the divergent part of
-                # +Sdd@slip.) Off a fault this is a no-op.
-                # Sign verified by finiteness as eps->0
-                # (verify/verify_eigenstress_exact.py, check [e]).
-                #
-                # EXACT finite-triangle eigenstress: the Cortez blob is
-                # integrated over each actual triangle ((15 eps^4/8pi) I7)
-                # and summed over ALL fault elements, with each element's
-                # OWN eps. This replaces the frozen anelastic.py
-                # approximation (nearest-triangle assignment + the
-                # infinite-plane marginal), which is the d/L -> 0 limit --
-                # right deep inside a large element, ~2x too large over the
-                # whole fault rim. A per-element sum has no near-uniform-eps
-                # restriction, so the former graded-eps raise is gone.
-                sig += sigma * _stress_from_source(points, f.mesh, slip,
-                                                   "eigen", mu, nu,
-                                                   eps_for(f))
+            sig += _double_layer_stress(points, f.mesh, slip, sigma, mu, nu,
+                                        eps_for(f), subtract_anelastic)
 
     return sig

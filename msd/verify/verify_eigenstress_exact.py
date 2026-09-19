@@ -1,8 +1,8 @@
 """verify_eigenstress_exact.py -- the EXACT finite-triangle eigenstress.
 
 On-fault ELASTIC stress is ``sigma_el = sigma_tot - C:eps_star`` (the tree-wide
-policy, ``EIGENSTRESS_AUDIT.md``).  Until 2026-09-18 ``mbem/evaluate.py`` took
-``C:eps_star`` from the frozen ``anelastic.py``, which uses NEAREST-TRIANGLE
+policy, ``EIGENSTRESS_AUDIT.md``).  The frozen ``anelastic.py`` computes
+``C:eps_star`` with NEAREST-TRIANGLE
 assignment and the INFINITE-PLANE Cortez marginal
 ``rho = 0.75 eps^4 / (d^2 + eps^2)^2.5``.  That is the ``d/L -> 0`` limit of the
 true finite-triangle integral: right deep inside a large element, and up to ~2x
@@ -111,6 +111,25 @@ def _eig(obs, verts, normals, eps_arr, density, mu, nu):
         np.ascontiguousarray(np.asarray(normals, float)),
         np.ascontiguousarray(np.asarray(eps_arr, float)),
         np.ascontiguousarray(np.asarray(density, float)), mu, nu)
+
+
+def _boundary_eigen(model, region, sol, obs, eps_spec, mat):
+    """+sum_p sigma_p * C:eps_star(u_p) over the region's boundary patches
+    -- the part of evaluate_stress's subtraction that is NOT the fault's
+    (every double layer is subtracted). Restated by hand
+    so the wiring checks below stay independent of evaluate_stress."""
+    from mbem.model import BCType
+    out = np.zeros((obs.shape[0], 3, 3))
+    for p in region.patches:
+        u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
+               else sol[f"u:{p.name}"])
+        if not np.any(u_p):
+            continue
+        e = eps_spec[p.name] if isinstance(eps_spec, dict) else eps_spec
+        out += float(model.orientation(region, p)) * _stress_from_source(
+            obs, p.mesh, u_p, "eigen", mat.mu, mat.nu,
+            kb.resolve_eps(e, p.mesh))
+    return out
 
 
 def _eig_tensor(obs, v, n, eps, mu, nu):
@@ -341,8 +360,19 @@ def e_sign():
                           subtract_anelastic=True, warn_near=False)
     star = _stress_from_source(obs_b, fmesh, fslip, "eigen", mat.mu, mat.nu,
                                np.full(fmesh.n_triangles, eps))
-    check("evaluate_stress: (elastic - total) == +C:eps_star",
+    star_f = star.copy()                      # the fault's own eigenstress
+    star = star + _boundary_eigen(model, region, sol, obs_b, eps, mat)
+    check("evaluate_stress: (elastic - total) == +C:eps_star (fault + patches)",
           np.abs((ela - tot) - star).max() / np.abs(star).max(), 1e-12)
+    # the boundary part must be a genuine contribution at these points (the
+    # top row of the fault is 3 eps below host_top), else the check above
+    # could not tell the patch subtraction from its absence
+    d_bdy = np.abs(star - star_f).max() / np.abs(star_f).max()
+    CHECKS.append(bool(d_bdy > 1e-6))
+    print(f"  [{'ok' if d_bdy > 1e-6 else 'XX'}] "
+          f"{'boundary-patch eigenstress is non-negligible here':58s} "
+          f"{d_bdy:9.2e} (want > 1e-6)")
+    star = star_f
     # and it must NOT be the old approximate one any more
     old = eigenstress_at_points(obs_b, fmesh, fslip, mat.mu, mat.nu, eps)
     d_old = np.abs((ela - tot) - old).max() / np.abs(star).max()
@@ -437,6 +467,7 @@ def f_graded_eps():
                                 (fmesh.n_triangles, 3)).copy()
         star = _stress_from_source(obs_b, fmesh, fslip, "eigen", mat.mu, mat.nu,
                                    fgrad)
+        star = star + _boundary_eigen(model, region, sol, obs_b, spec, mat)
         check("graded end to end: (elastic - total) == +C:eps_star",
               np.abs((ela - tot) - star).max() / np.abs(star).max(), 1e-12)
 

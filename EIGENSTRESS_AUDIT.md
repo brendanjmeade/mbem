@@ -156,3 +156,35 @@ element the two agree to ~1e-6 (it *is* the infinite-plane limit there).
   check 4 was repointed at the exact form.
 - Not touched: `moss/`, `medt_paper/`, `clq/`, and the other vendored
   `anelastic.py` copies — the same substitution is still available to them.
+
+## Addendum (2026-09-19) — the policy applies to BOUNDARY double layers too
+
+The policy above speaks of fault slip.  It applies to **every** mollified
+double layer.  In the BEM representation formula a boundary patch's `u_p`
+enters through the same `Sdd` kernel as a slip: the formula writes the field
+as a jump between `u` (inside the region) and zero (outside), and mollifying
+that fictitious jump smears an eigenstress `μ u_p ⊗ n Φ_ε(d)` (plus the `λ`
+trace term) into the body within ~3 ε of the patch — non-physical there, and
+`1/ε`-large.  `msd/mbem/evaluate.py::evaluate_stress` subtracted it for faults
+only; measured against the exact Kelvin field on an icosphere it was the whole
+"h-independent interior stress error near a boundary" of
+`HARDENING_AUDIT.md` item 4 (Neumann, d/h = 0.66, ε/h = 0.3: 2.43e-1 / 2.22e-1
+/ 2.10e-1 raw over 80/320/1280 triangles; 2.25e-1 / 1.29e-1 / 7.4e-2 with the
+term; Dirichlet at d/h = 0.25: 8–15 raw, 0.2 with the term).
+
+- **Fix:** `evaluate_stress` now removes `+σ_p C:ε*(u_p)` for every boundary
+  patch with the patch's own orientation `σ_p`, through the one helper
+  `_double_layer_stress` that faults use too.  `subtract_anelastic=True`
+  (default) therefore means "the elastic stress of the whole representation".
+- `ddbem/ddbem/model.py::_evaluate` had **always** subtracted every patch's
+  eigenstress; the 1.5e-3 msd-vs-ddbem interior-stress discrepancy noted in
+  `CODE_REVIEW_2026-09-19.md` was exactly this term.
+- **Gate:** `msd/verify/verify_boundary_eigenstress.py` (12 checks, 2 s):
+  wiring identity at ν = 0.30 with a fault present, accuracy at d/h = 0.5
+  (7.0e-2 vs 2.2 raw), the refinement ladder, a rigid-translation Dirichlet
+  sphere whose exact stress is zero (elastic/raw 2.4e-3), deep no-op.  The
+  wiring checks in `verify_evaluate_stress.py` and `verify_eigenstress_exact.py`
+  now restate the boundary terms by hand as well.
+- Not touched: the `mhf` / `moss` direct-kernel pipelines have no boundary
+  double layers (their "boundary" is the analytic half space), so nothing to
+  subtract there.

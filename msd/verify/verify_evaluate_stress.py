@@ -14,11 +14,10 @@ Four checks, each PASS/FAIL:
      ON the fault it removes the divergent eigenstress so the corrected
      stress stays bounded as eps -> 0 while the raw total grows ~ 1/eps.
   4. Public evaluate_stress end to end on a small fault box: runs, returns
-     finite symmetric tensors, and (elastic - total) equals the fault
-     eigenstress at the fault centroids.  Since 2026-09-18 that eigenstress is
-     the EXACT finite-triangle form (`_stress_from_source(..., "eigen")`), not
-     the infinite-plane / nearest-triangle approximation of the frozen
-     `anelastic.py` -- see `verify/verify_eigenstress_exact.py`.
+     finite symmetric tensors, (elastic - total) equals the eigenstress of
+     every double layer at the fault centroids, and the on-fault elastic
+     shear over the ladder eps = 4, 2, 1 keeps the SIGN physics dictates
+     and stays within a band of its eps = 4 value.
 """
 import pathlib
 import sys
@@ -35,6 +34,7 @@ from mbem.evaluate import _stress_from_source, evaluate_stress      # noqa: E402
 from mollified_kernel.analytical_kernels import (                   # noqa: E402
     integrate_kelvin_stress_numerical,
 )
+from mbem.model import BCType                                       # noqa: E402
 from tde_reference import classical_tde_stress                      # noqa: E402
 
 MU, NU = 30.0, 0.25
@@ -155,16 +155,27 @@ def check_evaluate_stress_endtoend():
                               subtract_anelastic=False)
     sig_el = evaluate_stress(model, region, sol, obs, eps,
                              subtract_anelastic=True)
-    # the EXACT finite-triangle eigenstress -- what evaluate_stress subtracts
+    # the EXACT finite-triangle eigenstress -- what evaluate_stress subtracts:
+    # the fault's PLUS every boundary patch's
+    # u_p, each with the patch's own sigma. Restated here by hand so the
+    # check is an independent statement of the wiring, not a call back
+    # into it.
     nt_f = meshes["fault"].n_triangles
     star = _stress_from_source(obs, meshes["fault"],
                                np.broadcast_to(slip, (nt_f, 3)), "eigen",
                                mat.mu, mat.nu, np.full(nt_f, eps))
     finite = np.all(np.isfinite(sig_el))
     symm = float(np.max(np.abs(sig_el - np.transpose(sig_el, (0, 2, 1)))))
-    # elastic = total + eigenstress (the fault term is -Sdd@slip), so
-    # (elastic - total) must equal +eigenstress.
+    # elastic = total + eigenstress (every double layer enters as
+    # -sigma*Sdd@jump), so (elastic - total) must equal +eigenstress.
     sub_ok = _relmax(sig_el - sig_tot, star)
+    for p in region.patches:
+        u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
+               else sol[f"u:{p.name}"])
+        if np.any(u_p):
+            star = star + float(model.orientation(region, p)) * \
+                _stress_from_source(obs, p.mesh, u_p, "eigen", mat.mu, mat.nu,
+                                    np.full(p.mesh.n_triangles, eps))
     print(f"    finite={finite}  max asym={symm:.2e}  "
           f"(elastic-total) vs eigenstress rel={sub_ok:.2e}")
 

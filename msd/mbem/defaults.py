@@ -89,3 +89,9 @@ BASIS_PARITY_RTOL_NEAR_FLUID = 1e-10
 
 # --- Mollification ----------------------------------------------------
 EPS_OVER_H = 1.25             # per-element eps_j = EPS_OVER_H * h_j (opt-in)
+
+# --- Not here ---------------------------------------------------------
+# The fault SIGN CONVENTION is not a tolerance and does not live here:
+# it is ``FAULT_ORIENTATION`` in ``mbem/model/core.py``, next to the
+# ``RegionModel.orientation`` accessor every site reads it through, and
+# it is pinned at runtime by ``mbem/selfcheck.py``. Do not restate it.

@@ -4,10 +4,13 @@ Representation formula for x strictly inside region R (c(x) = 1):
 
     u(x) = sum_p sigma(R,p) * G_xp @ t_p
          - sum_p sigma(R,p) * H_xp @ u_p
-         - sum_f H_xf @ slip_f
+         - sum_f sigma(R,f) * H_xf @ slip_f
 
 with all kernels at region R's material; sigma and prescribed-value
-handling identical to the boundary equations. Evaluation uses the
+handling identical to the boundary equations -- faults included, since
+``RegionModel.orientation`` answers for them too (``FAULT_ORIENTATION``,
+the single statement of the fault sign convention; see
+``mbem/model/core.py``). Evaluation uses the
 numba direct assemblers (fast dense N_obs x N_src blocks); a compressed
 evaluation operator for very large observation sets is future work.
 
@@ -16,7 +19,7 @@ representation, term by term:
 
     sigma(x) = sum_p sigma(R,p) * SG_xp @ t_p     (single layer, force->stress)
              - sum_p sigma(R,p) * SH_xp @ u_p     (double layer, slip->stress)
-             - sum_f SH_xf @ slip_f               (fault slip is a double layer)
+             - sum_f sigma(R,f) * SH_xf @ slip_f  (fault slip is a double layer)
 
 where SG is the integrated Kelvin force-stress kernel
 (``analytical_kelvin_stress``) and SH is the integrated displacement-
@@ -45,6 +48,7 @@ import numpy as np
 
 from .kernels import basis as kb
 from .model import BCType, Region, RegionModel
+from .selfcheck import ensure_fault_convention
 
 
 def _warn_near_boundary(points, region, model=None):
@@ -107,6 +111,8 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     """
     if isinstance(region, str):
         region = next(r for r in model.regions if r.name == region)
+    if region.faults:
+        ensure_fault_convention()
     points = np.asarray(points, dtype=float)
     if warn_near:
         _warn_near_boundary(points, region)
@@ -136,11 +142,15 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
             u += sigma * _disp_from_source(points, p.mesh, t_p, "u",
                                            mat, eps_for(p))
 
+    # Faults carry an orientation too (FAULT_ORIENTATION), so this is
+    # literally the u_p branch above with sigma supplied by the same
+    # accessor -- no second statement of the fault sign convention.
     for f in region.faults:
+        sigma = float(model.orientation(region, f))
         slip = f.value_array()
         if np.any(slip):
-            u -= _disp_from_source(points, f.mesh, slip, "t",
-                                   mat, eps_for(f))
+            u -= sigma * _disp_from_source(points, f.mesh, slip, "t",
+                                           mat, eps_for(f))
 
     return u
 
@@ -218,6 +228,8 @@ class DisplacementEvaluator:
         from . import defaults
         if isinstance(region, str):
             region = next(r for r in model.regions if r.name == region)
+        if region.faults:
+            ensure_fault_convention("compressed")
         self.model = model
         self.region = region
         self.cloud = PointCloud(points)
@@ -246,7 +258,8 @@ class DisplacementEvaluator:
                     n_workers=n_workers)))
         for f in region.faults:
             self._terms.append(
-                ("slip", f, -1.0, PairCompressed(
+                ("slip", f, -float(model.orientation(region, f)),
+                 PairCompressed(
                     self.cloud, f.mesh, "H", eps_for(f), tol=tol,
                     tree_cache=tree_cache, arrays=arrays,
                     n_workers=n_workers)))
@@ -299,6 +312,8 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     """
     if isinstance(region, str):
         region = next(r for r in model.regions if r.name == region)
+    if region.faults:
+        ensure_fault_convention("stress")
     points = np.asarray(points, dtype=float)
     if warn_near:
         _warn_near_boundary(points, region)
@@ -329,17 +344,22 @@ def evaluate_stress(model: RegionModel, region: Region | str,
             sig += sigma * _stress_from_source(points, p.mesh, t_p, "force",
                                                mu, nu, eps_for(p))
 
+    # As in evaluate_displacement: the fault term is the u_p branch with
+    # sigma = FAULT_ORIENTATION, read through the same accessor.
     for f in region.faults:
+        sigma = float(model.orientation(region, f))
         slip = f.value_array()
         if np.any(slip):
-            sig -= _stress_from_source(points, f.mesh, slip, "dd",
-                                       mu, nu, eps_for(f))
+            sig -= sigma * _stress_from_source(points, f.mesh, slip, "dd",
+                                               mu, nu, eps_for(f))
             if subtract_anelastic:
-                # The fault stress term above is -Sdd@slip (mirroring the
-                # -H@slip displacement term), so its divergent on-fault part
-                # is MINUS the eigenstress C:eps_star; removing it ADDS the
-                # eigenstress. (kernel="eigen" returns +C:eps_star, the
-                # divergent part of +Sdd@slip.) Off a fault this is a no-op.
+                # The fault stress term above is -sigma*Sdd@slip (mirroring
+                # the -sigma*H@slip displacement term), so its divergent
+                # on-fault part is -sigma * C:eps_star; removing it adds
+                # +sigma * C:eps_star -- the SAME sigma, so the eigenstress
+                # never states the convention a second time either.
+                # (kernel="eigen" returns +C:eps_star, the divergent part of
+                # +Sdd@slip.) Off a fault this is a no-op.
                 # Sign verified by finiteness as eps->0
                 # (verify/verify_eigenstress_exact.py, check [e]).
                 #
@@ -352,7 +372,8 @@ def evaluate_stress(model: RegionModel, region: Region | str,
                 # right deep inside a large element, ~2x too large over the
                 # whole fault rim. A per-element sum has no near-uniform-eps
                 # restriction, so the former graded-eps raise is gone.
-                sig += _stress_from_source(points, f.mesh, slip, "eigen",
-                                           mu, nu, eps_for(f))
+                sig += sigma * _stress_from_source(points, f.mesh, slip,
+                                                   "eigen", mu, nu,
+                                                   eps_for(f))
 
     return sig

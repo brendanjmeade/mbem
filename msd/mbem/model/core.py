@@ -25,6 +25,12 @@ Validation: for every region the Gauss closure identity
 must hold (cavity patches contribute 0), and every INTERFACE patch must
 get opposite signs from its two regions. ``orientation_overrides`` is
 the escape hatch for pathological (strongly non-star-shaped) regions.
+
+FAULTS get an orientation too — see ``FAULT_ORIENTATION`` below. It is
+the ONE statement of the fault sign convention in msd; every site that
+needs it calls ``RegionModel.orientation`` and uses the same ``-sigma``
+expression a boundary patch uses, so there is no second place to get it
+wrong. Runtime guard: ``mbem.selfcheck``.
 """
 
 from __future__ import annotations
@@ -40,6 +46,49 @@ class BCType(enum.Enum):
     PRESCRIBED_DISPLACEMENT = "prescribed_displacement"  # u prescribed; t unknown
     INTERFACE = "interface"                      # u, t unknown; shared by 2 regions
     FAULT = "fault"                              # prescribed slip; interior source
+
+
+# =====================================================================
+# THE FAULT SIGN CONVENTION — stated here, ONCE, and nowhere else.
+# =====================================================================
+# sigma(R, p) = +1 iff patch p's stored normals point OUT of region R.
+# For a boundary patch that is a genuine choice: R lies on one side of p
+# and the stored winding either agrees with "out of R" or it does not,
+# and RegionModel infers which from the signed solid angle.
+#
+# A FAULT has no such choice to make. It is INTERIOR to its region: the
+# same region, with the same material, lies on BOTH of its faces, so
+# there is no "out of R" to compare its normal against. What fixes the
+# sign instead is the fault's OWN normal, which is already the reference
+# direction of the slip it carries,
+#
+#     Du = u(x + 0+ n) - u(x - 0+ n),      n = the fault's stored normal,
+#
+# so "the region is on the +n side" is as true as "the region is on the
+# -n side" and the only self-consistent answer is the one that makes the
+# fault's normal its own outward direction:
+FAULT_ORIENTATION = +1
+# A fault is therefore NOT a special case of the sign rule. It is the
+# sign rule at sigma = +1, and every formula treats it exactly like a
+# PRESCRIBED boundary displacement — one coefficient, -sigma:
+#
+#   solve      (equations.py)  b[row] += -sigma * H_qf @ slip_f
+#   readout u  (evaluate.py)   u      -= sigma * H_xf @ slip_f
+#   readout s  (evaluate.py)   sigma_ij -= sigma * SH_xf @ slip_f
+#                              (+ sigma * eigenstress, the divergent part
+#                               of that same term, when subtracting it)
+#   readout u  (evaluate.py)   DisplacementEvaluator term sign, -sigma
+#                              (the compressed form of the same readout)
+#
+# which together are the single representation formula
+#     u(x) = sum_p sigma G t_p - sum_p sigma H u_p - sum_f sigma_f H slip_f
+# taken in the interior (readout) and in the boundary limit (solve).
+#
+# Flipping this constant does not make msd wrong in a visible way: it
+# makes every fault answer consistently backwards, which no internal
+# consistency check can see. ``mbem.selfcheck`` therefore pins it to a
+# HARDCODED physical direction at runtime and refuses to let the library
+# produce output if it has moved.
 
 
 @dataclass(eq=False)
@@ -130,6 +179,22 @@ class RegionModel:
         return -1 if omega_in > 0 else 1
 
     def orientation(self, region: Region, patch: Patch) -> int:
+        """sigma(region, patch) — the ONE accessor for the sign rule.
+
+        Answers for a boundary patch of ``region`` (inferred and validated
+        in :meth:`validate`) and for a FAULT of ``region`` alike. A fault
+        is interior to its region; its own normal defines the convention,
+        so there is no side to choose and the answer is
+        ``FAULT_ORIENTATION`` by construction (see the module header).
+        Because faults answer here, every call site uses the same
+        ``-sigma`` expression and no site carries a sign of its own.
+        """
+        if patch.bc is BCType.FAULT:
+            if not any(f is patch for f in region.faults):
+                raise ValueError(
+                    f"patch '{patch.name}' is a FAULT but is not a fault of "
+                    f"region '{region.name}'")
+            return FAULT_ORIENTATION
         return self._sigma[(region.name, patch.name)]
 
     # -- validation --------------------------------------------------

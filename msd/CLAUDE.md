@@ -247,6 +247,44 @@ batch, numerical reference), `moss/mollified_kernel/analytical_batch.py` and
 copies, `moss/manuscript/scripts/_quad_assembly.py`, and eq. `U-integrated` of
 `moss/docs/mollified_kernels.tex`.
 
+## The fault sign convention (centralised 2026-09-18)
+
+How a fault's slip enters msd is stated in **exactly one place**:
+`FAULT_ORIENTATION = +1` in `mbem/model/core.py`, with the derivation in the
+comment above it. A fault is INTERIOR to its region — the same region and
+material lie on both faces — so there is no side to choose and its own normal
+defines the convention. `RegionModel.orientation` therefore answers for faults
+as well as boundary patches, and every site uses the one `-sigma` expression:
+
+| site | expression |
+|---|---|
+| `mbem/model/equations.py` (solve) | `scale=-sigma` on the fault `RhsTerm` |
+| `mbem/evaluate.py::evaluate_displacement` | `u -= sigma * H @ slip` |
+| `mbem/evaluate.py::evaluate_stress` | `sig -= sigma * Sdd @ slip`, `sig += sigma * eigen` |
+| `mbem/evaluate.py::DisplacementEvaluator` | term sign `-sigma` |
+
+**Do not restate it.** A hand-written `+-1.0` at one of those sites is a second
+statement of the convention and the thing this layout exists to prevent.
+Flipping the constant flips all of them together, which is the dangerous case:
+the solve still agrees with the readouts and every internal consistency
+identity still holds, while every fault answer is backwards.
+
+`mbem/selfcheck.py` is the runtime guard against exactly that. It solves a
+~5 ms model (clamped box, one free face, one fault with `n = +x_hat`,
+`Du = +0.01 y_hat`) and asserts HARDCODED physical directions — the +x block
+must move toward -y, the on-fault total `sigma_xy` must be negative, and
+subtracting the anelastic term must ADD `(3/4) mu |Du| / eps` (the sign alone
+is asserted on the total; the blob-peak magnitude window is applied to the
+eigenstress change).
+A wrong sign anywhere makes `mbem` raise `FaultConventionError` instead of
+returning a number. It runs once per process in three independently cached
+stages (`core` / `stress` / `compressed`) keyed to the entry point, and each
+stage runs at BOTH nu = 1/4 and nu = 0.30 -- a single-material guard was shown
+to miss a parameter-dependent sign error, and lam = mu is where a lam/mu
+transposition is invisible. It never
+compiles a numba kernel the caller was not about to use. The gate that covers
+the same ground offline is `verify/verify_solved_bvp.py` (check A3).
+
 ## Conventions
 
 - Numerics are **numba**-accelerated in `mbem/kernels/tri_kernels.py`; expect

@@ -7,7 +7,7 @@ sigma(R,p) = +1 iff patch p's stored normals point out of R:
 
     A[row(R,q), u_p] += sigma(R,p) * H^{m(R)}_{qp} + 1/2 * delta_{qp} * I
     A[row(R,q), t_p] += -sigma(R,p) * G^{m(R)}_{qp}
-    b[row(R,q)]      -= sum_{f in faults(R)} H^{m(R)}_{qf} @ slip_f
+    b[row(R,q)]      -= sum_{f in faults(R)} sigma(R,f) * H^{m(R)}_{qf} @ slip_f
                         (+ prescribed-value columns moved to the RHS
                          with their LHS coefficients)
 
@@ -16,6 +16,11 @@ assembled with the patch's stored normals; G is the U-kernel; the 1/2 I
 collocation jump multiplies the single-valued u and never flips. The
 shared interface traction unknown is t_p = sigma_stored * n_stored, so
 region R sees sigma(R,p) * t_p — hence the -sigma on G.
+
+A FAULT is not a special case: ``sigma(R,f)`` is defined for it too
+(``FAULT_ORIENTATION``, see ``core.py``), so a fault's slip enters the
+RHS through the very same ``-sigma`` coefficient a prescribed boundary
+displacement does.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..selfcheck import ensure_fault_convention
 from .core import BCType, Patch, Region, RegionModel
 from .layout import Slot, UnknownLayout
 
@@ -67,6 +73,8 @@ class BlockSystem:
 
 
 def generate_system(model: RegionModel) -> BlockSystem:
+    if any(r.faults for r in model.regions):
+        ensure_fault_convention()
     layout = UnknownLayout(model)
     system = BlockSystem(model=model, layout=layout)
 
@@ -108,12 +116,15 @@ def generate_system(model: RegionModel) -> BlockSystem:
                             source_patch=p, region=region, scale=sigma,
                             vector=t_bar))
 
-            # ---- fault sources of this region (no sigma) ----
+            # ---- fault sources of this region ----
+            # Same -sigma rule as the prescribed-u branch above; for a
+            # fault ``orientation`` returns FAULT_ORIENTATION.
             for f in region.faults:
+                sigma = float(model.orientation(region, f))
                 slip = f.value_array().ravel()
                 if np.any(slip):
                     system.rhs_terms.append(RhsTerm(
                         row=row, kernel="H", field_patch=q, source_patch=f,
-                        region=region, scale=-1.0, vector=slip))
+                        region=region, scale=-sigma, vector=slip))
 
     return system

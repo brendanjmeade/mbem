@@ -48,47 +48,13 @@ class BCType(enum.Enum):
     FAULT = "fault"                              # prescribed slip; interior source
 
 
-# =====================================================================
-# THE FAULT SIGN CONVENTION — stated here, ONCE, and nowhere else.
-# =====================================================================
-# sigma(R, p) = +1 iff patch p's stored normals point OUT of region R.
-# For a boundary patch that is a genuine choice: R lies on one side of p
-# and the stored winding either agrees with "out of R" or it does not,
-# and RegionModel infers which from the signed solid angle.
-#
-# A FAULT has no such choice to make. It is INTERIOR to its region: the
-# same region, with the same material, lies on BOTH of its faces, so
-# there is no "out of R" to compare its normal against. What fixes the
-# sign instead is the fault's OWN normal, which is already the reference
-# direction of the slip it carries,
-#
-#     Du = u(x + 0+ n) - u(x - 0+ n),      n = the fault's stored normal,
-#
-# so "the region is on the +n side" is as true as "the region is on the
-# -n side" and the only self-consistent answer is the one that makes the
-# fault's normal its own outward direction:
+# THE FAULT SIGN CONVENTION, stated once. A fault is interior to its region
+# (same material on both faces), so its sigma is a convention: every site
+# treats it as a prescribed boundary displacement with the one coefficient
+# -sigma. With +1 and n the stored normal, Patch.value = u(x - 0+ n) -
+# u(x + 0+ n) = -b, MINUS the Burgers vector b = u(+n) - u(-n) (ddbem/clq use
+# +b). -1 would be equally self-consistent; mbem.selfcheck pins +1.
 FAULT_ORIENTATION = +1
-# A fault is therefore NOT a special case of the sign rule. It is the
-# sign rule at sigma = +1, and every formula treats it exactly like a
-# PRESCRIBED boundary displacement — one coefficient, -sigma:
-#
-#   solve      (equations.py)  b[row] += -sigma * H_qf @ slip_f
-#   readout u  (evaluate.py)   u      -= sigma * H_xf @ slip_f
-#   readout s  (evaluate.py)   sigma_ij -= sigma * SH_xf @ slip_f
-#                              (+ sigma * eigenstress, the divergent part
-#                               of that same term, when subtracting it)
-#   readout u  (evaluate.py)   DisplacementEvaluator term sign, -sigma
-#                              (the compressed form of the same readout)
-#
-# which together are the single representation formula
-#     u(x) = sum_p sigma G t_p - sum_p sigma H u_p - sum_f sigma_f H slip_f
-# taken in the interior (readout) and in the boundary limit (solve).
-#
-# Flipping this constant does not make msd wrong in a visible way: it
-# makes every fault answer consistently backwards, which no internal
-# consistency check can see. ``mbem.selfcheck`` therefore pins it to a
-# HARDCODED physical direction at runtime and refuses to let the library
-# produce output if it has moved.
 
 
 @dataclass(eq=False)
@@ -97,7 +63,8 @@ class Patch:
 
     ``value`` is the prescribed quantity, broadcastable to (N_tri, 3):
     traction for FREE_TRACTION, displacement for PRESCRIBED_DISPLACEMENT,
-    slip for FAULT. ``None`` means zeros. Patch identity (``is``) is what
+    slip for FAULT: ``value = u(-n face) - u(+n face)`` with ``n`` the
+    stored normal. ``None`` means zeros. Patch identity (``is``) is what
     links an INTERFACE patch shared by two regions — share the object.
     """
     name: str
@@ -183,9 +150,8 @@ class RegionModel:
 
         Answers for a boundary patch of ``region`` (inferred and validated
         in :meth:`validate`) and for a FAULT of ``region`` alike. A fault
-        is interior to its region; its own normal defines the convention,
-        so there is no side to choose and the answer is
-        ``FAULT_ORIENTATION`` by construction (see the module header).
+        is interior to its region, so there is no side to infer and the
+        answer is the convention ``FAULT_ORIENTATION`` (module header).
         Because faults answer here, every call site uses the same
         ``-sigma`` expression and no site carries a sign of its own.
         """
@@ -259,14 +225,61 @@ class RegionModel:
                         f"orientations: {regs[0].name}:{s0}, "
                         f"{regs[1].name}:{s1}")
 
+        # Faults: FAULT bc, one owning region, model-wide unique names
+        # (eps is looked up by name, so a collision takes another patch's
+        # eps), and containment in the owner via the same closure sum.
+        fowner: dict[int, tuple[Patch, list[str]]] = {}
+        fnames: dict[str, Patch] = {}
+        for r in self.regions:
+            for f in r.faults:
+                if f.bc is not BCType.FAULT:
+                    raise ValueError(
+                        f"fault '{f.name}' of region '{r.name}' has bc "
+                        f"{f.bc.value}; Region.faults holds FAULT patches only")
+                fowner.setdefault(id(f), (f, []))[1].append(r.name)
+                if f.name in pnames or fnames.get(f.name, f) is not f:
+                    raise ValueError(
+                        f"fault '{f.name}' of region '{r.name}' shares its "
+                        f"name with another patch or fault; names must be "
+                        f"unique model-wide")
+                fnames[f.name] = f
+        for f, owners in fowner.values():
+            if len(owners) != 1:
+                raise ValueError(
+                    f"fault '{f.name}' must belong to exactly 1 region, "
+                    f"found {len(owners)}: {owners}")
+        # Containment is tested at EVERY fault-triangle centroid (a fault
+        # whose mean vertex is inside can still poke through an interface):
+        # the closure sum says which region a point is in, and an exact
+        # distance test catches a fault lying ON a patch, where the solid
+        # angle is ambiguous.
+        from ..geometry import distance_to_mesh
+        for r in self.regions:
+            for f in r.faults:
+                cs = f.mesh.centroids()
+                for p in r.patches:
+                    d, idx = distance_to_mesh(cs, p.mesh)
+                    h = np.linalg.norm(p.mesh.vertices[p.mesh.triangles[idx, 1]]
+                                       - p.mesh.vertices[p.mesh.triangles[idx, 0]],
+                                       axis=1)
+                    k = int(np.argmin(d / h))
+                    if d[k] < 1e-9 * h[k]:
+                        raise ValueError(
+                            f"fault '{f.name}' triangle {k} lies ON boundary "
+                            f"patch '{p.name}' of region '{r.name}'; a fault "
+                            f"on an interface must be split: split it at the "
+                            f"interface")
+                for k, c in enumerate(cs):
+                    total = sum(self._sigma[(r.name, p.name)]
+                                * patch_solid_angle(p, c) for p in r.patches)
+                    if abs(total - 4.0 * np.pi) > _CLOSURE_TOL * 4.0 * np.pi:
+                        raise ValueError(
+                            f"fault '{f.name}' triangle {k} is not inside "
+                            f"region '{r.name}': closure sum at its centroid "
+                            f"= {total:.6f} sr, expected 4*pi")
+
     # -- convenience -------------------------------------------------
 
-    def interface_regions(self, patch: Patch) -> list[Region]:
-        """Regions incident to a patch, in model region order."""
-        return [r for r in self.regions if any(q is patch for q in r.patches)]
-
-    def sigma_table(self) -> dict[tuple[str, str], int]:
-        return dict(self._sigma)
     def is_anchored(self) -> bool:
         """True if some patch prescribes displacement. On an un-anchored
         model ``jump="calibrated"`` makes rigid translations an exact null
@@ -274,3 +287,9 @@ class RegionModel:
         return any(p.bc is BCType.PRESCRIBED_DISPLACEMENT
                    for r in self.regions for p in r.patches)
 
+    def interface_regions(self, patch: Patch) -> list[Region]:
+        """Regions incident to a patch, in model region order."""
+        return [r for r in self.regions if any(q is patch for q in r.patches)]
+
+    def sigma_table(self) -> dict[tuple[str, str], int]:
+        return dict(self._sigma)

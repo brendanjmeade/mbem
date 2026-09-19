@@ -3,7 +3,9 @@
 The foundation the program builds on: a **direct / DD** formulation whose
 unknown is a displacement discontinuity, with **one code path for constant,
 linear and quadratic** nodal slip (Lagrange P0 / P1 / P2) on flat triangles,
-Cortez-regularised (`R = sqrt(r^2 + eps^2)`).
+Cortez-regularised (`R = sqrt(r^2 + eps^2)`). Slip is the conventional
+`Delta u = u(+nhat) - u(-nhat)`; msd's fault `value` is the opposite, so
+ddbem/clq slip = -(msd slip).
 
 Why DD and not the indirect single layer: the force-element (equivalent-body-
 force) BEM was built, measured and dropped — `../fbem/FINDINGS.md`. Its unknown

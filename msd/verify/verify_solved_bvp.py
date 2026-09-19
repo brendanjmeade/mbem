@@ -5,11 +5,11 @@ Every other gate in ``verify/`` checks one link of the chain -- a kernel, an
 assembler, a contraction, or an internal consistency identity.  None of them
 closes the loop, so a defect in the *right-hand side* (a prescribed value on
 the wrong side of the equation, a fault slip entering with the wrong sign) is
-invisible: flipping ``scale=-1.0`` -> ``+1.0`` on the fault RhsTerm in
-``mbem/model/equations.py`` leaves all 13 msd gates PASSing with byte-identical
-stdout.  This gate exists to close that hole.
+invisible: flipping the sign of the fault RhsTerm scale in
+``mbem/model/equations.py::generate_system`` leaves every other msd gate
+PASSing with byte-identical stdout.  This gate exists to close that hole.
 
-It uses TWO anchors because they fail differently:
+It uses THREE anchors because they fail differently:
 
   A. EXTERNAL, absolute, loose.  Solve the standard ``_fault_box`` model (free
      top, free sides, clamped base, one vertical strike-slip fault) and compare
@@ -32,21 +32,39 @@ It uses TWO anchors because they fail differently:
      is run all-Dirichlet (B2), MIXED (B3) -- because all-Dirichlet never
      touches the prescribed-traction RHS path, nor the LHS free term, since it
      has no u unknowns -- and across a TWO-REGION INTERFACE (B4), which no
-     single-region model can probe.  Tight enough to catch what anchor A's
-     few-percent truncation floor would hide: BC application, the free term,
-     the interface orientation sign, per-patch eps routing.
+     single-region model can probe.  B5 repeats the interface with a MATERIAL
+     CONTRAST (bimaterial simple shear, exact and lam-independent): with equal
+     materials B4 cannot tell which region's material an interface block was
+     assembled with.  B6 splits the Anchor A fault box by a same-material
+     interface below the fault tip and requires the two-region solve to
+     reproduce the one-region solve (fault-in-multi-region assembly).  Tight
+     enough to catch what anchor A's few-percent truncation floor would hide:
+     BC application, the free term, the interface orientation sign, per-patch
+     eps routing, per-region materials.
 
-Measured detection (each seeded one at a time in a sandbox copy):
-  fault RhsTerm sign      equations.py:117  -> 30/144 fail, A only  (cos -> -1)
-  lam/mu swap in t_coeffs basis.py:64       -> 61/144, first at nu=0.30
-  LHS free term 1/2->1/4  dense.py:208      -> 31/144, A + B3
-  prescribed-u RHS sign   equations.py:92   -> 78/144, B only
-  prescribed-u half term  equations.py:94   -> 36/144, B only
-  prescribed-t RHS sign   equations.py:108  -> 36/144, B3 only
-  orientation sign on G   equations.py:101  -> 48/144, B2 + B3
-  interface-only sigma    equations.py:101  -> 24/144, B4 only
+  C. INTERNAL, manufactured, ABSOLUTE FAULT AMPLITUDE.  A small fault inside
+     the closed box; its full-space mollified field (msd's own kernels, which
+     are gated separately against cutde and the legacy oracle) is prescribed
+     on all six faces.  The fault term is then P0-exact and the boundary data
+     exact, so the interior displacement must reproduce the full-space field
+     with no truncation floor -- a few-percent AMPLITUDE error on the fault
+     source, invisible to A's direction (cosine) and truncation-limited
+     magnitude checks, shows up here at near full strength.
 
-Both anchors run at nu = 1/4 AND nu != 1/4 (0.30, 0.45) -- the lam/mu pairing
+Seeded defects (one at a time, in a sandbox copy) and the anchors that fail:
+  fault RhsTerm scale sign  (generate_system)        A only  (cos -> -1)
+  fault RhsTerm scale x1.03 (generate_system)        C only  (A, B unchanged)
+  lam/mu swap in t_coeffs   (basis.py)               first at nu=0.30
+  LHS free term 1/2 -> 1/4  (dense backend)          A + B3
+  prescribed-u RHS sign     (generate_system)        B only
+  prescribed-u half term    (generate_system)        B only
+  prescribed-t RHS sign     (generate_system)        B3 only
+  orientation sign on G     (generate_system)        B2 + B3
+  interface-only sigma      (generate_system)        B4 only
+  interface G with the wrong region's material       B5 only
+  fault RHS skipped on INTERFACE rows                B6 only
+
+The anchors run at nu = 1/4 AND nu != 1/4 (0.30, 0.45) -- the lam/mu pairing
 is invisible at nu = 1/4, which is how a swapped kernel shipped for months --
 and under BOTH jump conventions ("half" and "calibrated").
 
@@ -67,10 +85,11 @@ from _fault_box import build_fault_box, build_model               # noqa: E402
 from local_box_mesh_eq import (                                   # noqa: E402
     _concatenate_meshes,
     make_rectangular_patch_eq,
+    make_vertical_fault_eq,
     make_vertical_panel_eq,
 )
 from mbem.backends.dense import AssembledDense                    # noqa: E402
-from mbem.evaluate import evaluate_displacement                   # noqa: E402
+from mbem.evaluate import evaluate_displacement, evaluate_stress  # noqa: E402
 from mbem.model import (                                          # noqa: E402
     BCType,
     Patch,
@@ -88,6 +107,9 @@ JUMPS = ("half", "calibrated")
 # ---------------------------------------------------------------- anchor A --
 SLIP = 0.01                        # km == 10 m
 EPS_A = 3.0                        # km, == the fault element size
+FAULT_BOX_KW = dict(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
+                    fault_depth=18.0, edge_fault=3.0, edge_near=12.0,
+                    edge_far=50.0, edge_side=50.0, near_field_radius=80.0)
 # cutde carries slip as [strike, dip, tensile] in the per-triangle TDCS frame
 # and uses the OPPOSITE displacement-discontinuity sign convention to the mbem
 # fault source (mbem: u = -H @ slip).  This factor is FROZEN, not fitted: if it
@@ -126,6 +148,29 @@ TOL_MIX_UB = 0.10       # measured worst 0.057
 TOL_MIX_T = 0.10        # measured worst 0.048 (edges cut; 0.137 with edges in)
 TOL_IFACE_U = 2.0e-2    # measured worst 9.8e-3 (upper region, nu=0.45)
 TOL_IFACE_T = 0.15      # measured worst 0.076 (interface rim excluded)
+Z_MID = -0.5 * BOX_H
+TAU = 1.0e-3            # GPa == 1 MPa, the bimaterial shear stress (B5)
+TOL_BIMAT_U = 3.0e-2    # measured worst 1.6e-2 (upper region, nu=0.45)
+TOL_BIMAT_T = 8.0e-2    # measured worst 3.6e-2 (interface rim excluded)
+Z_IFACE_A = -40.0       # B6 interface: below the 18 km fault tip, 80 km of
+#                         lower region beneath it (a thin slab is ~10 % off)
+EDGE_IFACE_A = 25.0
+TOL_TRANSP_U = 1.5e-2   # measured worst 6.4e-3
+TOL_TRANSP_S = 1.0e-2   # measured worst 4.8e-3
+TOL_TRANSP_UIF = 2.5e-2  # measured worst 1.1e-2; dropping the fault term from
+#                          the interface rows gives 0.58 while the two interior
+#                          checks above barely move (the fault field is weak
+#                          22 km below the tip), so this is the one that sees it
+
+# ---------------------------------------------------------------- anchor C --
+# a 10 x 10 km vertical fault (8 triangles) centred in the closed box, >= 15 km
+# from every face; slip SLIP along strike.  The box is meshed at half of
+# BOX_EDGE (eps/h kept at 0.125): the x1.03 seed moves interior u by a fixed
+# ~2e-2 while the P0 floor halves, so the finer box doubles the margin.
+FAULT_C = dict(strike_length=10.0, depth_range=(-25.0, -15.0), target_edge=5.0)
+EDGE_C, EPS_C = 0.5 * BOX_EDGE, 0.5 * EPS_B
+TOL_AMP_U = 9.0e-3      # measured worst 4.4e-3; a x1.03 fault source gives 2.2e-2
+TOL_AMP_T = 0.17        # measured worst 0.084 (edges cut)
 
 
 def check(label, value, tol, fmt="{:.3e}"):
@@ -143,8 +188,8 @@ def check_true(label, ok, note=""):
     return ok
 
 
-def material(nu):
-    return mb.ElasticMaterial(mu=MU, lam=2.0 * MU * nu / (1.0 - 2.0 * nu))
+def material(nu, mu=MU):
+    return mb.ElasticMaterial(mu=mu, lam=2.0 * mu * nu / (1.0 - 2.0 * nu))
 
 
 def relerr(a, b):
@@ -265,21 +310,59 @@ def a_slip_sense(meshes):
 
 # ============================================================== ANCHOR B =====
 
-def _closed_box():
-    xr, yr = (-BOX_L, BOX_L), (-BOX_L, BOX_L)
-    zr = (-BOX_H, 0.0)
-    sides = _concatenate_meshes([
-        make_vertical_panel_eq("x", xr[1], yr, zr, BOX_EDGE, +1),
-        make_vertical_panel_eq("x", xr[0], yr, zr, BOX_EDGE, -1),
-        make_vertical_panel_eq("y", yr[1], xr, zr, BOX_EDGE, +1),
-        make_vertical_panel_eq("y", yr[0], xr, zr, BOX_EDGE, -1),
+def _panels(zr, half=BOX_L, edge=BOX_EDGE):
+    """The four vertical sides of a square box of half-width ``half``, over
+    the depth range ``zr``, stored normals outward."""
+    xr = yr = (-half, half)
+    return _concatenate_meshes([
+        make_vertical_panel_eq("x", xr[1], yr, zr, edge, +1),
+        make_vertical_panel_eq("x", xr[0], yr, zr, edge, -1),
+        make_vertical_panel_eq("y", yr[1], xr, zr, edge, +1),
+        make_vertical_panel_eq("y", yr[0], xr, zr, edge, -1),
     ])
+
+
+def _closed_box(edge=BOX_EDGE):
+    xr, yr = (-BOX_L, BOX_L), (-BOX_L, BOX_L)
+    return {
+        "top": make_rectangular_patch_eq(xr, yr, 0.0, edge, normal_up=True),
+        "base": make_rectangular_patch_eq(xr, yr, -BOX_H, edge,
+                                          normal_up=False),
+        "sides": _panels((-BOX_H, 0.0), edge=edge),
+    }
+
+
+def _split_box():
+    """The closed box cut at Z_MID by a horizontal INTERFACE patch (normal up)."""
+    xr, yr = (-BOX_L, BOX_L), (-BOX_L, BOX_L)
     return {
         "top": make_rectangular_patch_eq(xr, yr, 0.0, BOX_EDGE, normal_up=True),
         "base": make_rectangular_patch_eq(xr, yr, -BOX_H, BOX_EDGE,
                                           normal_up=False),
-        "sides": sides,
+        "iface": make_rectangular_patch_eq(xr, yr, Z_MID, BOX_EDGE,
+                                           normal_up=True),
+        "sides_u": _panels((Z_MID, 0.0)),
+        "sides_l": _panels((-BOX_H, Z_MID)),
     }
+
+
+def _two_region_model(sbox, mat_up, mat_lo, u_up, u_lo):
+    """Upper/lower regions of ``_split_box`` joined by ONE shared interface
+    Patch (incidence is by id()); every outer face is Dirichlet with the
+    region's exact displacement ``u_up(x)`` / ``u_lo(x)`` at its centroids."""
+    p_if = Patch("iface", sbox["iface"], BCType.INTERFACE)
+
+    def dirichlet(name, u_of):
+        return Patch(name, sbox[name], BCType.PRESCRIBED_DISPLACEMENT,
+                     value=u_of(sbox[name].centroids()))
+
+    r_up = Region("upper", mat_up,
+                  [dirichlet("top", u_up), dirichlet("sides_u", u_up), p_if],
+                  probe_point=np.array([1.0, 2.0, -0.25 * BOX_H]))
+    r_lo = Region("lower", mat_lo,
+                  [p_if, dirichlet("sides_l", u_lo), dirichlet("base", u_lo)],
+                  probe_point=np.array([1.0, 2.0, -0.75 * BOX_H]))
+    return RegionModel([r_up, r_lo]), r_up, r_lo
 
 
 def _edge_distance(mesh):
@@ -315,14 +398,15 @@ def _exact_t(mesh, mat):
     return n @ _exact_sigma(mat).T
 
 
-def _build_box_model(box, mat, bcs, values):
+def _build_box_model(box, mat, bcs, values, faults=()):
     patches = [Patch(k, box[k],
                      BCType.PRESCRIBED_DISPLACEMENT if bcs[k] == "d"
                      else BCType.FREE_TRACTION,
                      value=values[k])
                for k in ("top", "sides", "base")]
     region = Region("block", mat, patches,
-                    probe_point=np.array([1.0, 2.0, -0.5 * BOX_H]))
+                    probe_point=np.array([1.0, 2.0, -0.5 * BOX_H]),
+                    faults=list(faults))
     return RegionModel([region]), region
 
 
@@ -437,7 +521,7 @@ def b_uniform_strain_mixed(box, obs):
                       TOL_MIX_T, "{:.4f}")
 
 
-def b_two_region_interface(obs_pair):
+def b_two_region_interface(sbox, obs_pair):
     """Same manufactured strain across a TWO-REGION model joined by an INTERFACE.
 
     No other solved-BVP check touches the INTERFACE branch of generate_system:
@@ -447,38 +531,14 @@ def b_two_region_interface(obs_pair):
     exact solution is still u = A x with continuous u and t across the seam.
     """
     print("\n[B4] MANUFACTURED: uniform strain across a TWO-REGION INTERFACE")
-    z_mid = -0.5 * BOX_H
-    xr, yr = (-BOX_L, BOX_L), (-BOX_L, BOX_L)
-
-    def panels(zr):
-        return _concatenate_meshes([
-            make_vertical_panel_eq("x", xr[1], yr, zr, BOX_EDGE, +1),
-            make_vertical_panel_eq("x", xr[0], yr, zr, BOX_EDGE, -1),
-            make_vertical_panel_eq("y", yr[1], xr, zr, BOX_EDGE, +1),
-            make_vertical_panel_eq("y", yr[0], xr, zr, BOX_EDGE, -1),
-        ])
-
-    top = make_rectangular_patch_eq(xr, yr, 0.0, BOX_EDGE, normal_up=True)
-    base = make_rectangular_patch_eq(xr, yr, -BOX_H, BOX_EDGE, normal_up=False)
-    iface = make_rectangular_patch_eq(xr, yr, z_mid, BOX_EDGE, normal_up=True)
-    sides_u, sides_l = panels((z_mid, 0.0)), panels((-BOX_H, z_mid))
+    iface = sbox["iface"]
     rim = _rim_distance(iface) > BOX_EDGE
     obs_u, obs_l = obs_pair
 
     for nu in NU_LIST:
         mat = material(nu)
-        # the interface Patch object must be SHARED by both regions (incidence
-        # is by id()), which is exactly what this check is here to exercise
-        p_if = Patch("iface", iface, BCType.INTERFACE)
-        outer = [("top", top), ("sides_u", sides_u),
-                 ("sides_l", sides_l), ("base", base)]
-        pats = {n: Patch(n, m, BCType.PRESCRIBED_DISPLACEMENT,
-                         value=_exact_u(m.centroids())) for n, m in outer}
-        r_up = Region("upper", mat, [pats["top"], pats["sides_u"], p_if],
-                      probe_point=np.array([1.0, 2.0, -0.25 * BOX_H]))
-        r_lo = Region("lower", mat, [p_if, pats["sides_l"], pats["base"]],
-                      probe_point=np.array([1.0, 2.0, -0.75 * BOX_H]))
-        model = RegionModel([r_up, r_lo])
+        model, r_up, r_lo = _two_region_model(sbox, mat, mat,
+                                              _exact_u, _exact_u)
         system = generate_system(model)
         for jump in JUMPS:
             sol = AssembledDense(system, EPS_B, "direct", jump=jump).solve()
@@ -499,16 +559,200 @@ def b_two_region_interface(obs_pair):
                   TOL_IFACE_T, "{:.4f}")
 
 
+def _shear_u(mu):
+    """u = (TAU/mu)(z - Z_MID) x_hat: simple shear with sigma_xz = TAU."""
+    def u_of(x):
+        u = np.zeros((len(x), 3))
+        u[:, 0] = (TAU / mu) * (np.asarray(x, float)[:, 2] - Z_MID)
+        return u
+    return u_of
+
+
+def _shear_t(mesh):
+    n, _ = mesh.normals_and_areas()
+    sig = np.zeros((3, 3))
+    sig[0, 2] = sig[2, 0] = TAU
+    return n @ sig.T
+
+
+def b_bimaterial_shear(sbox, obs_pair):
+    """B4's split box with mu_upper != mu_lower under uniform shear sigma_xz.
+
+    Exact, lam-independent, u and t continuous across the seam.  With equal
+    materials (B4) an interface block assembled with the WRONG region's
+    material is invisible; here it is not.  Also run with the contrast
+    inverted and unequal nu.
+    """
+    print("\n[B5] MANUFACTURED: bimaterial simple shear across the INTERFACE")
+    iface = sbox["iface"]
+    rim = _rim_distance(iface) > BOX_EDGE
+    obs_u, obs_l = obs_pair
+    cases = [(30.0, 10.0, nu, nu) for nu in NU_LIST] + [(10.0, 30.0, 0.45, 0.25)]
+    for mu_up, mu_lo, nu_up, nu_lo in cases:
+        model, r_up, r_lo = _two_region_model(
+            sbox, material(nu_up, mu_up), material(nu_lo, mu_lo),
+            _shear_u(mu_up), _shear_u(mu_lo))
+        system = generate_system(model)
+        for jump in JUMPS:
+            sol = AssembledDense(system, EPS_B, "direct", jump=jump).solve()
+            u_up = evaluate_displacement(model, r_up, sol, obs_u, EPS_B,
+                                         warn_near=False)
+            u_lo = evaluate_displacement(model, r_lo, sol, obs_l, EPS_B,
+                                         warn_near=False)
+            tag = f"mu {mu_up:.0f}/{mu_lo:.0f} nu {nu_up:.2f}/{nu_lo:.2f} {jump:10s}"
+            check(f"B5 upper interior u == shear  {tag}",
+                  relerr(u_up, _shear_u(mu_up)(obs_u)), TOL_BIMAT_U)
+            check(f"B5 lower interior u == shear  {tag}",
+                  relerr(u_lo, _shear_u(mu_lo)(obs_l)), TOL_BIMAT_U)
+            check(f"B5 interface t == tau (rim cut) {tag}",
+                  relerr(sol["t:iface"][rim], _shear_t(iface)[rim]),
+                  TOL_BIMAT_T, "{:.4f}")
+
+
+def b_fault_interface_transparency(meshes):
+    """Anchor A's fault box cut by a same-material horizontal interface BELOW
+    the fault tip: the two-region solve must reproduce the one-region solve
+    (identical meshes on every matching face) in the fault region's interior
+    displacement and elastic stress, and on the interface itself, where the
+    one-region model is evaluated as an interior field far from all of its
+    boundaries.  Pins fault-in-multi-region assembly, which B4/B5 (no fault)
+    and A (one region) cannot.
+    """
+    print("\n[B6] TRANSPARENCY: fault box split by a same-material interface")
+    kw = FAULT_BOX_KW
+    sides_u = _panels((Z_IFACE_A, 0.0), kw["half_x"], kw["edge_side"])
+    sides_l = _panels((kw["z_bottom"], Z_IFACE_A), kw["half_x"], kw["edge_side"])
+    xr = meshes["x_range"]
+    iface = make_rectangular_patch_eq(xr, xr, Z_IFACE_A, EDGE_IFACE_A,
+                                      normal_up=True)
+    fault = meshes["fault"]
+    slip = np.broadcast_to(SLIP * np.asarray(meshes["s_hat"], float),
+                           (fault.n_triangles, 3))
+    # obs in the fault region: >= 3 eps from the fault plane, clear of the top
+    # (near-field h = 12) and the interface (h = 25), inside |x|,|y| < 60
+    rng = np.random.default_rng(16180)
+    obs = np.column_stack([rng.uniform(-60.0, 60.0, 60),
+                           rng.uniform(-60.0, 60.0, 60),
+                           rng.uniform(-25.0, -8.0, 60)])
+    obs = obs[np.abs(obs[:, 0]) > 3.0 * EPS_A]
+
+    def patch(name, mesh, bc):
+        return Patch(name, mesh, bc)
+
+    for nu in (0.25, 0.30):
+        mat = material(nu)
+        one = RegionModel([Region(
+            "crust", mat,
+            [patch("top", meshes["top"], BCType.FREE_TRACTION),
+             patch("sides", _concatenate_meshes([sides_u, sides_l]),
+                   BCType.FREE_TRACTION),
+             patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)],
+            probe_point=np.array([90.0, 90.0, -60.0]),
+            faults=[Patch("fault", fault, BCType.FAULT, value=slip)])])
+        p_if = patch("iface", iface, BCType.INTERFACE)
+        r_up = Region("upper", mat,
+                      [patch("top", meshes["top"], BCType.FREE_TRACTION),
+                       patch("sides_u", sides_u, BCType.FREE_TRACTION), p_if],
+                      probe_point=np.array([90.0, 90.0, -20.0]),
+                      faults=[Patch("fault", fault, BCType.FAULT, value=slip)])
+        r_lo = Region("lower", mat,
+                      [p_if, patch("sides_l", sides_l, BCType.FREE_TRACTION),
+                       patch("base", meshes["base"],
+                             BCType.PRESCRIBED_DISPLACEMENT)],
+                      probe_point=np.array([90.0, 90.0, -80.0]))
+        two = RegionModel([r_up, r_lo])
+        sys_one, sys_two = generate_system(one), generate_system(two)
+        for jump in JUMPS:
+            s1 = AssembledDense(sys_one, EPS_A, "direct", jump=jump).solve()
+            s2 = AssembledDense(sys_two, EPS_A, "direct", jump=jump).solve()
+            u1 = evaluate_displacement(one, one.regions[0], s1, obs, EPS_A,
+                                       warn_near=False)
+            u2 = evaluate_displacement(two, r_up, s2, obs, EPS_A,
+                                       warn_near=False)
+            sg1 = evaluate_stress(one, one.regions[0], s1, obs, EPS_A,
+                                  warn_near=False)
+            sg2 = evaluate_stress(two, r_up, s2, obs, EPS_A, warn_near=False)
+            u1_if = evaluate_displacement(one, one.regions[0], s1,
+                                          iface.centroids(), EPS_A,
+                                          warn_near=False)
+            tag = f"nu={nu:.2f} {jump:10s}"
+            check(f"B6 fault-region u: 2 == 1 region    {tag}",
+                  relerr(u2, u1), TOL_TRANSP_U)
+            check(f"B6 fault-region sigma: 2 == 1 region {tag}",
+                  relerr(sg2, sg1), TOL_TRANSP_S)
+            check(f"B6 interface u == 1-region field    {tag}",
+                  relerr(s2["u:iface"], u1_if), TOL_TRANSP_UIF)
+
+
+# ============================================================== ANCHOR C =====
+
+def c_fault_amplitude():
+    """Full-space field of a small interior fault prescribed on the closed box.
+
+    The reference is msd's own fault kernel with the boundary densities zero
+    (separately gated against cutde and the legacy oracle).  Solving with that
+    displacement on all six faces must give it back inside: the fault term is
+    P0-exact and the data exact, so only the P0 error of the smooth boundary
+    integral remains.  A fault source scaled by (1 + a) leaves the interior
+    field short by a * u_D, u_D being the interior extension of the face data,
+    so the obs cloud sits 1.2-2.8 h inside the side faces, where u_D is of the
+    order of the fault field and the amplitude error shows at near full
+    strength (and the cloud is automatically far from the fault).
+    """
+    print("\n[C] MANUFACTURED: full-space fault field prescribed on the closed box")
+    box = _closed_box(EDGE_C)
+    fault, _, s_hat = make_vertical_fault_eq(**FAULT_C)
+    slip = np.broadcast_to(SLIP * s_hat, (fault.n_triangles, 3))
+    keys = ("top", "sides", "base")
+    rng = np.random.default_rng(31415)
+    obs = np.column_stack([rng.uniform(-34.0, 34.0, 600),
+                           rng.uniform(-34.0, 34.0, 600),
+                           rng.uniform(-32.0, -8.0, 600)])
+    obs = obs[np.max(np.abs(obs[:, :2]), axis=1) > 26.0][:80]
+    masks = {k: _edge_distance(box[k]) > EDGE_C for k in keys}
+    zero = {f"t:{k}": np.zeros((box[k].n_triangles, 3)) for k in keys}
+
+    def fpatch():
+        return Patch("fault", fault, BCType.FAULT, value=slip)
+
+    for nu in (0.25, 0.30):
+        mat = material(nu)
+        ref, r_ref = _build_box_model(box, mat, dict(top="d", sides="d", base="d"),
+                                      {k: None for k in keys}, faults=[fpatch()])
+        u_ref = {k: evaluate_displacement(ref, r_ref, zero, box[k].centroids(),
+                                          EPS_C, warn_near=False) for k in keys}
+        t_ref = {k: np.einsum("nij,nj->ni",
+                              evaluate_stress(ref, r_ref, zero,
+                                              box[k].centroids(), EPS_C,
+                                              warn_near=False),
+                              box[k].normals_and_areas()[0]) for k in keys}
+        u_ref_obs = evaluate_displacement(ref, r_ref, zero, obs, EPS_C,
+                                          warn_near=False)
+        model, region = _build_box_model(
+            box, mat, dict(top="d", sides="d", base="d"), u_ref,
+            faults=[fpatch()])
+        system = generate_system(model)
+        for jump in JUMPS:
+            sol = AssembledDense(system, EPS_C, "direct", jump=jump).solve()
+            u = evaluate_displacement(model, region, sol, obs, EPS_C,
+                                      warn_near=False)
+            num = sum(float(np.sum((sol[f"t:{k}"][masks[k]]
+                                    - t_ref[k][masks[k]]) ** 2)) for k in keys)
+            den = sum(float(np.sum(t_ref[k][masks[k]] ** 2)) for k in keys)
+            tag = f"nu={nu:.2f} {jump:10s}"
+            check(f"C interior u == full-space field   {tag}",
+                  relerr(u, u_ref_obs), TOL_AMP_U)
+            check(f"C face t == full-space t (edges cut) {tag}",
+                  float(np.sqrt(num / den)), TOL_AMP_T, "{:.4f}")
+
+
 def main():
     t0 = time.time()
     print("=" * 76)
     print("Solved boundary-value problem: assembly -> BCs -> solve -> readout")
     print("=" * 76)
 
-    meshes = build_fault_box(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
-                             fault_depth=18.0, edge_fault=3.0, edge_near=12.0,
-                             edge_far=50.0, edge_side=50.0,
-                             near_field_radius=80.0)
+    meshes = build_fault_box(**FAULT_BOX_KW)
     nt = {k: meshes[k].n_triangles
           for k in ("top", "sides", "base", "fault")}
     print(f"  fault box triangles: {nt}")
@@ -522,15 +766,20 @@ def main():
     b_rigid_translation(box, obs)
     b_uniform_strain_dirichlet(box, obs)
     b_uniform_strain_mixed(box, obs)
-    b_two_region_interface(_interface_points())
+    sbox, obs_pair = _split_box(), _interface_points()
+    b_two_region_interface(sbox, obs_pair)
+    b_bimaterial_shear(sbox, obs_pair)
+    b_fault_interface_transparency(meshes)
+    c_fault_amplitude()
 
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")
     if all(CHECKS):
-        print(f"PASS: solved BVP matches both anchors ({len(CHECKS)} checks)")
+        print(f"PASS: solved BVP matches all anchors ({len(CHECKS)} checks)")
     else:
         print(f"FAIL: solved BVP disagrees "
               f"({sum(1 for c in CHECKS if not c)} of {len(CHECKS)} checks failed)")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

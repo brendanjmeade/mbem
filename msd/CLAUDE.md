@@ -27,6 +27,8 @@ python verify/verify_batch_vs_scalar.py             # vectorized == scalar
 python verify/verify_pde_residual.py                # regularized Kelvin satisfies the PDE (needs sympy)
 python verify/verify_dd_pairing.py                  # lambda/mu pairing of the DD displacement kernel (nu sweep)
 python verify/verify_eigenstress_exact.py            # exact finite-triangle eigenstress (moss/clq parity, sign, rim)
+python verify/verify_boundary_eigenstress.py         # boundary double layers subtracted too; near-boundary stress converges (exits 1 on FAIL)
+python verify/verify_solved_bvp.py                   # assembly -> BCs -> solve -> displacement vs cutde + manufactured solutions (the end-to-end gate)
 
 # Demos — run from repo root; each writes fig_*.png/.pdf into the repo root
 python examples/demo_fault_only.py                  # fault-only BEM (displacement + elastic stress)
@@ -92,11 +94,26 @@ fact that on-fault elastic stress stays finite as `eps -> 0` (the
 alone would miss, and `verify/verify_eigenstress_exact.py` check `[e]`, which
 also shows the opposite sign diverging).
 
+**It applies to EVERY double layer, not only faults (since 2026-09-19).** The
+boundary term `-sigma*Sdd@u_p` is the same mollified double layer: the
+representation formula writes the field as a jump between `u` (inside the
+region) and zero (outside), and mollifying that fictitious jump smears an
+eigenstress `mu u_p (x) n Phi_eps(d)` into the body within ~3 eps of every
+patch. `evaluate_stress` removes it with the patch's own `sigma`, through the
+one helper `_double_layer_stress` that faults use too. Until 2026-09-19 it did
+not, and that un-subtracted term — not a mesh limit — was the "h-independent
+interior stress near a boundary" (2.4e-1 flat over a 16x refinement; with the
+term 2.25e-1 -> 1.29e-1 -> 7.4e-2). `ddbem` had always subtracted it. Gate:
+`verify/verify_boundary_eigenstress.py` (icosphere vs exact Kelvin: wiring at
+nu = 0.30 with a fault present, accuracy at d/h = 0.5, the refinement ladder,
+a rigid translation whose exact stress is zero, deep no-op).
+
 **The eigenstress is the EXACT finite-triangle form** (2026-09-18):
 `tri_kernels.eigenstress_contract` — `Phi_eps = (15 eps^4/8pi) I7` per element
 (the same `I7` the DD stress kernel already computes), contracted with
-`lam d_mn (n.Du) + mu (Du_m n_n + Du_n n_m)` and summed over **all** fault
-elements, each with its **own** eps. Reached through
+`lam d_mn (n.Du) + mu (Du_m n_n + Du_n n_m)` and summed over **all** source
+elements of every double layer (fault slip and boundary `u_p` alike), each
+with its **own** eps. Reached through
 `_stress_from_source(..., kernel="eigen")`. It is machine-identical to
 `moss/mollified_kernel::analytical_eigenstress_kernel` / `eigenstress_batch`
 and to `clq.eigenstress`. It replaced the frozen `anelastic.py`
@@ -155,14 +172,16 @@ The flow is `RegionModel -> generate_system -> Backend.assemble -> solve`:
    and `evaluate_stress` via `dd_stress_contract`/`kelvin_stress_contract`
    (order-7 / rank-4 moment recursion — `I7`, `T2[5]`, `T2[7]`, `T4[7]`;
    `verify_stress_assembler.py`, ~5000x over the scalar loop) plus
-   `eigenstress_contract` (the same `I7`, alone) for the anelastic term. For REPEATED
+   `eigenstress_contract` (the same `I7`, alone) for the anelastic term of
+   EVERY double layer — boundary `u_p` and fault slip — paired with its `Sdd`
+   term in the one helper `_double_layer_stress`. For REPEATED
    evaluation on a fixed grid (sweeps, time series) `DisplacementEvaluator`
    compresses the obs-grid influence once (`PointCloud` adapter + ACA) and
    applies it per solution at matvec cost. Both evaluators warn when obs
-   points sit within ~0.5*local-h of a **boundary patch** (the volume
-   representation is MESH-limited there — the c=1/2 boundary-jump transition
-   smears over h, NOT eps; shrinking eps makes tractions blow up instead;
-   faults are exempt — the eigenstress subtraction handles their near field).
+   points sit within ~0.5*local-h of a **boundary patch**: with the boundary
+   eigenstress subtracted the near-boundary stress converges under
+   refinement, but the piecewise-constant density still leaves ~2e-1 relative
+   error at d/h = 0.25 (eps/h = 0.3); faults are exempt.
    The stress drivers are material-applied; a stress geometry-basis split is
    the remaining optimization.
 
@@ -189,8 +208,9 @@ The flow is `RegionModel -> generate_system -> Backend.assemble -> solve`:
 - **`eps` is a per-source-element `(N_src,)` array everywhere**; a scalar is
   promoted to a constant array (= legacy global-eps behavior). Per-patch eps via
   a `{patch_name: eps}` dict. `eps="auto"` (opt-in) resolves per element to
-  `EPS_OVER_H * mean-edge-length`, keeping eps/h fixed under grading and
-  h-refinement (order-2 convergence gate: `verify_eps_auto.py`). The
+  `EPS_OVER_H * mean-edge-length` = 0.1 h, keeping eps/h fixed under grading
+  and h-refinement (`verify_eps_auto.py`: kernel order-2 convergence AND a
+  solved-BVP accuracy check against the exact Kelvin field). The
   eigenstress subtraction is a per-element sum, so a **graded fault eps is
   fine** (the near-uniform-eps restriction `evaluate_stress` used to raise was
   a limitation of the scalar-eps `anelastic.py` approximation and was lifted
@@ -250,11 +270,13 @@ copies, `moss/manuscript/scripts/_quad_assembly.py`, and eq. `U-integrated` of
 ## The fault sign convention (centralised 2026-09-18)
 
 How a fault's slip enters msd is stated in **exactly one place**:
-`FAULT_ORIENTATION = +1` in `mbem/model/core.py`, with the derivation in the
-comment above it. A fault is INTERIOR to its region — the same region and
-material lie on both faces — so there is no side to choose and its own normal
-defines the convention. `RegionModel.orientation` therefore answers for faults
-as well as boundary patches, and every site uses the one `-sigma` expression:
+`FAULT_ORIENTATION = +1` in `mbem/model/core.py`. A fault is INTERIOR to its
+region — the same region and material lie on both faces — so there is no side
+to infer and the sign is a convention. **The sense of `Patch.value` for a
+FAULT is `value = u(-n face) - u(+n face)`, the NEGATIVE of the conventional
+Burgers vector `b = u(+n) - u(-n)`.** ddbem/clq use the conventional sign:
+their slip = -(msd slip). `RegionModel.orientation` answers for faults as
+well as boundary patches, and every site uses the one `-sigma` expression:
 
 | site | expression |
 |---|---|
@@ -285,42 +307,73 @@ transposition is invisible. It never
 compiles a numba kernel the caller was not about to use. The gate that covers
 the same ground offline is `verify/verify_solved_bvp.py` (check A3).
 
-## The eps/h operating envelope (measured 2026-09-18)
+## The eps/h operating envelope (measured 2026-09-18, revised 2026-09-19)
 
-**Use `eps/h` in [0.10, 0.30].** Measured with msd's own dense backend on a
-1280-triangle icosphere against the exact Kelvin point force, sweeping
-eps/h from 0.02 to 1.25 (`../audit_2026-09-18/scripts/floor.py`):
+**`eps="auto"` resolves to `EPS_OVER_H * h_j = 0.1 h_j` per element** (since
+2026-09-19; it was 1.25). Measured with msd's own dense backend on an
+icosphere against the exact Kelvin point force, 1280 triangles
+(`../review_2026-09-19/scripts/item2/eps_sweep.py`, log alongside):
 
-| eps/h | Dirichlet interior u | Neumann surface u |
-|---|---|---|
-| 0.02  | 7.47e-4 | 6.58e-3 |
-| 0.075 | 7.07e-4 | 6.78e-3 |
-| 0.10  | 6.66e-4 | — |
-| 0.15  | 8.29e-4 | — |
+| eps/h | Dirichlet interior u | Neumann surface u | Neumann interior sigma | cond(A), fault box |
+|---|---|---|---|---|
+| 0.05  | 9.6e-4 | 6.9e-3 | 1.7e-2 | 37 |
+| 0.10  | 8.9e-4 | 9.5e-3 | 1.9e-2 | 44 |
+| 0.125 | 8.6e-4 | 1.1e-2 | 2.0e-2 | 49 |
+| 0.30  | 6.5e-3 | 2.2e-2 | 3.6e-2 | 108 |
+| 1.25  | 5.2e-2 | 7.5e-2 | 1.3e-1 | 1.7e4 |
 
-**Below eps/h ~ 0.10 nothing improves** — you pay in conditioning and gain no
-accuracy. Above ~0.5 convergence degrades, and `eps/h = 1.25` together with
-`jump="half"` is a NON-CONVERGENT combination (measured on a manufactured
-uniform-strain solution, `../audit_2026-09-18/scripts/probe_uniform.py`).
+* Dirichlet displacement floors at eps/h <= 0.125; Neumann keeps improving
+  mildly down to 0.05. **Conditioning IMPROVES as eps/h drops** (the
+  2026-09-18 note that small eps "costs conditioning" was wrong).
+* On-fault stress wants less: rim elements -7.5 % at 0.125, -2 % at 0.0625
+  (`CODE_REVIEW_2026-09-19.md` finding 4), and near a surface-breaking
+  trace eps_top <= 0.125 h_top and eps_fault <= ~0.07 h_fault
+  (`../HARDENING_AUDIT.md` item 9). 0.1 is the compromise default; go lower
+  for on-fault stress studies.
+* `jump="calibrated"` is now the backends' default. `jump="half"` with
+  eps/h > `defaults.HALF_JUMP_MAX_EPS_OVER_H` (0.5) was measured
+  NON-convergent under h-refinement and the backends warn. Calibrated on an
+  all-Neumann model needs `deflate=True` and the backends now REFUSE
+  (`ValueError`) rather than returning |u| ~ 1e9 km under a warning.
+* Gate: `verify/verify_eps_auto.py` check 4 solves the sphere ladder with
+  `eps="auto"` at the default jump against the exact Kelvin field and
+  asserts rate and ceiling.
 
-**`defaults.EPS_OVER_H = 1.25` is therefore a known footgun** — 4.2x `ddbem`'s
-default, ~8x the measured optimum, 745x worse conditioned, and with no accuracy
-gate. It is left as-is only because changing it moves results for anything using
-`eps="auto"`; see `../HARDENING_AUDIT.md` item 2. Do not treat it as a
-recommended value.
+Why eps/h matters more than it looks: the error is governed by the
+collocation point's CLEARANCE from the element boundary measured in
+mollification lengths, not by element size. On a cube's boundary trace
+`log h` alone explains 0-2% of the error variance while clearance/eps
+explains 70-96% (that measurement is in `../ddbem/README.md`).
+Mollification is a floor on the resolvable structure of the unknown, so
+budget eps/h BEFORE expecting mesh refinement or higher-order elements to
+pay.
 
-Why eps/h matters more than it looks: the error is governed by the collocation
-point's CLEARANCE from the element boundary measured in mollification lengths,
-not by element size. On a cube's boundary trace `log h` alone explains 0-2% of
-the error variance while clearance/eps explains 70-96% (that measurement is in
-`../ddbem/README.md`). Mollification is a floor on the resolvable structure of
-the unknown, so budget eps/h BEFORE expecting mesh refinement or higher-order
-elements to pay.
+Related (corrected 2026-09-19): the "h-INDEPENDENT interior stress within ~1 h
+of a boundary" recorded on 2026-09-18 was the un-subtracted eigenstress of the
+boundary double layer, not a mesh limit; `evaluate_stress` now removes it
+and the near-boundary stress converges at O(h^0.6-0.8) for d/h >= 0.5, with
+< 10 % error beyond ~1.3-1.7 eps at 1280 triangles. What remains is a narrow
+Dirichlet-only zone (d/h < ~0.35, 14-30 %, slowly improving). See
+`../HARDENING_AUDIT.md` item 4.
 
-Related: interior stress within ~1h of a boundary is h-INDEPENDENT — refinement
-narrows the bad zone but does not improve it (2.32e-1 -> 2.15e-1 -> 2.06e-1
-across a 16x refinement). `mbem/evaluate.py::_warn_near_boundary` fires at 0.5
-local h, about 4x too late. See `../HARDENING_AUDIT.md` item 4.
+**Near a surface-breaking fault trace** (diagnosed 2026-09-19, audit item
+9): on-fault stress in the first element row below the free surface is the
+small residual of the fault's own full-space top-edge field and its image,
+|image|/|total| ~ D/(2 z) (3.7 at production, 14 at h = 2 km), so any
+relative error in how the top patch renders the image is amplified by that
+factor. With uniform eps and h_top = h_fault the residual is the P0
+STAIRCASE of the top double layer seen from h/3 below it: +30-46 % on msd's
+Triangle-meshed top, eps-independent. Measured cures: a P1 top density on
+the near-trace band at eps/h <= 0.125 (ddbem, -> the floor), or in msd
+h_top <= h_fault/4 at the trace WITH eps_fault <= 0.07 h_fault AND
+eps_top <= 0.125 h_top (+4.5 %). Refining h_top alone does NOT work, and a
+mirror-fault "image source" cannot work in this DIRECT formulation (it
+doubles the solution). Rule of thumb: on-fault sigma_xy is within 5 % only
+for z >~ max(h_top at the trace, 5 eps). Footgun: a per-patch eps with
+eps_top != eps_fault at a trace moves the first row by +-100 % unless
+eps_fault <= 0.07 h_fault. At production eps/h_top = 0.35 the trace-adjacent
+SURFACE displacement is also 13 % low (0.5 % at eps/h_top = 0.12); read
+surface fields from `u:top`, never by evaluating 1 m below the surface.
 
 ## Conventions
 

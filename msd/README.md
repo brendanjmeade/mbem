@@ -20,6 +20,10 @@ solver (region model + calibrated dense backend), and worked examples.  There is
 
 ## The anelastic (eigenstrain) term
 
+A fault's `Patch.value` is `u(-n face) - u(+n face)` for stored normal `n`, the
+negative of the conventional Burgers vector; ddbem/clq use the conventional
+sign, so their slip = -(msd slip).
+
 A fault slip is an **anelastic** (inelastic / eigen-) strain.  Stress read off a
 mollified slip source is therefore the *total* stress `C:eps_total =
 C:eps_elastic + C:eps_star` inside the ~`eps` fault zone; on the fault it is
@@ -31,10 +35,22 @@ anelastic term:
 sigma_elastic = sigma_total - C:eps_star,
 ```
 
-implemented in `anelastic.py` (`eigenstress_at_points`).  The stress demos apply
-this subtraction; `examples/demo_anelastic_subtraction.py` shows that the
+The live implementation is the **exact finite-triangle** form in
+`mbem/kernels/tri_kernels.py::eigenstress_contract`, applied by
+`mbem.evaluate_stress(subtract_anelastic=True)` (the default); `anelastic.py`
+(`eigenstress_at_points`) is the frozen infinite-plane / nearest-triangle
+*approximation*, right deep inside a large element and up to 2x too large at
+element edges — the three `examples/demo_*` scripts that still call it directly
+inherit that rim error.  `examples/demo_anelastic_subtraction.py` shows that the
 corrected on-fault stress stays finite (bounded, `eps`-independent) while the
 raw value blows up like `1/eps`.
+
+The same eigenstress lives in **every** mollified double layer, not only faults:
+a boundary patch's `u_p` is a jump between the field inside the region and zero
+outside, and its smeared eigenstress is non-physical inside the body.  Since
+2026-09-19 `evaluate_stress` subtracts it for boundary patches too — that term,
+not a mesh limit, was the interior stress error near boundaries that did not
+improve under refinement (`verify/verify_boundary_eigenstress.py`).
 
 The subtracted on-fault elastic stress not only stays finite — at the fault
 interior it **converges to a constant** as `eps -> 0` (observed order `eps^2`),
@@ -88,10 +104,12 @@ python verify/verify_dd_pairing.py                 # lambda/mu pairing of the DD
 python verify/verify_evaluate_stress.py            # mbem stress == classical TDE (cutde); on-fault elastic stays finite
 python verify/verify_stress_assembler.py           # numba batched stress assemblers == scalar oracle (machine precision)
 python verify/verify_eigenstress_exact.py           # EXACT finite-triangle eigenstress == moss/clq oracles; sign; rim disagreement with anelastic.py
+python verify/verify_boundary_eigenstress.py       # boundary double layers subtracted too: near-boundary interior stress converges (icosphere vs exact Kelvin)
+python verify/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space and manufactured solutions (end to end)
 python verify/verify_disp_contract.py              # matrix-free displacement evaluation == dense matrices == legacy oracle
 python verify/verify_dense_backend.py              # dense assembly invariants (calibration cache bit-identity, rebuilds)
 python verify/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, BJ rung)
-python verify/verify_eps_auto.py                   # eps='auto' per-element policy; order-2 h-refinement convergence
+python verify/verify_eps_auto.py                   # eps="auto" (0.1 h): kernel order-2 convergence, solved-BVP accuracy vs Kelvin, half-jump guard
 python verify/verify_deflation_estimate.py         # all-Neumann rigid-body deflation; memory estimator
 ```
 

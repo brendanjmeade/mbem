@@ -10,9 +10,13 @@ Four checks, each PASS/FAIL:
      per-triangle assembly.
   2. Force-stress path vs the repo's own quadrature reference
      (integrate_kelvin_stress_numerical): the boundary-traction term.
-  3. Anelastic subtraction: a no-op OFF the fault (corrected == total), but
-     ON the fault it removes the divergent eigenstress so the corrected
-     stress stays bounded as eps -> 0 while the raw total grows ~ 1/eps.
+  3. Anelastic subtraction through the production path
+     (`_stress_from_source(..., "eigen")`, the exact finite-triangle
+     eigenstress that evaluate_stress subtracts): a no-op OFF the fault, but
+     ON the fault it removes the divergent part so the corrected stress
+     stays bounded as eps -> 0 while the raw total grows ~ 1/eps.  (The
+     frozen `anelastic.py` approximation is compared as a deep-interior
+     oracle in `verify/verify_eigenstress_exact.py`, not here.)
   4. Public evaluate_stress end to end on a small fault box: runs, returns
      finite symmetric tensors, (elastic - total) equals the eigenstress of
      every double layer at the fault centroids, and the on-fault elastic
@@ -28,13 +32,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "examples"))
 
-from anelastic import eigenstress_at_points                         # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq                # noqa: E402
 from mbem.evaluate import _stress_from_source, evaluate_stress      # noqa: E402
+from mbem.model import BCType                                       # noqa: E402
 from mollified_kernel.analytical_kernels import (                   # noqa: E402
     integrate_kelvin_stress_numerical,
 )
-from mbem.model import BCType                                       # noqa: E402
 from tde_reference import classical_tde_stress                      # noqa: E402
 
 MU, NU = 30.0, 0.25
@@ -99,7 +102,8 @@ def check_anelastic_subtraction():
     off = np.array([[4.0, 0.0, -5.0]])
     e = 0.5
     tot_off = _stress_from_source(off, fault, slip, "dd", MU, NU, np.full(nt, e))
-    star_off = eigenstress_at_points(off, fault, s_hat, MU, NU, e)
+    star_off = _stress_from_source(off, fault, slip, "eigen", MU, NU,
+                                   np.full(nt, e))
     off_ratio = np.max(np.abs(star_off)) / max(np.max(np.abs(tot_off)), 1e-30)
     print(f"    off-fault eigenstress/total = {off_ratio:.3e} (want << 1)")
 
@@ -108,7 +112,8 @@ def check_anelastic_subtraction():
     raw_pk, cor_pk = [], []
     for eps in (1.0, 0.25):
         tot = _stress_from_source(c, fault, slip, "dd", MU, NU, np.full(nt, eps))
-        cor = tot - eigenstress_at_points(c, fault, s_hat, MU, NU, eps)
+        cor = tot - _stress_from_source(c, fault, slip, "eigen", MU, NU,
+                                        np.full(nt, eps))
         raw_pk.append(np.max(np.abs(tot[:, 0, 1])))
         cor_pk.append(np.max(np.abs(cor[:, 0, 1])))
     raw_growth = raw_pk[1] / raw_pk[0]      # eps 1.0 -> 0.25 : raw ~ x4
@@ -164,11 +169,6 @@ def check_evaluate_stress_endtoend():
     star = _stress_from_source(obs, meshes["fault"],
                                np.broadcast_to(slip, (nt_f, 3)), "eigen",
                                mat.mu, mat.nu, np.full(nt_f, eps))
-    finite = np.all(np.isfinite(sig_el))
-    symm = float(np.max(np.abs(sig_el - np.transpose(sig_el, (0, 2, 1)))))
-    # elastic = total + eigenstress (every double layer enters as
-    # -sigma*Sdd@jump), so (elastic - total) must equal +eigenstress.
-    sub_ok = _relmax(sig_el - sig_tot, star)
     for p in region.patches:
         u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
                else sol[f"u:{p.name}"])
@@ -176,11 +176,20 @@ def check_evaluate_stress_endtoend():
             star = star + float(model.orientation(region, p)) * \
                 _stress_from_source(obs, p.mesh, u_p, "eigen", mat.mu, mat.nu,
                                     np.full(p.mesh.n_triangles, eps))
+    finite = np.all(np.isfinite(sig_el))
+    symm = float(np.max(np.abs(sig_el - np.transpose(sig_el, (0, 2, 1)))))
+    # elastic = total + eigenstress (every double layer enters as
+    # -sigma*Sdd@jump), so (elastic - total) must equal +eigenstress.
+    sub_ok = _relmax(sig_el - sig_tot, star)
     print(f"    finite={finite}  max asym={symm:.2e}  "
           f"(elastic-total) vs eigenstress rel={sub_ok:.2e}")
 
-    # The decisive test the old check missed: on-fault ELASTIC stress must NOT
-    # diverge as eps -> 0 (the eigenstress must be removed, not doubled).
+    # The decisive test: on-fault ELASTIC shear must neither diverge nor
+    # change sign as eps -> 0 (eigenstress removed, not doubled or negated).
+    # Sign from physics: a stress drop is negative resolved on the Burgers
+    # vector b = u(+n) - u(-n). Here value = u(-n) - u(+n) = +|slip| s_hat,
+    # so b = -|slip| s_hat and tau = n.sigma.s must be POSITIVE at every eps
+    # (cutde with b = +|slip| s_hat gives the mirror image, -9.5 MPa).
     ctr = call[i_c:i_c + 1]
 
     def tau_center(eps):
@@ -188,12 +197,16 @@ def check_evaluate_stress_endtoend():
         sg = evaluate_stress(model, region, a.solve(), ctr, eps,
                              subtract_anelastic=True)
         return float(np.einsum("nij,i,j->n", sg, n_hat, s_hat)[0]) * 1e3
-    t_hi, t_lo = tau_center(4.0), tau_center(1.0)
-    growth = abs(t_lo) / max(abs(t_hi), 1e-30)
-    print(f"    on-fault center elastic shear: {t_hi:.3f} (eps=4) -> "
-          f"{t_lo:.3f} (eps=1)  growth x{growth:.2f}")
+    tau = [tau_center(e) for e in (4.0, 2.0, 1.0)]
+    ratio = [abs(t) / max(abs(tau[0]), 1e-30) for t in tau[1:]]
+    print(f"    on-fault center elastic shear (MPa): "
+          f"{tau[0]:.3f} (eps=4)  {tau[1]:.3f} (eps=2)  {tau[2]:.3f} (eps=1)"
+          f"  |tau/tau(4)| = {ratio[0]:.3f}, {ratio[1]:.3f}")
+    signed = all(t > 0.0 for t in tau)
+    # band basis (measured): tau = 9.79, 9.91, 9.88 MPa; ratios 1.012, 1.009
+    banded = all(0.85 < r < 1.1 for r in ratio)
     return (bool(finite) and symm < 1e-9 and sub_ok < 1e-9
-            and 0.8 < growth < 1.25)
+            and signed and banded)
 
 
 def main():
@@ -214,7 +227,8 @@ def main():
         print("\nPASS: evaluate_stress matches the independent references.")
     else:
         print("\nFAIL: one or more stress-evaluation checks disagree.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -123,12 +123,22 @@ class MeshArrays:
 
 
 def as_eps_array(eps, n_source: int) -> np.ndarray:
-    """Promote scalar eps to (N_src,); validate array length otherwise."""
+    """Promote scalar eps to (N_src,); validate length and positivity.
+
+    Every entry must be finite and > 0: the kernels only see eps^2, so a
+    negative eps runs silently as |eps| while the eigenstress correction
+    (which keys on eps <= 0) drops out, and eps = 0 hits the unfloored
+    I3 = -Omega/h division inside prange, where numba cannot raise.
+    """
     arr = np.asarray(eps, dtype=float)
     if arr.ndim == 0:
-        return np.full(n_source, float(arr))
-    if arr.shape != (n_source,):
+        arr = np.full(n_source, float(arr))
+    elif arr.shape != (n_source,):
         raise ValueError(f"eps array shape {arr.shape} != ({n_source},)")
+    bad = ~(np.isfinite(arr) & (arr > 0.0))
+    if bad.any():
+        raise ValueError(f"eps must be finite and > 0: {int(bad.sum())} bad "
+                         f"of {arr.size}, min = {arr.min()}")
     return np.ascontiguousarray(arr)
 
 

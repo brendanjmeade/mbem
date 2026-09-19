@@ -33,7 +33,7 @@ WHAT IS PINNED HERE, AND WHY EACH CHECK IS NOT VACUOUS
        whose density varies inside an element.
    (c) the HYPERSINGULAR row needs no calibration at all: its raw row sum is
        already machine zero.  That is not luck -- it is the exact
-       finite-triangle eigenstress subtraction (``../EIGENSTRESS_AUDIT.md``),
+       finite-triangle eigenstress subtraction (``../BACKLOG.md``),
        which makes the elastic stress of a uniform DD on a closed surface
        vanish pointwise.  Tripwire: with ``subtract_eigenstress=False`` the same
        row sum is 4.4e15 times larger.

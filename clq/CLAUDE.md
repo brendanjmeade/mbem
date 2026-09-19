@@ -65,7 +65,7 @@ path; do not import those packages any other way.
   the live hazard in that path: sub-floor table slots are NaN on purpose, and
   `lift` masks them rather than multiplying by `z^c = 0`.
 * `clq.stress` returns ELASTIC stress (total minus the exact eigenstress) by
-  default -- the tree-wide policy in `../EIGENSTRESS_AUDIT.md`.  Use
+  default -- the tree-wide policy in `../BACKLOG.md`.  Use
   `subtract_eigenstress=False` only for kernel diagnostics and say so in the
   figure.
 * The FORCE element has no eigenstress: a mollified body force is a genuine

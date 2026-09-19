@@ -31,7 +31,7 @@ DECISION 1 -- ELASTIC vs TOTAL STRESS.  ``stress_matrix`` and
 A mollified slip is an anelastic (eigen-) strain: clq's ``H`` is the TOTAL
 stress ``C:(eps_el + eps*)`` of the smeared slip, whose eigenstress part
 ``C:eps*`` peaks at ``(3/4) mu s / eps`` on the element and diverges as
-eps -> 0.  ``../EIGENSTRESS_AUDIT.md`` is the tree-wide policy: every stress
+eps -> 0.  ``../BACKLOG.md`` is the tree-wide policy: every stress
 presented as elastic must have ``C:eps*`` subtracted.  Here the subtraction
 uses clq's EXACT finite-triangle weights ``E[n, k]``,
 

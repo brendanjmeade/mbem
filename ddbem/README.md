@@ -214,7 +214,7 @@ luck. The mollified closure identity `sum_S D(x, y) = -phi(x) I` is exact
 *pointwise* (it is fact 1), so a uniform DD `q` on a closed surface produces
 exactly `u = -phi q` — a purely anelastic field whose total stress IS its own
 eigenstress `C:eps*`. Subtracting the exact finite-triangle eigenstress
-(`../EIGENSTRESS_AUDIT.md`) therefore leaves **zero elastic stress everywhere**,
+(`../BACKLOG.md`) therefore leaves **zero elastic stress everywhere**,
 and the hypersingular row annihilates the rigid mode before any calibration.
 Tripwire in the gate: with `subtract_eigenstress=False` the same row sum is
 **4.4e15 times larger** (7.4e0 against 1.7e-15).

@@ -312,7 +312,7 @@ the same ground offline is `verify/verify_solved_bvp.py` (check A3).
 **`eps="auto"` resolves to `EPS_OVER_H * h_j = 0.1 h_j` per element** (since
 2026-09-19; it was 1.25). Measured with msd's own dense backend on an
 icosphere against the exact Kelvin point force, 1280 triangles
-(`../review_2026-09-19/scripts/item2/eps_sweep.py`, log alongside):
+(basis in `mbem/defaults.py`):
 
 | eps/h | Dirichlet interior u | Neumann surface u | Neumann interior sigma | cond(A), fault box |
 |---|---|---|---|---|
@@ -325,10 +325,9 @@ icosphere against the exact Kelvin point force, 1280 triangles
 * Dirichlet displacement floors at eps/h <= 0.125; Neumann keeps improving
   mildly down to 0.05. **Conditioning IMPROVES as eps/h drops** (the
   2026-09-18 note that small eps "costs conditioning" was wrong).
-* On-fault stress wants less: rim elements -7.5 % at 0.125, -2 % at 0.0625
-  (`CODE_REVIEW_2026-09-19.md` finding 4), and near a surface-breaking
+* On-fault stress wants less: rim elements -7.5 % at 0.125, -2 % at 0.0625, and near a surface-breaking
   trace eps_top <= 0.125 h_top and eps_fault <= ~0.07 h_fault
-  (`../HARDENING_AUDIT.md` item 9). 0.1 is the compromise default; go lower
+  (`../BACKLOG.md`). 0.1 is the compromise default; go lower
   for on-fault stress studies.
 * `jump="calibrated"` is now the backends' default. `jump="half"` with
   eps/h > `defaults.HALF_JUMP_MAX_EPS_OVER_H` (0.5) was measured
@@ -354,10 +353,9 @@ boundary double layer, not a mesh limit; `evaluate_stress` now removes it
 and the near-boundary stress converges at O(h^0.6-0.8) for d/h >= 0.5, with
 < 10 % error beyond ~1.3-1.7 eps at 1280 triangles. What remains is a narrow
 Dirichlet-only zone (d/h < ~0.35, 14-30 %, slowly improving). See
-`../HARDENING_AUDIT.md` item 4.
+`../BACKLOG.md`.
 
-**Near a surface-breaking fault trace** (diagnosed 2026-09-19, audit item
-9): on-fault stress in the first element row below the free surface is the
+**Near a surface-breaking fault trace** (`../BACKLOG.md` item 2): on-fault stress in the first element row below the free surface is the
 small residual of the fault's own full-space top-edge field and its image,
 |image|/|total| ~ D/(2 z) (3.7 at production, 14 at h = 2 km), so any
 relative error in how the top patch renders the image is amplified by that

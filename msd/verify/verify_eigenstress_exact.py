@@ -1,7 +1,7 @@
 """verify_eigenstress_exact.py -- the EXACT finite-triangle eigenstress.
 
 On-fault ELASTIC stress is ``sigma_el = sigma_tot - C:eps_star`` (the tree-wide
-policy, ``EIGENSTRESS_AUDIT.md``).  The frozen ``anelastic.py`` computes
+policy, ``BACKLOG.md``).  The frozen ``anelastic.py`` computes
 ``C:eps_star`` with NEAREST-TRIANGLE
 assignment and the INFINITE-PLANE Cortez marginal
 ``rho = 0.75 eps^4 / (d^2 + eps^2)^2.5``.  That is the ``d/L -> 0`` limit of the

@@ -53,7 +53,7 @@ unit); the examples use L = mu = s = 1.
 | `examples/` | figures for one equilateral triangle and a quickstart |
 | `docs/derivation.md` | the closed-form statement and numerics |
 
-Stress readout policy (tree-wide, see `../EIGENSTRESS_AUDIT.md`): the kernel
+Stress readout policy (tree-wide, see `../BACKLOG.md`): the kernel
 returns the TOTAL stress `C:(eps_el + eps*)` of the smeared slip; on the fault
 it is dominated by the eigenstress `C:eps*` ~ (3/4) mu s/eps.  `clq.stress`
 subtracts the **exact** finite-triangle eigenstress

@@ -29,14 +29,9 @@ documented by its `README.md`. This file only maps the territory.
 
 Loose files at this level:
 
-- `HARDENING_AUDIT.md` — the 2026-09-18 audit of the constant-slip mollified
-  (eps > 0) path: what was fixed, the ranked backlog, the retired worries (do
-  not re-check them), and an explicit list of what the gates still cannot see.
-  Read it before hardening or benchmarking anything. Its measurement scripts
-  are in `audit_2026-09-18/scripts/`.
-- `EIGENSTRESS_AUDIT.md` — the tree-wide policy (2026-07-16) that every stress
-  presented as elastic must have the anelastic eigenstress `C:ε*` of the smeared
-  slip subtracted; cited by `clq/`.
+- `BACKLOG.md` — the one status document: standing rules (eigenstress
+  policy, fault-slip sense, eps/h), the ranked open items, and the
+  consolidation plan. History and measurements are in `git log`.
 - `CLAUDE.md` — this file.
 
 **Archived, not present here.** The full earlier tree is in

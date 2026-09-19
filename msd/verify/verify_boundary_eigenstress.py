@@ -6,7 +6,7 @@ Background. Every ``-sigma * SH @ u_p``
 term of the stress representation is a mollified double layer whose
 Cortez-smeared jump carries an anelastic eigenstress ``C:eps_star ~ mu u_p (x)
 n Phi_eps(d)`` inside the body. For a fault that jump is the slip and msd has
-always removed it (EIGENSTRESS_AUDIT.md). For a boundary patch the jump is
+always removed it (BACKLOG.md). For a boundary patch the jump is
 ``u_p`` itself (the field inside R against zero outside). Measured on an
 icosphere against the exact Kelvin point-force field, leaving that term in
 gives an h-INDEPENDENT near-boundary stress error: Neumann, d/h = 0.66, eps/h = 0.3: 2.43e-1 / 2.22e-1 / 2.10e-1 over

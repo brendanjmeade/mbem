@@ -345,7 +345,7 @@ body force, not an eigenstrain: (1.2) already solves
 $\partial_j\sigma_{ij}+(\phi_\varepsilon*f)_i=0$, so $S^{(k)}$ *is* the elastic
 stress and there is nothing to subtract.  `clq.force_stress` therefore takes no
 `subtract_eigenstress` argument (in contrast with `clq.stress`, whose default is
-the tree-wide policy of `../EIGENSTRESS_AUDIT.md`), and passing one raises.
+the tree-wide policy of `../BACKLOG.md`), and passing one raises.
 
 ## 7. Identities and limits (all gated in `verify/`)
 

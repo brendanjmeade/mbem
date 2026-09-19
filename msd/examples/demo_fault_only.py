@@ -3,9 +3,10 @@
 A vertical right-lateral strike-slip fault inside a Cartesian box (free top,
 traction-free sides, clamped base) is solved with the mollified full-space BEM
 (mbem, calibrated jump).  We plot the free-surface displacement and the
-ELASTIC surface stress -- the anelastic (eigenstrain) term is subtracted
-(anelastic.py) so the near-fault stress is the genuine elastic field, not the
-spurious 1/eps zone-loading band.
+ELASTIC surface stress -- the exact finite-triangle anelastic (eigenstrain)
+term is subtracted (the "eigen" kernel of mbem.evaluate._stress_from_source) so
+the near-fault stress is the genuine elastic field, not the spurious 1/eps
+zone-loading band.
 
 Output (repo root): fig_fault_only.png/.pdf
   row 1: surface displacement u_x, u_y, u_z (mm)
@@ -29,8 +30,8 @@ sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                         # noqa: E402
 from _fault_box import build_fault_box, build_model               # noqa: E402
-from anelastic import eigenstress_at_points                       # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
+from mbem.evaluate import _stress_from_source                     # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 
 try:
@@ -86,8 +87,10 @@ def free_surface_stress(meshes, sol):
     # the surface-breaking trace and the trace strip is masked below, so this
     # only matters in a thin band hugging the mask -- but the sign is kept
     # consistent so a future on/near-fault evaluation does not double the spike.
-    sig_el = sig + eigenstress_at_points(obs, meshes["fault"], slip_cart,
-                                         mu, MAT.nu, EPS)
+    fault = meshes["fault"]
+    slip_tri = np.broadcast_to(slip_cart, (fault.n_triangles, 3))
+    sig_el = sig + _stress_from_source(obs, fault, slip_tri, "eigen", mu, MAT.nu,
+                                       np.full(fault.n_triangles, EPS))
     comps = {"xx": sig_el[:, 0, 0], "yy": sig_el[:, 1, 1], "xy": sig_el[:, 0, 1]}
     S = {k: (v * GPA_TO_MPA).reshape(X.shape) for k, v in comps.items()}
     # Mask the thin surface-breaking fault strip: the slip is DISCONTINUOUS
@@ -111,7 +114,7 @@ def main():
     t0 = time.time()
     asm = AssembledDense(system, EPS, "direct", jump="calibrated")
     sol = asm.solve()
-    print(f"solved in {time.time()-t0:.0f} s; cond ~ {asm.cond_estimate:.2e}",
+    print(f"solved in {time.time()-t0:.0f} s; cond ~ {asm.report.cond_estimate:.2e}",
           flush=True)
 
     # --- figure ---

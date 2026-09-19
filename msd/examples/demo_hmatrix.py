@@ -61,12 +61,13 @@ def main():
     print(f"fault + mu/10 inclusion: {n} unknowns, eps={EPS}", flush=True)
 
     t0 = time.time()
-    dense = AssembledDense(system, EPS, "basis", jump="half").solve()
+    dense = AssembledDense(system, EPS, "direct", jump="half").solve()
     print(f"dense LU (half jump): {time.time()-t0:.0f} s", flush=True)
 
     t0 = time.time()
     hasm = HBackend(eta=0.8, tol=1e-6, verbose=False).assemble(system, EPS)
-    sol, report = hasm.solve(rtol=1e-8)
+    sol = hasm.solve(rtol=1e-8)
+    report = hasm.report
     t_h = time.time() - t0
     n_iter = getattr(report, "iterations", getattr(report, "n_iter", None))
     print(f"H-matrix FGMRES (eta=0.8): {t_h:.0f} s, {n_iter} iters", flush=True)

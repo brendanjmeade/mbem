@@ -1,7 +1,7 @@
 """Verify dense-backend assembly invariants.
 
 Gate for the calibration block-cache sharing (roadmap A1): `_build` and
-`_apply_calibration` now draw H blocks from ONE per-build cache instead
+`the calibration row-sums` now draw H blocks from ONE per-build cache instead
 of re-assembling them (in mode="direct" + jump="calibrated" -- the demo
 configuration -- every H block used to be assembled twice). Caching is
 pure plumbing, so the assembled operator must be BIT-IDENTICAL to a
@@ -140,7 +140,8 @@ def main():
         print("\nPASS: dense-backend assembly invariants hold.")
     else:
         print("\nFAIL: dense-backend assembly changed behaviour.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

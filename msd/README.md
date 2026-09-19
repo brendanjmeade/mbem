@@ -40,8 +40,9 @@ The live implementation is the **exact finite-triangle** form in
 `mbem.evaluate_stress(subtract_anelastic=True)` (the default); `anelastic.py`
 (`eigenstress_at_points`) is the frozen infinite-plane / nearest-triangle
 *approximation*, right deep inside a large element and up to 2x too large at
-element edges — the three `examples/demo_*` scripts that still call it directly
-inherit that rim error.  `examples/demo_anelastic_subtraction.py` shows that the
+element edges; the demos use the exact form through
+`mbem.evaluate._stress_from_source(..., "eigen", ...)`.
+`examples/demo_anelastic_subtraction.py` shows that the
 corrected on-fault stress stays finite (bounded, `eps`-independent) while the
 raw value blows up like `1/eps`.
 
@@ -89,18 +90,20 @@ verify/                   kernel correctness checks (print PASS/FAIL)
 
 ```
 pip install numpy scipy matplotlib numba triangle
-# sympy is only needed for verify/verify_pde_residual.py
 # cutde is only needed for the on-fault-stress demos/verify (classical TDE reference)
 ```
 
 ## Verify the kernels
 
+Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
+on FAIL; `python verify/run_all.py` runs them all sequentially and tabulates
+verdict, wall time and exit code.
+
 ```
 python verify/verify_analytical_vs_quadrature.py   # analytic == high-order quadrature
 python verify/verify_arbitrary_triangle.py         # arbitrary-triangle / rigid / scaling
 python verify/verify_batch_vs_scalar.py            # vectorized == scalar
-python verify/verify_pde_residual.py               # regularized Kelvin satisfies the PDE
-python verify/verify_dd_pairing.py                 # lambda/mu pairing of the DD displacement kernel (closure, nu sweep; fixed 2026-09-04)
+python verify/verify_dd_pairing.py                 # lambda/mu pairing of the DD displacement kernel (closure, nu sweep); point kernel satisfies the regularized Navier equation
 python verify/verify_evaluate_stress.py            # mbem stress == classical TDE (cutde); on-fault elastic stays finite
 python verify/verify_stress_assembler.py           # numba batched stress assemblers == scalar oracle (machine precision)
 python verify/verify_eigenstress_exact.py           # EXACT finite-triangle eigenstress == moss/clq oracles; sign; rim disagreement with anelastic.py

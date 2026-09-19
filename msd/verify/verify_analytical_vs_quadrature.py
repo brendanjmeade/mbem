@@ -128,11 +128,13 @@ def main():
     rel_dg = compare("integrate_DG       ", DG_a, DG_n)
     rel_d2g = compare("integrate_D2G      ", D2G_a, D2G_n)
 
-    if max(rel_g, rel_dg, rel_d2g) < 1e-8:
+    ok = max(rel_g, rel_dg, rel_d2g) < 1e-8
+    if ok:
         print("\nPASS: analytical and numerical integrations agree.")
     else:
         print("\nFAIL: analytical and numerical disagree above 1e-8.")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

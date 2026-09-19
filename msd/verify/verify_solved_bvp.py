@@ -779,8 +779,8 @@ def main():
     else:
         print(f"FAIL: solved BVP disagrees "
               f"({sum(1 for c in CHECKS if not c)} of {len(CHECKS)} checks failed)")
-        sys.exit(1)
+    return all(CHECKS)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
-from mbem.backends import HBackend                                # noqa: E402
+from mbem.backends import AssembledH, HBackend                    # noqa: E402
 from mbem.backends.dense import (                                 # noqa: E402
     AssembledDense,
     DenseBackend,
@@ -92,15 +92,21 @@ def check_deflation():
         refused_a = False
     except ValueError as exc:
         refused_a = "null space" in str(exc)
+    hb = HBackend(eta=0.8, tol=1e-6, jump="calibrated")
     try:
-        HBackend(eta=0.8, tol=1e-6, jump="calibrated").assemble(
-            system, EPS).solve(rtol=1e-9)
+        hb.assemble(system, EPS)
         refused_h = False
     except ValueError as exc:
         refused_h = "null space" in str(exc)
-    warned = refused_d and refused_a and refused_h
+    try:
+        AssembledH(system, EPS, hb.opts, False, jump="calibrated")
+        refused_ah = False
+    except ValueError as exc:
+        refused_ah = "null space" in str(exc)
+    warned = refused_d and refused_a and refused_h and refused_ah
     print(f"    all-Neumann calibrated REFUSED without deflate: dense front "
-          f"{refused_d}, AssembledDense {refused_a}, HBackend.solve {refused_h}")
+          f"{refused_d}, AssembledDense {refused_a}, H front {refused_h}, "
+          f"AssembledH {refused_ah}")
 
     dense = AssembledDense(system, EPS, "direct", jump="calibrated",
                            deflate=True)
@@ -110,8 +116,10 @@ def check_deflation():
     finite = all(np.all(np.isfinite(v)) for v in sol_d.values())
     print(f"    bordered dense: finite={finite}, |Z^T x| = {zt:.2e}")
 
-    sol_h, rep = HBackend(eta=0.8, tol=1e-6, jump="calibrated").assemble(
-        system, EPS).solve(rtol=1e-9, deflate=True)
+    hasm = HBackend(eta=0.8, tol=1e-6, jump="calibrated",
+                    deflate=True).assemble(system, EPS)
+    sol_h = hasm.solve(rtol=1e-9)
+    rep = hasm.report
     worst_hd = max(float(np.max(np.abs(sol_h[k] - sol_d[k]))
                          / max(np.max(np.abs(sol_d[k])), 1e-30))
                    for k in sol_d)
@@ -162,8 +170,10 @@ def check_estimator():
     ok &= 0.3 < ratio < 3.0
 
     mode = choose_dense_mode(system)
-    print(f"    choose_dense_mode -> {mode!r} (small model)")
-    ok &= mode == "basis"
+    mode_rb = choose_dense_mode(system, need_rebuild=True)
+    print(f"    choose_dense_mode -> {mode!r}; with need_rebuild -> "
+          f"{mode_rb!r} (small model)")
+    ok &= mode == "direct" and mode_rb == "basis"
     print(f"    fgmres workspace at 3e6 DOFs, restart=200: "
           f"{est_h['fgmres_workspace_bytes'] * 3e6 / est_h['n_unknowns'] / 3 / 1e9:.1f}"
           f" GB-scale guidance available")
@@ -186,7 +196,8 @@ def main():
         print("\nPASS: deflation and memory estimation verified.")
     else:
         print("\nFAIL: deflation/estimator check failed.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

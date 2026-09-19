@@ -3,9 +3,9 @@
 A fault slip is an anelastic strain, so the mollified displacement-discontinuity
 stress kernel returns the TOTAL stress inside the ~eps fault zone -- on the fault
 it is dominated by the eigenstress, peaking at (3/4) mu s / eps and DIVERGING as
-eps -> 0.  Subtracting the anelastic eigenstress C:eps_star (anelastic.py) leaves
-the genuine ELASTIC stress, which is smooth, BOUNDED, and eps-independent in the
-fault interior.
+eps -> 0.  Subtracting the exact finite-triangle anelastic eigenstress C:eps_star
+(mbem.evaluate._stress_from_source(..., "eigen", ...)) leaves the genuine ELASTIC
+stress, which is smooth, BOUNDED, and eps-independent in the fault interior.
 
 This is the full-space analogue of the elastic-vs-total correction: it evaluates
 the on-fault shear of a finite strike-slip patch on a fault-normal profile through
@@ -29,8 +29,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
-from anelastic import eigenstress_at_points                       # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
+from mbem.evaluate import _stress_from_source                     # noqa: E402
 from mollified_kernel.analytical_kernels import (                 # noqa: E402
     analytical_stress_kernel,
 )
@@ -73,6 +73,7 @@ def main():
     fault, n_hat, s_hat = make_vertical_fault_eq(
         strike_length=2.0 * L, depth_range=(-D, 0.0), target_edge=0.5 * L)
     slip_cart = SLIP_MAG * np.asarray(s_hat, float)
+    slip_tri = np.broadcast_to(slip_cart, (fault.n_triangles, 3))
     print(f"fault: {fault.n_triangles} triangles; n_hat={n_hat}, s_hat={s_hat}")
 
     # Fault-normal profile through the interior centroid (x varies; y=0, z=-D/2).
@@ -82,8 +83,8 @@ def main():
     rows, prof_raw, prof_cor = [], [], []
     for eps in EPS_LADDER:
         sig_raw = fault_stress(obs, fault, slip_cart, MU, NU, eps)
-        sig_cor = sig_raw - eigenstress_at_points(obs, fault, slip_cart,
-                                                  MU, NU, eps)
+        sig_cor = sig_raw - _stress_from_source(
+            obs, fault, slip_tri, "eigen", MU, NU, np.full(fault.n_triangles, eps))
         sxy_raw = sig_raw[:, 0, 1] * GPA_TO_MPA
         sxy_cor = sig_cor[:, 0, 1] * GPA_TO_MPA
         pk_raw, pk_cor = float(np.max(np.abs(sxy_raw))), float(np.max(np.abs(sxy_cor)))

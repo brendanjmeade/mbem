@@ -6,9 +6,8 @@ of C, giving (analytical_kernels.analytical_dd_displacement)
 
     U_ij = -[ mu n_m dG_ij/dx_m + lam n_j dG_im/dx_m + mu n_m dG_im/dx_j ].
 
-Before 2026-09-04 msd had lam and mu swapped on the first two terms (scalar,
-batch, and the numba T basis) -- identical at nu = 1/4 (lam == mu), where
-every other gate runs, and ~20-60 % off at nu = 0.3.  This gate runs at
+A lam/mu swap on the first two terms is invisible at nu = 1/4 (lam == mu),
+where most gates run, and ~20-60 % off at nu = 0.3.  This gate runs at
 several nu and uses only convention-free or independent references:
 
   (a) Gauss closure: for a closed cube with outward normals and a uniform
@@ -20,8 +19,15 @@ several nu and uses only convention-free or independent references:
   (c) Hooke consistency: finite-difference gradient of the displacement kernel
       -> C:sym(grad u) equals analytical_stress_kernel (whose pairing was
       always correct) at nu = 0.3;
-  (d) msd scalar == moss scalar (commit f721a6a) at nu = 0.3; batch == scalar;
-      mbem assemble_t_matrix == batch, all at nu = 0.3.
+  (d) msd scalar == moss scalar at nu = 0.3 (a missing moss copy FAILS, so
+      the parity is never silently skipped); batch == scalar;
+      mbem assemble_t_matrix == batch, all at nu = 0.3;
+  (e) the point kernel the triangle integrals are built from satisfies the
+      regularized Navier equation L_ij G_jk + delta_ik phi_eps = 0 with the
+      Cortez blob phi_eps = 15 eps^4 / (8 pi R_eps^7): kelvin_d2G directly and
+      a 5-point finite difference of kelvin_dG_pointwise, at several nu.  The
+      blob term 2(1-nu) eps^2 delta_ij / R_eps^3 in G is what makes this hold;
+      a 5 % error in its coefficient leaves a residual of 3e-2 or more.
 
 Run from the repo root:  python verify/verify_dd_pairing.py
 """
@@ -39,9 +45,10 @@ sys.path.insert(0, str(ROOT / "mollified_kernel"))
 
 import mollified_bem as mb                                          # noqa: E402
 from mollified_kernel.analytical_kernels import (                   # noqa: E402
-    analytical_dd_displacement, analytical_stress_kernel)
+    analytical_dd_displacement, analytical_stress_kernel, kelvin_dG_pointwise)
 from mollified_kernel.analytical_batch import dd_displacement_batch  # noqa: E402
-from mollified_kernel.mollified_elastic_kernels import triangle_quadrature  # noqa: E402
+from mollified_kernel.mollified_elastic_kernels import (             # noqa: E402
+    kelvin_d2G, triangle_quadrature)
 from mbem.kernels import basis as kb                                 # noqa: E402
 from mbem.kernels import tri_kernels as tk                           # noqa: E402
 
@@ -56,8 +63,8 @@ def check(name, val, tol):
 
 
 def _prefix_swapped_U(obs, v1, v2, v3, normal, mu, nu, eps):
-    """msd's pre-2026-09-04 contraction (lam on the normal-derivative term,
-    mu on the trace term), rebuilt from integrate_DG for the tripwire."""
+    """The swapped contraction (lam on the normal-derivative term, mu on the
+    trace term), rebuilt from integrate_DG for the tripwire."""
     from mollified_kernel.analytical_kernels import integrate_DG
     G1 = integrate_DG(v1, v2, v3, obs, mu, nu, eps)
     lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
@@ -70,6 +77,28 @@ def _prefix_swapped_U(obs, v1, v2, v3, normal, mu, nu, eps):
                         + mu * n[j] * tr
                         + mu * sum(n[k] * G1[i, k, j] for k in range(3)))
     return U
+
+
+def navier_residual(dG, d2G, mu, nu, eps, d, h_over_eps=0.005):
+    """Relative residual of L_ij G_jk + delta_ik phi_eps at the point d, from
+    the analytic second derivative d2G and from a 5-point central difference
+    of the first derivative dG (step h_over_eps * eps), normalised by the
+    largest term of the operator.  Returns (analytic, finite_difference)."""
+    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    phi = 15.0 * eps**4 / (8.0 * np.pi * (d @ d + eps**2) ** 3.5)
+    hh = h_over_eps * eps
+    D2fd = np.zeros((3, 3, 3, 3))                    # D2[i,j,s,q] = d2 G_ij / dx_s dx_q
+    for q in range(3):
+        e = np.zeros(3); e[q] = hh
+        D2fd[:, :, :, q] = (-dG(d + 2 * e, mu, nu, eps) + 8 * dG(d + e, mu, nu, eps)
+                            - 8 * dG(d - e, mu, nu, eps) + dG(d - 2 * e, mu, nu, eps)) / (12 * hh)
+    out = []
+    for D2 in (d2G(d, mu, nu, eps), D2fd):
+        lap = mu * np.einsum("ikpp->ik", D2)
+        div = (lam + mu) * np.einsum("jkij->ik", D2)
+        res = lap + div + phi * np.eye(3)
+        out.append(np.abs(res).max() / max(np.abs(lap).max(), np.abs(div).max(), phi))
+    return out
 
 
 def cube_mesh():
@@ -185,21 +214,32 @@ def main():
         spec = importlib.util.spec_from_file_location("_moss_ak", str(moss_path))
         moss = importlib.util.module_from_spec(spec); spec.loader.exec_module(moss)
         Um = np.array([moss.analytical_dd_displacement(o, v1, v2, v3, n, mu, nu, eps) for o in obs_pts])
-        check("msd scalar vs moss scalar (f721a6a)", np.abs(Um - Us).max() / np.abs(Us).max(), 1e-12)
+        check("msd scalar vs moss scalar", np.abs(Um - Us).max() / np.abs(Us).max(), 1e-12)
     else:
-        print("  (moss oracle not found -- skipped)")
+        CHECKS.append(False)
+        print(f"  [XX] moss oracle not found at {moss_path} -- parity check counted as FAILED")
     mesh1 = mb.TriMesh(vertices=np.array([v1, v2, v3]), triangles=np.array([[0, 1, 2]]))
     lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
     T1 = kb.assemble_t_matrix(obs_pts, mesh1, mb.ElasticMaterial(mu=mu, lam=lam), eps)
     Umb = T1.reshape(len(obs_pts), 3, 3)
     check("mbem assemble_t_matrix vs batch", np.abs(Umb - Ub).max() / np.abs(Ub).max(), 1e-12)
 
+    # (e) the point kernel satisfies the regularized Navier equation ---------
+    print("\n[e] Navier residual L_ij G_jk + delta_ik phi_eps of the mollified point kernel")
+    eps = 0.3
+    for nu in (0.25, 0.30, 0.45):
+        for d in (np.array([0.2, 0.1, -0.15]), np.array([0.5, 0.4, 0.7]), np.array([-0.3, 0.9, -0.6])):
+            r_an, r_fd = navier_residual(kelvin_dG_pointwise, kelvin_d2G, mu, nu, eps, d)
+            check(f"nu={nu:.2f} |d|/eps={np.linalg.norm(d) / eps:.1f}: kelvin_d2G analytic", r_an, 1e-12)
+            check(f"nu={nu:.2f} |d|/eps={np.linalg.norm(d) / eps:.1f}: 5-pt FD of kelvin_dG_pointwise", r_fd, 1e-7)
+
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: DD displacement kernel pairing ({len(CHECKS)} checks)")
     else:
         print(f"FAIL: DD displacement kernel pairing ({sum(1 for c in CHECKS if not c)} of {len(CHECKS)} checks failed)")
+    return all(CHECKS)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

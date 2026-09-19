@@ -132,10 +132,10 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
 
         asm = AssembledDense(system, EPS, "direct", jump="calibrated")
         sol = asm.solve()
-        conds[f"{surface}_het"] = asm.cond_estimate
+        conds[f"{surface}_het"] = asm.report.cond_estimate
         for p in ("host_top", "inclusion_top"):
             fields[f"u_{p}_{surface}_het"] = sol[f"u:{p}"]
-        print(f"[{surface}] het: cond {asm.cond_estimate:.3e}", flush=True)
+        print(f"[{surface}] het: cond {asm.report.cond_estimate:.3e}", flush=True)
 
         asm.A = None
         asm._lu = None
@@ -144,10 +144,10 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
         del asm
         gc.collect()
         sol_h = asm_h.solve()
-        conds[f"{surface}_hom"] = asm_h.cond_estimate
+        conds[f"{surface}_hom"] = asm_h.report.cond_estimate
         for p in ("host_top", "inclusion_top"):
             fields[f"u_{p}_{surface}_hom"] = sol_h[f"u:{p}"]
-        print(f"[{surface}] hom: cond {asm_h.cond_estimate:.3e}", flush=True)
+        print(f"[{surface}] hom: cond {asm_h.report.cond_estimate:.3e}", flush=True)
         del asm_h, sol, sol_h, model, system
         gc.collect()
 

@@ -219,7 +219,8 @@ def main():
               "and the legacy oracle.")
     else:
         print("\nFAIL: displacement contraction disagrees.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

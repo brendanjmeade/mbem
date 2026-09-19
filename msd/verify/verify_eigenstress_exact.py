@@ -488,7 +488,8 @@ def main():
     else:
         print(f"FAIL: exact finite-triangle eigenstress "
               f"({sum(1 for c in CHECKS if not c)} of {len(CHECKS)} checks failed)")
+    return all(CHECKS)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

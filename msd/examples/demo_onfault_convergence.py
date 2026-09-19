@@ -3,8 +3,9 @@
 A fault slip is an anelastic strain, so the mollified slip->stress kernel returns
 the TOTAL stress inside the ~eps fault zone -- on the fault it is dominated by the
 eigenstress, growing ~ (3/4) mu s / eps and DIVERGING as eps -> 0.  Subtracting
-the anelastic eigenstress C:eps_star (anelastic.py) leaves the genuine ELASTIC
-stress.  This demo shows, for a finite full-space strike-slip patch, that the
+the exact finite-triangle anelastic eigenstress C:eps_star (the "eigen" kernel of
+mbem.evaluate._stress_from_source) leaves the genuine ELASTIC stress.  This demo
+shows, for a finite full-space strike-slip patch, that the
 corrected on-fault stress at the fault interior:
 
   * converges to a CONSTANT (observed order ~ eps^2), and
@@ -34,7 +35,6 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
-from anelastic import eigenstress_at_points                       # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
 from mbem.evaluate import _stress_from_source                     # noqa: E402
 from tde_reference import classical_tde_stress                    # noqa: E402
@@ -65,6 +65,13 @@ def dd_stress(obs, fault, slip, eps):
                                np.full(nt, float(eps)))
 
 
+def eigenstress(obs, fault, slip, eps):
+    """Exact finite-triangle anelastic eigenstress +C:eps_star, (N,3,3)."""
+    nt = fault.n_triangles
+    return _stress_from_source(obs, fault, slip, "eigen", MU, NU,
+                               np.full(nt, float(eps)))
+
+
 def main():
     fault, n_hat, s_hat = make_vertical_fault_eq(
         strike_length=2.0 * L, depth_range=(-D, 0.0), target_edge=TARGET_EDGE)
@@ -83,7 +90,7 @@ def main():
     raw_c, cor_c = [], []
     for eps in EPS_LADDER:
         tot = dd_stress(center, fault, slip, eps)
-        cor = tot - eigenstress_at_points(center, fault, slip_vec, MU, NU, eps)
+        cor = tot - eigenstress(center, fault, slip, eps)
         raw_c.append(tot[0, 0, 1] * GPA_TO_MPA)
         cor_c.append(cor[0, 0, 1] * GPA_TO_MPA)
     raw_c, cor_c = np.array(raw_c), np.array(cor_c)
@@ -109,7 +116,7 @@ def main():
     prof_raw, prof_cor = [], []
     for eps in PROFILE_EPS:
         tot = dd_stress(obs, fault, slip, eps)
-        cor = tot - eigenstress_at_points(obs, fault, slip_vec, MU, NU, eps)
+        cor = tot - eigenstress(obs, fault, slip, eps)
         prof_raw.append(tot[:, 0, 1] * GPA_TO_MPA)
         prof_cor.append(cor[:, 0, 1] * GPA_TO_MPA)
     # classical reference on the profile (mask the singular on-fault plane).

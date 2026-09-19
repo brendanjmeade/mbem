@@ -40,6 +40,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                        # noqa: E402
+from mbem.kernels import KERNEL_T                                 # noqa: E402
 from _fault_box import build_fault_box, build_model               # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
@@ -89,7 +90,7 @@ def bench_size(cfg: dict) -> dict:
     t0 = time.perf_counter()
     sol = dense.solve()
     rec["dense_lu_s"] = time.perf_counter() - t0
-    rec["cond_estimate"] = float(dense.cond_estimate)
+    rec["cond_estimate"] = float(dense.report.cond_estimate)
 
     # -- H backend ----------------------------------------------------
     t0 = time.perf_counter()
@@ -101,7 +102,8 @@ def bench_size(cfg: dict) -> dict:
     rec["h_fallback"] = int(sum(p.n_fallback for p in hasm._pairs.values()))
 
     t0 = time.perf_counter()
-    _, report = hasm.solve()
+    hasm.solve()
+    report = hasm.report
     rec["h_solve_s"] = time.perf_counter() - t0
     rec["h_iters"] = int(report.iterations)
     rec["h_converged"] = bool(report.converged)
@@ -156,7 +158,7 @@ def bench_panel(n_side: int, storage: str, tol: float) -> dict:
     n_tris = source.n_triangles
     eps_arr = kbm.as_eps_array(2.0 * L / n_side, n_tris)
     t0 = time.perf_counter()
-    pc = PairCompressed(field, source, "H", eps_arr, tol=tol,
+    pc = PairCompressed(field, source, KERNEL_T, eps_arr, tol=tol,
                         storage=storage,
                         combine_for=[kbm.t_coeffs(30.0, 30.0)]
                         if storage == "combined" else None)

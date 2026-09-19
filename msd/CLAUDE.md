@@ -1,389 +1,102 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in `msd/`, the trunk of the mollified
+BEM (`../BACKLOG.md` is the one status document; history is in `git log`).
 
 ## What this is
 
-A self-contained **mollified boundary element method (BEM)** for 3-D linear
-elasticity in the **full space** (no half-space/Mindlin, no viscoelasticity in
-the kernels, no LaTeX). Singular Kelvin/Somigliana kernels are regularized
-Cortez-style with `r -> r_eps = sqrt(r^2 + eps^2)`, and each triangle's
-contribution is integrated **analytically**, so the mollification width `eps`
-is decoupled from mesh size `h` (Ferranti & Cortez). See `README.md` for the
-physics and reference papers.
+A self-contained mollified boundary element method for 3-D linear elasticity
+in the full space. Singular Kelvin/Somigliana kernels are regularized
+Cortez-style, `r -> sqrt(r^2 + eps^2)`, and every triangle's contribution is
+integrated analytically, so the mollification width `eps` is a free
+per-element parameter, not a quadrature artefact. No half space, no
+viscoelasticity, no LaTeX. `README.md` has the physics and references.
 
-## Running things
-
-There is **no build, no installer, no pytest, no CI**. Everything is plain
-scripts run with the system Python from the repo root.
+## Running
 
 ```bash
-pip install numpy scipy matplotlib numba triangle   # sympy only for one verify script
-
-# Correctness checks — each prints "PASS"/"FAIL" (no test runner, no exit codes to assert on)
-python verify/verify_analytical_vs_quadrature.py    # analytic == high-order quadrature
-python verify/verify_arbitrary_triangle.py          # arbitrary-triangle / rigid / scaling
-python verify/verify_batch_vs_scalar.py             # vectorized == scalar
-python verify/verify_pde_residual.py                # regularized Kelvin satisfies the PDE (needs sympy)
-python verify/verify_dd_pairing.py                  # lambda/mu pairing of the DD displacement kernel (nu sweep)
-python verify/verify_eigenstress_exact.py            # exact finite-triangle eigenstress (moss/clq parity, sign, rim)
-python verify/verify_boundary_eigenstress.py         # boundary double layers subtracted too; near-boundary stress converges (exits 1 on FAIL)
-python verify/verify_solved_bvp.py                   # assembly -> BCs -> solve -> displacement vs cutde + manufactured solutions (the end-to-end gate)
-
-# Demos — run from repo root; each writes fig_*.png/.pdf into the repo root
-python examples/demo_fault_only.py                  # fault-only BEM (displacement + elastic stress)
-python examples/demo_hmatrix.py                     # H-matrix FGMRES vs dense LU reference
-python examples/demo_anelastic_subtraction.py       # anelastic term -> finite on-fault stress
-# full table of demos is in README.md
+pip install numpy scipy matplotlib numba triangle    # cutde for the classical-TDE gates/demos
+python verify/run_all.py          # every gate, sequentially; exit 1 on any FAIL
+python verify/verify_solved_bvp.py   # one gate; each prints PASS:/FAIL: and exits 1 on FAIL
+python examples/demo_fault_only.py   # demos write fig_*.png/.pdf into this directory
 ```
 
-Scripts insert the repo root onto `sys.path` themselves (`examples/*` do
-`sys.path.insert(0, ROOT)` then `import mollified_bem`, `from mbem...`), so they
-must be launched from the repo root, not from inside `examples/`. BEM demos run
-at paper resolution — tens of seconds to a few minutes; numba JIT adds a
-first-call warmup.
+Run everything from `msd/` (scripts put the repo root on `sys.path`
+themselves). Numba compiles on first call; demos run at paper resolution.
 
-## Two-layer architecture: frozen legacy oracles + the `mbem` rebuild
+## Map
 
-This is the single most important thing to understand before editing.
+**Frozen oracles** (flat modules; never "improve" them — new code is gated by
+entrywise parity against them):
+`mollified_bem.py` (`ElasticMaterial`, `TriMesh` — still the live types — and
+the hand-written assembler), `mollified_kernel/` (point kernels; scalar and
+vectorized analytic triangle integration), `anelastic.py` (the infinite-plane
+eigenstress approximation; right deep inside an element, up to 2x off at its
+edges), `local_box_mesh*.py`, `inclusion_mesh.py` (meshes; fault traces are
+exact mesh edges), `tde_reference.py` (`cutde` classical-TDE stress, full or
+half space; its slip sign is minus msd's).
 
-**Legacy flat modules are FROZEN validation oracles** — do not "improve" them;
-new code is tested for entrywise parity against them:
+**`mbem/`** — the live solver. Flow: `RegionModel -> generate_system ->
+Backend.assemble -> solve -> evaluate_*`.
 
-- `mollified_bem.py` — defines `ElasticMaterial` (`mu`, `lam`; `.nu`, `.E`),
-  `TriMesh`, the full-space mollified Kelvin U/T kernels, and the original
-  hand-written `assemble_BEM_matrices`. `ElasticMaterial` and `TriMesh` are
-  still the live types used everywhere (including `mbem`).
-- `mollified_kernel/` — point-source kernels (`mollified_elastic_kernels.py`)
-  and the analytic per-triangle integration, scalar (`analytical_kernels.py`)
-  and vectorized (`analytical_batch.py`).
-- `local_box_mesh.py`, `local_box_mesh_eq.py`, `inclusion_mesh.py` — mesh
-  builders (layered boxes, fault-aligned tops, cylindrical inclusions). Fault
-  traces are embedded as **exact mesh edges** so no triangle straddles the slip
-  discontinuity.
-- `anelastic.py` — `eigenstress_at_points`: a mollified slip source returns
-  *total* stress; subtract the anelastic (eigenstrain) term to get the genuine
-  **elastic** stress. Stress demos must apply this or on-fault stress diverges
-  like `1/eps`. The corrected interior on-fault stress *converges to a constant*
-  (`eps^2`) as `eps -> 0` — validated against the classical-TDE finite part
-  (`tde_reference.py`, a `cutde` full/half-space reference).
-  **It is the APPROXIMATE (infinite-plane) form** — nearest-triangle assignment
-  plus the Cortez marginal `rho = 0.75 eps^4/(d^2+eps^2)^2.5` — i.e. the
-  `d/L -> 0` limit. Frozen and still an oracle *where it is valid*: deep inside
-  a large element it agrees with the exact form to ~1e-6 (gated). Near element
-  EDGES it is up to 2x too large, so the live path
-  (`mbem/kernels/tri_kernels.py::eigenstress_contract`, since 2026-09-18)
-  uses the EXACT finite-triangle form instead; `examples/demo_*` still call
-  `anelastic.py` directly and inherit the rim error.
-- `tde_reference.py` — `classical_tde_stress(...)`: independent classical
-  triangular-dislocation stress (`cutde`, full- or half-space) for the SAME
-  triangulated fault, the validation oracle for on-fault stress. cutde uses a
-  `[strike,dip,tensile]` slip in the TDE frame and the OPPOSITE slip-sign
-  convention to the mbem fault, so reconcile with `compute_efcs_to_tdcs_rotations`
-  and a global `g = +-1` (see the demos).
-
-**Where the eigenstress subtraction belongs.** NOT in the BEM solve: `mbem` is
-formulated in *displacement*, so a fault enters only as a smooth `-H@slip`
-influence on the RHS and the `1/eps` eigenstress (a *stress* quantity) never
-touches assembly/collocation. It belongs in the **stress readout**
-(`evaluate_stress`, `subtract_anelastic=True`). Sign subtlety: the fault stress
-term there is `-Sdd@slip` (mirroring the `-H@slip` displacement), so its divergent
-part is `-C:eps_star` and removing it *adds* the eigenstress — verified by the
-fact that on-fault elastic stress stays finite as `eps -> 0` (the
-`verify/verify_evaluate_stress.py` finiteness gate, which a self-consistency check
-alone would miss, and `verify/verify_eigenstress_exact.py` check `[e]`, which
-also shows the opposite sign diverging).
-
-**It applies to EVERY double layer, not only faults (since 2026-09-19).** The
-boundary term `-sigma*Sdd@u_p` is the same mollified double layer: the
-representation formula writes the field as a jump between `u` (inside the
-region) and zero (outside), and mollifying that fictitious jump smears an
-eigenstress `mu u_p (x) n Phi_eps(d)` into the body within ~3 eps of every
-patch. `evaluate_stress` removes it with the patch's own `sigma`, through the
-one helper `_double_layer_stress` that faults use too. Until 2026-09-19 it did
-not, and that un-subtracted term — not a mesh limit — was the "h-independent
-interior stress near a boundary" (2.4e-1 flat over a 16x refinement; with the
-term 2.25e-1 -> 1.29e-1 -> 7.4e-2). `ddbem` had always subtracted it. Gate:
-`verify/verify_boundary_eigenstress.py` (icosphere vs exact Kelvin: wiring at
-nu = 0.30 with a fault present, accuracy at d/h = 0.5, the refinement ladder,
-a rigid translation whose exact stress is zero, deep no-op).
-
-**The eigenstress is the EXACT finite-triangle form** (2026-09-18):
-`tri_kernels.eigenstress_contract` — `Phi_eps = (15 eps^4/8pi) I7` per element
-(the same `I7` the DD stress kernel already computes), contracted with
-`lam d_mn (n.Du) + mu (Du_m n_n + Du_n n_m)` and summed over **all** source
-elements of every double layer (fault slip and boundary `u_p` alike), each
-with its **own** eps. Reached through
-`_stress_from_source(..., kernel="eigen")`. It is machine-identical to
-`moss/mollified_kernel::analytical_eigenstress_kernel` / `eigenstress_batch`
-and to `clq.eigenstress`. It replaced the frozen `anelastic.py`
-approximation, which was ~2x too large over the whole fault RIM (measured:
-19.6 vs 5.6 MPa mean rim `sigma_xy` on a 750-element 10x6 km fault at
-eps/h = 1.25) while agreeing to 0.1% deep inside an element.
-
-**`mbem/` is the rebuilt solver stack** — geometry-general, faster, and the
-place to do new work.
-
-### How `mbem` assembles a solve
-
-The flow is `RegionModel -> generate_system -> Backend.assemble -> solve`:
-
-1. **`mbem/model/core.py` — `RegionModel`.** A graph of `Region`s, each bounded
-   by oriented `Patch`es with a `BCType` (`FREE_TRACTION`, `PRESCRIBED_DISPLACEMENT`,
-   `INTERFACE`, `FAULT`). The hard problem the legacy solvers hand-coded
-   case-by-case is the **boundary orientation sign** `sigma(R,p) = +1 iff patch
-   p's stored normals point out of region R`. Here it is **inferred
-   geometrically** from signed solid angles and validated by the Gauss closure
-   identity (`sum_p sigma*Omega = 4*pi`) and interface antisymmetry. Interface
-   patches shared by two regions **must be the same `Patch` object** (incidence
-   is by `id()`); `orientation_overrides` is the escape hatch for non-star-shaped
-   regions.
-2. **`mbem/model/layout.py` — `UnknownLayout`.** Deterministic slot ordering
-   (`u`/`t` per patch) reproducing the legacy unknown orderings exactly.
-3. **`mbem/model/equations.py` — `generate_system`.** Emits one `BlockSystem`
-   from THE sign rule (the docstring is the spec): `A[row,u_p] += sigma*H + 1/2 I`,
-   `A[row,t_p] += -sigma*G`; prescribed values and fault slip move to the RHS.
-   `H` is the T-kernel (slip/displacement -> displacement), `G` the U-kernel.
-4. **Backends** (`mbem/backends/`): `DenseBackend` (LU, oracle-parity) and
-   `HBackend` (block-compressed + preconditioned FGMRES). Both consume the same
-   `BlockSystem`, and both support `jump="half" | "calibrated"` (the H-path
-   calibration computes `C_q = -sum_p sigma*rowsum(H_qp)` through the
-   compressed pairs via constant-field matvecs, so the applied operator
-   annihilates constants exactly; gate: `verify/verify_hbackend.py`). For
-   all-Neumann + calibrated models (exact rigid-translation null space) pass
-   `deflate=True`: dense solves the translation-bordered system, HBackend
-   projects the null space out of FGMRES (`verify_deflation_estimate.py`).
-   `HBackend(storage="basis")` keeps geometry-only per-basis factors (B-fold
-   memory, free material recombination — best for Laplace sweeps);
-   `storage="combined"` keeps only material-combined payloads (1x memory, the
-   mode for very large models; unseen materials trigger transient
-   re-compression). Block compression is parallel across LARGE blocks
-   (serial nogil kernels in threads — do NOT call the `parallel=True` kernels
-   from concurrent Python threads, the macOS workqueue layer crashes) with
-   per-block-seeded rng (bitwise deterministic). `mbem/estimate.py` predicts
-   memory per mode (`estimate_memory`, `choose_dense_mode`) before assembling.
-5. **`mbem/evaluate.py`** — interior-field representation formulas, same `sigma`
-   and prescribed-value handling as the boundary equations. BOTH evaluators are
-   **matrix-free numba contraction drivers** (never materialize the
-   `(3N_obs, 3N_src)` influence: O(N_obs) memory at any source count):
-   `evaluate_displacement` via `t_disp_contract`/`u_disp_contract`
-   (`verify_disp_contract.py`: machine parity vs the dense matrices AND the
-   legacy oracle; 250k obs x 1.4k src = 9 s / 0.4 GB where dense needed 49 GB)
-   and `evaluate_stress` via `dd_stress_contract`/`kelvin_stress_contract`
-   (order-7 / rank-4 moment recursion — `I7`, `T2[5]`, `T2[7]`, `T4[7]`;
-   `verify_stress_assembler.py`, ~5000x over the scalar loop) plus
-   `eigenstress_contract` (the same `I7`, alone) for the anelastic term of
-   EVERY double layer — boundary `u_p` and fault slip — paired with its `Sdd`
-   term in the one helper `_double_layer_stress`. For REPEATED
-   evaluation on a fixed grid (sweeps, time series) `DisplacementEvaluator`
-   compresses the obs-grid influence once (`PointCloud` adapter + ACA) and
-   applies it per solution at matvec cost. Both evaluators warn when obs
-   points sit within ~0.5*local-h of a **boundary patch**: with the boundary
-   eigenstress subtracted the near-boundary stress converges under
-   refinement, but the piecewise-constant density still leaves ~2e-1 relative
-   error at d/h = 0.25 (eps/h = 0.3); faults are exempt.
-   The stress drivers are material-applied; a stress geometry-basis split is
-   the remaining optimization.
-
-### Cross-cutting design ideas
-
-- **Material-basis decomposition (`mbem/kernels/basis.py`).** Each U/T influence
-  matrix is `M(material) = sum_k c_k(mu,lam) * B_k` with geometry-only `B_k`
-  (3 for U, 6 for T: three `N[P] = n_j tr P` blocks with `lam*C1` and three
-  `R[P] = n_m P_ijm + n_k P_ikj` blocks with `mu*C1`; `eps^2` baked in). Assemble the basis ONCE, recombine per
-  material — this is what makes `rebuild_for_materials` cheap (the viscoelastic
-  Laplace-sweep primitive) and works for complex `mu_tilde(s)`. **Binding rule:**
-  compute coefficients from `(mu, lam)` directly, never via a `1/(1-2nu)`
-  intermediate (it blows up at the fluid limit `nu -> 1/2`).
-- **`DenseBackend` modes** (`mode=`): `"legacy"` routes every block through
-  `mollified_bem.assemble_BEM_matrices` for entrywise parity (scalar eps only);
-  `"basis"` caches geometry bases for cheap material rebuilds (~9x memory;
-  `mbem.estimate.choose_dense_mode` picks by RAM); `"direct"` is memory-light
-  numba in-loop assembly (calibration shares the per-build block cache — do not
-  reintroduce the double assembly; gate: `verify_dense_backend.py`
-  bit-identity). `jump="calibrated"` repairs the Gauss identity for thin panels
-  but makes rigid translations an exact null space on all-Neumann models — use
-  `deflate=True` there (bordered solve; matches the half-jump physics to <1%,
-  `verify_deflation_estimate.py`).
-- **`eps` is a per-source-element `(N_src,)` array everywhere**; a scalar is
-  promoted to a constant array (= legacy global-eps behavior). Per-patch eps via
-  a `{patch_name: eps}` dict. `eps="auto"` (opt-in) resolves per element to
-  `EPS_OVER_H * mean-edge-length` = 0.1 h, keeping eps/h fixed under grading
-  and h-refinement (`verify_eps_auto.py`: kernel order-2 convergence AND a
-  solved-BVP accuracy check against the exact Kelvin field). The
-  eigenstress subtraction is a per-element sum, so a **graded fault eps is
-  fine** (the near-uniform-eps restriction `evaluate_stress` used to raise was
-  a limitation of the scalar-eps `anelastic.py` approximation and was lifted
-  2026-09-18; gate: `verify_eigenstress_exact.py` check `[f]`).
-- **`mbem/la/`** — the linear-algebra layer for `HBackend`: `cluster` (cluster
-  trees / admissibility; `MAX_ADMISSIBLE_BLOCK=2048` caps the block side — the
-  dense-fallback bomb of a failed 4096 block is ~7 GB and 4x slower, measured),
-  `aca` (per-basis low-rank block compression, true-residual stopping,
-  verification + dense fallback), `hop.PairCompressed` (compressed
-  material-basis pair operator; LRU-bounded per-material views —
-  `HOP_VIEW_CACHE_MAX`), `hodlr` (direct HODLR solver),
-  `solver.fgmres` (right-preconditioned, true-residual verified),
-  `preconditioner.BlockGaussSeidel` (3-rung diagonal ladder: dense LU <=
-  `MAX_DENSE_PRECOND_DOF`, HODLR <= `PRECOND_HODLR_MAX_DOF`, then cluster
-  block-Jacobi — the rung that scales to 1e5-1e6-element patches), `scaling`
-  (Ruiz/physics equilibration — NOTE: measured to be a NO-OP for FGMRES here:
-  with right preconditioning and BGS's exact diagonal solves, column scaling
-  with a consistently transformed preconditioner yields the identical
-  iteration; it is not wired into the solve). `mbem/la/cluster.py` is a clean
-  reimplementation of the frozen legacy `hmatrix.py`.
-- **`mbem/defaults.py`** is the single source of truth for every tolerance and
-  threshold. Put new numeric constants here, not inline.
-- **`mbem/wrappers.py`** — `solve_*_v2` functions match legacy signatures but
-  route through the region-graph core; useful as worked examples of building a
-  `RegionModel` (`build_three_region_box_model`, `build_vertical_fault_zone_model`).
-
-The `mbem` docstrings reference an "approved plan" / design doc that is **not in
-this repo** — treat those mentions as historical; the docstrings themselves are
-the authoritative spec.
-
-## Kernel index pairing (fixed 2026-09-04)
-
-The slip -> displacement (T) contraction is the traction operator applied to
-the Kelvin solution -- slip and normal share C's FIRST index pair:
-`U_ij = -[mu n_m dG_ij/dx_m + lam n_j dG_im/dx_m + mu n_m dG_im/dx_j]`.
-Until 2026-09-04 `analytical_dd_displacement`, `dd_displacement_batch`,
-`integrate_dd_displacement_numerical`, the numba T basis (`_contract_LM`, now
-`_contract_NR`) and `examples/demo_point_kernel.py` had lam and mu swapped on
-the first two terms.  This is invisible at nu = 1/4 (lam == mu), which every
-demo and every parity gate used, and ~20-60 % off at nu = 0.3.  The stress
-kernels (`analytical_stress_kernel`, `dd_stress_contract`) always had the
-correct pairing.  The six-block T basis is unchanged in count and
-coefficients; only the block *meaning* changed.  Gate:
-`verify/verify_dd_pairing.py` (closed-cube Gauss closure `sum U = -I` at
-nu in {0.1, 0.25, 0.3, 0.45}, quadrature of `kelvin_T_mollified`, FD-Hooke
-consistency, moss parity); `verify_batch_vs_scalar.py` and
-`verify_arbitrary_triangle.py` now also run at nu = 0.3; the stress-side
-gates `verify_stress_assembler.py` (numba vs scalar) also run at nu = 0.3,
-while `verify_evaluate_stress.py` (cutde reference) still runs at nu = 1/4
-only.  The same pre-fix form still exists OUTSIDE msd: `moss2/` (scalar,
-batch, numerical reference), `moss/mollified_kernel/analytical_batch.py` and
-`moss/mollified_kernel/analytical_kernels.py::integrate_dd_displacement_numerical`
-(moss fixed only the scalar `analytical_dd_displacement`), the `moss/mh_deploy/`
-copies, `moss/manuscript/scripts/_quad_assembly.py`, and eq. `U-integrated` of
-`moss/docs/mollified_kernels.tex`.
-
-## The fault sign convention (centralised 2026-09-18)
-
-How a fault's slip enters msd is stated in **exactly one place**:
-`FAULT_ORIENTATION = +1` in `mbem/model/core.py`. A fault is INTERIOR to its
-region — the same region and material lie on both faces — so there is no side
-to infer and the sign is a convention. **The sense of `Patch.value` for a
-FAULT is `value = u(-n face) - u(+n face)`, the NEGATIVE of the conventional
-Burgers vector `b = u(+n) - u(-n)`.** ddbem/clq use the conventional sign:
-their slip = -(msd slip). `RegionModel.orientation` answers for faults as
-well as boundary patches, and every site uses the one `-sigma` expression:
-
-| site | expression |
+| module | role |
 |---|---|
-| `mbem/model/equations.py` (solve) | `scale=-sigma` on the fault `RhsTerm` |
-| `mbem/evaluate.py::evaluate_displacement` | `u -= sigma * H @ slip` |
-| `mbem/evaluate.py::evaluate_stress` | `sig -= sigma * Sdd @ slip`, `sig += sigma * eigen` |
-| `mbem/evaluate.py::DisplacementEvaluator` | term sign `-sigma` |
+| `model/core.py` | `RegionModel`, `Region`, `Patch`, `BCType`; orientation `sigma(R,p)` inferred from solid angles and validated (closure identity, interface antisymmetry, fault containment); `FAULT_ORIENTATION` |
+| `model/layout.py` | deterministic unknown slots (`u`/`t` per patch) |
+| `model/equations.py` | `generate_system`: the one sign rule `A[row,u_p] += sigma H + diag`, `A[row,t_p] -= sigma G`, prescribed values and fault slip to the RHS; `COLLOCATION_JUMP`; the calibrated diagonal |
+| `backends/dense.py`, `backends/hmat.py` | `DenseBackend` (LU) and `HBackend` (block-compressed + preconditioned FGMRES); same `BlockSystem`, same `jump`/`deflate` API, `solve()` returns the slot dict, `asm.report` |
+| `kernels/tri_kernels.py` | numba analytic triangle kernels: U/T basis stacks, matrix-free contraction drivers, stress and eigenstress drivers (`*_serial` variants for threads) |
+| `kernels/basis.py` | material-basis recombination, `resolve_eps`/`resolve_patch_eps`, mesh arrays |
+| `evaluate.py` | interior displacement/stress from a solution; `_double_layer_stress` pairs each `Sdd` term with its eigenstress; `DisplacementEvaluator` for repeated grids |
+| `geometry.py` | exact point-to-triangle distance (near-boundary warning, fault containment) |
+| `la/` | `cluster` (trees, admissibility), `aca`, `hop.PairCompressed`, `hodlr`, `solver.fgmres`, `preconditioner.BlockGaussSeidel` (dense LU / HODLR / block-Jacobi ladder) |
+| `selfcheck.py` | runtime guard: refuses to run if the fault sign convention is wrong (three cached stages, two Poisson ratios) |
+| `defaults.py` | every tolerance and threshold |
+| `estimate.py`, `topography.py`, `wrappers.py` | memory prediction; vertical surface warp; the `build_vertical_fault_zone_model` example |
 
-**Do not restate it.** A hand-written `+-1.0` at one of those sites is a second
-statement of the convention and the thing this layout exists to prevent.
-Flipping the constant flips all of them together, which is the dangerous case:
-the solve still agrees with the readouts and every internal consistency
-identity still holds, while every fault answer is backwards.
+`verify/` holds the gates (`_sphere.py` is the shared exact-Kelvin harness);
+`examples/` the demos and `bench_scaling.py`, the performance harness to run
+before and after touching assembly, compression or evaluation.
 
-`mbem/selfcheck.py` is the runtime guard against exactly that. It solves a
-~5 ms model (clamped box, one free face, one fault with `n = +x_hat`,
-`Du = +0.01 y_hat`) and asserts HARDCODED physical directions — the +x block
-must move toward -y, the on-fault total `sigma_xy` must be negative, and
-subtracting the anelastic term must ADD `(3/4) mu |Du| / eps` (the sign alone
-is asserted on the total; the blob-peak magnitude window is applied to the
-eigenstress change).
-A wrong sign anywhere makes `mbem` raise `FaultConventionError` instead of
-returning a number. It runs once per process in three independently cached
-stages (`core` / `stress` / `compressed`) keyed to the entry point, and each
-stage runs at BOTH nu = 1/4 and nu = 0.30 -- a single-material guard was shown
-to miss a parameter-dependent sign error, and lam = mu is where a lam/mu
-transposition is invisible. It never
-compiles a numba kernel the caller was not about to use. The gate that covers
-the same ground offline is `verify/verify_solved_bvp.py` (check A3).
+## Rules
 
-## The eps/h operating envelope (measured 2026-09-18, revised 2026-09-19)
-
-**`eps="auto"` resolves to `EPS_OVER_H * h_j = 0.1 h_j` per element** (since
-2026-09-19; it was 1.25). Measured with msd's own dense backend on an
-icosphere against the exact Kelvin point force, 1280 triangles
-(basis in `mbem/defaults.py`):
-
-| eps/h | Dirichlet interior u | Neumann surface u | Neumann interior sigma | cond(A), fault box |
-|---|---|---|---|---|
-| 0.05  | 9.6e-4 | 6.9e-3 | 1.7e-2 | 37 |
-| 0.10  | 8.9e-4 | 9.5e-3 | 1.9e-2 | 44 |
-| 0.125 | 8.6e-4 | 1.1e-2 | 2.0e-2 | 49 |
-| 0.30  | 6.5e-3 | 2.2e-2 | 3.6e-2 | 108 |
-| 1.25  | 5.2e-2 | 7.5e-2 | 1.3e-1 | 1.7e4 |
-
-* Dirichlet displacement floors at eps/h <= 0.125; Neumann keeps improving
-  mildly down to 0.05. **Conditioning IMPROVES as eps/h drops** (the
-  2026-09-18 note that small eps "costs conditioning" was wrong).
-* On-fault stress wants less: rim elements -7.5 % at 0.125, -2 % at 0.0625, and near a surface-breaking
-  trace eps_top <= 0.125 h_top and eps_fault <= ~0.07 h_fault
-  (`../BACKLOG.md`). 0.1 is the compromise default; go lower
-  for on-fault stress studies.
-* `jump="calibrated"` is now the backends' default. `jump="half"` with
-  eps/h > `defaults.HALF_JUMP_MAX_EPS_OVER_H` (0.5) was measured
-  NON-convergent under h-refinement and the backends warn. Calibrated on an
-  all-Neumann model needs `deflate=True` and the backends now REFUSE
-  (`ValueError`) rather than returning |u| ~ 1e9 km under a warning.
-* Gate: `verify/verify_eps_auto.py` check 4 solves the sphere ladder with
-  `eps="auto"` at the default jump against the exact Kelvin field and
-  asserts rate and ceiling.
-
-Why eps/h matters more than it looks: the error is governed by the
-collocation point's CLEARANCE from the element boundary measured in
-mollification lengths, not by element size. On a cube's boundary trace
-`log h` alone explains 0-2% of the error variance while clearance/eps
-explains 70-96% (that measurement is in `../ddbem/README.md`).
-Mollification is a floor on the resolvable structure of the unknown, so
-budget eps/h BEFORE expecting mesh refinement or higher-order elements to
-pay.
-
-Related (corrected 2026-09-19): the "h-INDEPENDENT interior stress within ~1 h
-of a boundary" recorded on 2026-09-18 was the un-subtracted eigenstress of the
-boundary double layer, not a mesh limit; `evaluate_stress` now removes it
-and the near-boundary stress converges at O(h^0.6-0.8) for d/h >= 0.5, with
-< 10 % error beyond ~1.3-1.7 eps at 1280 triangles. What remains is a narrow
-Dirichlet-only zone (d/h < ~0.35, 14-30 %, slowly improving). See
-`../BACKLOG.md`.
-
-**Near a surface-breaking fault trace** (`../BACKLOG.md` item 2): on-fault stress in the first element row below the free surface is the
-small residual of the fault's own full-space top-edge field and its image,
-|image|/|total| ~ D/(2 z) (3.7 at production, 14 at h = 2 km), so any
-relative error in how the top patch renders the image is amplified by that
-factor. With uniform eps and h_top = h_fault the residual is the P0
-STAIRCASE of the top double layer seen from h/3 below it: +30-46 % on msd's
-Triangle-meshed top, eps-independent. Measured cures: a P1 top density on
-the near-trace band at eps/h <= 0.125 (ddbem, -> the floor), or in msd
-h_top <= h_fault/4 at the trace WITH eps_fault <= 0.07 h_fault AND
-eps_top <= 0.125 h_top (+4.5 %). Refining h_top alone does NOT work, and a
-mirror-fault "image source" cannot work in this DIRECT formulation (it
-doubles the solution). Rule of thumb: on-fault sigma_xy is within 5 % only
-for z >~ max(h_top at the trace, 5 eps). Footgun: a per-patch eps with
-eps_top != eps_fault at a trace moves the first row by +-100 % unless
-eps_fault <= 0.07 h_fault. At production eps/h_top = 0.35 the trace-adjacent
-SURFACE displacement is also 13 % low (0.5 % at eps/h_top = 0.12); read
-surface fields from `u:top`, never by evaluating 1 m below the surface.
-
-## Conventions
-
-- Numerics are **numba**-accelerated in `mbem/kernels/tri_kernels.py`; expect
-  JIT warmup on first call. The `parallel=True` kernels must NEVER be called
-  from concurrent Python threads (macOS workqueue crash) — the `*_serial`
-  nogil variants exist for that (parallel ACA uses them).
-- Units in examples mix displacement (km) and traction (GPa); the
-  BlockGaussSeidel preconditioner's exact diagonal solves absorb the unit
-  mixing (measured — see the scaling note above).
-- When adding a kernel, mesh, or assembly path, add a `verify/` script that
-  checks it against the legacy oracle or analytics and prints `PASS`/`FAIL`.
-- `examples/bench_scaling.py` is the performance regression harness (model
-  ladder + `--panel N` large-compression primitive; `--json` for tracking).
-  Run it before/after touching assembly, compression, or evaluation.
+1. **Oracles are frozen.** A kernel, mesh or assembly change adds a `verify/`
+   script gated against the oracle or an analytic solution, `PASS:`/`FAIL:`,
+   exit 1 on FAIL.
+2. **The fault sign is stated once** (`FAULT_ORIENTATION`, `model/core.py`)
+   and read through `RegionModel.orientation`; every site uses the same
+   `-sigma`. `Patch.value` on a fault is `u(-n) - u(+n) = -b`, minus the
+   conventional Burgers vector; `ddbem`/`clq` use `+b`. Never write a `+-1`
+   for it anywhere; `selfcheck` pins the direction against hardcoded physics.
+3. **Every mollified double layer carries an eigenstress** `C:eps*` of its
+   smeared jump — fault slip and boundary `u_p` alike. It is removed in the
+   stress readout (`evaluate_stress`, default), never in the solve, with the
+   exact finite-triangle form (`eigenstress_contract`), per element with the
+   element's own eps. Stress presented as elastic must have it subtracted.
+4. **eps is per source element.** Scalar, `(N_src,)` array, per-patch dict or
+   `"auto"` (= 0.1 h, basis in `defaults.py`). Displacement floors at
+   eps/h ~ 0.125 and conditioning improves as eps/h drops; on-fault stress
+   wants eps <= ~0.07 h on the fault and <= 0.125 h on a top patch near a
+   trace, and the first element row below a free surface is trustworthy only
+   for depth >~ max(h_top, 5 eps) (`../BACKLOG.md`). What governs the error
+   is a collocation point's clearance from element edges in units of eps,
+   not h: budget eps/h before expecting refinement or higher order to pay.
+5. **`jump="calibrated"`** is the default on both backends (constant fields
+   annihilated exactly). `"half"` with eps/h > 0.5 is non-convergent and
+   warns. Calibrated on an all-Neumann model needs `deflate=True`; the
+   backends refuse otherwise.
+6. **The slip -> displacement pairing** is `U_ij = -[mu n_m dG_ij/dx_m + lam
+   n_j dG_im/dx_m + mu n_m dG_im/dx_j]` (slip and normal on C's first index
+   pair). A lam/mu swap is invisible at nu = 1/4, so kernel gates run at
+   nu != 1/4 (`verify_dd_pairing.py`).
+7. **Material coefficients come from `(mu, lam)`**, never through a
+   `1/(1-2nu)` intermediate (`kernels/basis.py`).
+8. **Numba `parallel=True` kernels are never called from Python threads**
+   (macOS workqueue crash); the `*_serial` nogil variants exist for that.
+9. **Numbers live in one place:** tolerances and thresholds in `defaults.py`,
+   the collocation free term in `equations.py`, kernel identifiers in
+   `kernels/__init__.py`. A convention written twice is a bug.
+10. **Lean.** Docstrings state the rule and the reason; history and
+    measurements go in commit messages; no probe scripts in the tree; extend
+    a gate before adding one.
+11. Units in the examples: km, GPa; slip 0.001 km = 1 m; `(N, 3)` arrays.

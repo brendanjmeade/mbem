@@ -52,11 +52,13 @@ def main():
         print(f"nu={nu}: dd_displacement: batch vs scalar  max|diff|={u_diff:.3e}  rel={u_diff/u_ref:.3e}")
         worst = max(worst, g_diff / g_ref, u_diff / u_ref)
 
-    if worst < 1e-12:
+    ok = worst < 1e-12
+    if ok:
         print("\nPASS: batch and scalar agree to machine precision.")
     else:
         print("\nFAIL: batch and scalar disagree.")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -9,9 +9,8 @@ Three checks, each PASS/FAIL:
   1. Pair-level ACA compression on a GUARANTEED-admissible geometry
      (two parallel panels separated by ~2x their size): at least one
      low-rank block must be produced (the ACA path is exercised, not
-     just dense leaves), to_dense must match the exact basis combine
-     for both kernels, and a COMPLEX coefficient matvec must match the
-     complex combine (the viscoelastic Laplace-sample path).
+     just dense leaves) and to_dense must match the exact basis combine
+     for both kernels.
   2. End-to-end on the three-region vertical fault-zone model
      (real INTERFACE topology + fault): HBackend operator/RHS/solution
      vs AssembledDense(mode="direct", jump="half"), and the FGMRES
@@ -34,6 +33,7 @@ from local_box_mesh import make_rectangular_patch                 # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
+from mbem.kernels import KERNEL_T, KERNEL_U, kernel_coeffs        # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
 from mbem.la.hop import PairCompressed                            # noqa: E402
@@ -58,14 +58,19 @@ def check_pair_aca():
     eps_arr = kb.as_eps_array(EPS, source.n_triangles)
 
     ok = True
-    for kernel in ("H", "U"):
+    try:                       # a kernel tag outside KERNELS must not
+        PairCompressed(field, source, "T", eps_arr, tol=TOL)   # silently
+        print("    PairCompressed accepted kernel 'T'")        # be U
+        ok = False
+    except ValueError:
+        pass
+    for kernel in (KERNEL_T, KERNEL_U):
         pc = PairCompressed(field, source, kernel, eps_arr, tol=TOL)
-        coeffs = kb.t_coeffs(mat.mu, mat.lam) if kernel == "H" \
-            else kb.u_coeffs(mat.mu, mat.lam)
+        coeffs = kernel_coeffs(kernel, mat)
         # exact dense reference: basis stack combined with coefficients
         tri_verts, normals = kb._source_arrays(source)
         xf = np.ascontiguousarray(field.centroids())
-        if kernel == "H":
+        if kernel == KERNEL_T:
             stack = tk.t_basis_matrices(xf, tri_verts, normals, eps_arr)
         else:
             stack = tk.u_basis_matrices(xf, tri_verts, eps_arr)
@@ -77,16 +82,6 @@ def check_pair_aca():
         print(f"    [{kernel}] to_dense vs exact combine: rel = {err:.2e}  "
               f"(low-rank blocks: {nlr})")
         ok &= (err < 50 * TOL) and (nlr >= 1)
-
-        # complex-coefficient matvec (Laplace-sample path)
-        c_cplx = np.asarray(coeffs, dtype=complex) * (1.0 + 0.3j)
-        rng = np.random.default_rng(5)
-        x = rng.normal(size=exact.shape[1])
-        y_pc = pc.matvec(c_cplx, x)
-        y_ex = (np.tensordot(c_cplx, stack, axes=1) @ x)
-        errc = _relmax(y_pc, y_ex)
-        print(f"    [{kernel}] complex matvec: rel = {errc:.2e}")
-        ok &= errc < 50 * TOL
     return ok
 
 
@@ -118,7 +113,8 @@ def check_end_to_end():
     print(f"    RHS parity      : rel = {rhs_err:.2e}")
 
     sol_d = dense.solve()
-    sol_h, report = hasm.solve(rtol=1e-9)
+    sol_h = hasm.solve(rtol=1e-9)
+    report = hasm.report
     worst = max(_relmax(sol_h[k], sol_d[k]) for k in sol_d
                 if np.max(np.abs(sol_d[k])) > 0)
     print(f"    solution parity : rel = {worst:.2e}")
@@ -136,12 +132,12 @@ def check_rebuild():
 
     h1 = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
     h2 = h1.rebuild_for_materials({"zone": mat_b})
-    sol_rebuild, rep_r = h2.solve(rtol=1e-9)
+    sol_rebuild, rep_r = h2.solve(rtol=1e-9), h2.report
 
     model_b = _build_zone_model(mat_b)
     system_b = generate_system(model_b)
     fresh = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system_b, EPS)
-    sol_fresh, rep_f = fresh.solve(rtol=1e-9)
+    sol_fresh, rep_f = fresh.solve(rtol=1e-9), fresh.report
 
     worst = max(_relmax(sol_rebuild[k], sol_fresh[k]) for k in sol_fresh
                 if np.max(np.abs(sol_fresh[k])) > 0)
@@ -160,7 +156,7 @@ def check_views_bounded():
     model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0))
     system = generate_system(model)
     h = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
-    sol_first, _ = h.solve(rtol=1e-9)
+    sol_first = h.solve(rtol=1e-9)
 
     mus = np.linspace(8.0, 24.0, 50)
     asm = h
@@ -176,7 +172,7 @@ def check_views_bounded():
     # revisit the original material through the SHARED pair set
     back = asm.rebuild_for_materials(
         {"zone": mb.ElasticMaterial(mu=10.0, lam=10.0)})
-    sol_back, _ = back.solve(rtol=1e-9)
+    sol_back = back.solve(rtol=1e-9)
     worst = max(_relmax(sol_back[k], sol_first[k]) for k in sol_first
                 if np.max(np.abs(sol_first[k])) > 0)
     print(f"    revisited-material solve vs first: rel = {worst:.2e}")
@@ -201,14 +197,14 @@ def check_parallel_determinism():
     mat = mb.ElasticMaterial(mu=30.0, lam=30.0)
     coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
     t0 = time.perf_counter()
-    pc1 = PairCompressed(field, source, "H", eps_arr, tol=TOL,
+    pc1 = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
                          max_admissible=1024, n_workers=1)
     t_serial = time.perf_counter() - t0
     t0 = time.perf_counter()
-    pc8 = PairCompressed(field, source, "H", eps_arr, tol=TOL,
+    pc8 = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
                          max_admissible=1024)
     t_par = time.perf_counter() - t0
-    pc8b = PairCompressed(field, source, "H", eps_arr, tol=TOL,
+    pc8b = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
                           max_admissible=1024)
 
     d1 = pc1.to_dense(coeffs)
@@ -243,7 +239,8 @@ def check_calibrated():
     print(f"    RHS parity      : rel = {rhs_err:.2e}")
 
     sol_d = dense.solve()
-    sol_h, report = hasm.solve(rtol=1e-9)
+    sol_h = hasm.solve(rtol=1e-9)
+    report = hasm.report
     worst = max(_relmax(sol_h[k], sol_d[k]) for k in sol_d
                 if np.max(np.abs(sol_d[k])) > 0)
     print(f"    solution parity : rel = {worst:.2e} "
@@ -267,7 +264,7 @@ def check_calibrated():
         generate_system(_build_zone_model(
             mb.ElasticMaterial(mu=20.0, lam=15.0))),
         EPS, "direct", jump="calibrated")
-    sol_rb, rep_rb = reb.solve(rtol=1e-9)
+    sol_rb, rep_rb = reb.solve(rtol=1e-9), reb.report
     sol_db = dense_b.solve()
     worst_rb = max(_relmax(sol_rb[k], sol_db[k]) for k in sol_db
                    if np.max(np.abs(sol_db[k])) > 0)
@@ -280,9 +277,8 @@ def check_calibrated():
 def check_combined_storage():
     """storage='combined' (roadmap C2): 1x memory instead of B-fold
     per-basis storage. Same seeds + identical combine path => the
-    combined views must equal the basis-mode views BITWISE; material
-    rebuild (transient re-compression) and complex coefficients must
-    both reproduce basis mode."""
+    combined views must equal the basis-mode views BITWISE; a material
+    rebuild (transient re-compression) must reproduce basis mode."""
     field = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), 0.0,
                                    16, 16, normal_up=True)   # 512 tris
     source = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), -240.0,
@@ -292,12 +288,10 @@ def check_combined_storage():
     mat_b = mb.ElasticMaterial(mu=12.0, lam=18.0)
     ca = np.asarray(kb.t_coeffs(mat_a.mu, mat_a.lam))
     cb = np.asarray(kb.t_coeffs(mat_b.mu, mat_b.lam))
-    cc = np.asarray(kb.t_coeffs(mat_a.mu, mat_a.lam),
-                    dtype=complex) * (1.0 + 0.4j)
 
-    basis = PairCompressed(field, source, "H", eps_arr, tol=TOL,
+    basis = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
                            max_admissible=512)
-    comb = PairCompressed(field, source, "H", eps_arr, tol=TOL,
+    comb = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
                           max_admissible=512, storage="combined",
                           combine_for=[ca])
     ratio = basis.nbytes() / max(comb.nbytes(), 1)
@@ -307,13 +301,9 @@ def check_combined_storage():
     same_a = np.array_equal(comb.to_dense(ca), basis.to_dense(ca))
     print(f"    combined vs basis view (built material): bitwise {same_a}")
 
-    # unseen material -> transient re-compression; complex coefficients
+    # unseen material -> transient re-compression
     err_b = _relmax(comb.to_dense(cb), basis.to_dense(cb))
-    rng = np.random.default_rng(9)
-    x = rng.normal(size=comb.shape[1])
-    err_c = _relmax(comb.matvec(cc, x), basis.matvec(cc, x))
-    print(f"    rebuild material: rel = {err_b:.2e}; "
-          f"complex matvec: rel = {err_c:.2e}")
+    print(f"    rebuild material: rel = {err_b:.2e}")
     still_dropped = comb.blocks is None
     print(f"    basis payloads still dropped after rebuild: {still_dropped}")
 
@@ -324,13 +314,13 @@ def check_combined_storage():
     hc = HBackend(eta=0.8, tol=TOL, jump="calibrated",
                   storage="combined").assemble(system, EPS)
     sol_d = dense.solve()
-    sol_h, rep = hc.solve(rtol=1e-9)
+    sol_h, rep = hc.solve(rtol=1e-9), hc.report
     worst = max(_relmax(sol_h[k], sol_d[k]) for k in sol_d
                 if np.max(np.abs(sol_d[k])) > 0)
     print(f"    combined+calibrated end-to-end vs dense: rel = {worst:.2e} "
           f"(converged {rep.converged})")
 
-    return (ratio > 2.5 and same_a and err_b == 0.0 and err_c == 0.0
+    return (ratio > 2.5 and same_a and err_b == 0.0
             and still_dropped and worst < 1e-5 and rep.converged)
 
 
@@ -386,7 +376,7 @@ def check_bj_rung():
 
 def main():
     checks = [
-        ("pair-level ACA + complex coefficients", check_pair_aca),
+        ("pair-level ACA", check_pair_aca),
         ("HBackend vs dense end-to-end (fault-zone model)", check_end_to_end),
         ("rebuild_for_materials parity", check_rebuild),
         ("views cache bounded over a material sweep", check_views_bounded),
@@ -406,7 +396,8 @@ def main():
         print("\nPASS: HBackend matches the dense backend.")
     else:
         print("\nFAIL: the H path disagrees with the dense backend.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -160,7 +160,8 @@ def main():
         print("\nPASS: numba stress assemblers match the scalar oracle.")
     else:
         print("\nFAIL: a numba stress assembler disagrees with the oracle.")
+    return all(results)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

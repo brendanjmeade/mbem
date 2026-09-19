@@ -8,7 +8,8 @@ measured basis is in ``mbem/defaults.py``).
 Checks (PASS/FAIL):
   1. resolve_eps unit behaviour: scalar -> constant array; explicit
      array passes through; "auto" == EPS_OVER_H * mean edge length;
-     unknown strings raise; zero, negative or nan eps raise.
+     unknown strings raise; zero, negative or nan eps raise; a per-patch
+     dict selects by name and raises, naming the patch, when it lacks it.
   2. h-REFINEMENT CONVERGENCE ORDER of the KERNEL: with eps="auto" (so
      eps ~ h), the off-fault DD stress of a uniformly slipping planar
      fault must converge to the classical (singular) TDE stress at the
@@ -33,6 +34,7 @@ Exits 1 on FAIL.
 """
 import pathlib
 import sys
+import types
 import warnings
 
 import numpy as np
@@ -80,6 +82,17 @@ def check_resolve():
         ok = False
     except ValueError:
         pass
+
+    # per-patch spec: a dict selects by name and must name every patch
+    patch = types.SimpleNamespace(name="fault", mesh=mesh)
+    ok &= np.array_equal(kb.resolve_patch_eps({"fault": arr}, patch), arr)
+    ok &= np.all(kb.resolve_patch_eps(2.5, patch) == 2.5)
+    try:
+        kb.resolve_patch_eps({"top": 2.5}, patch)
+        print("    resolve_patch_eps accepted a dict without the patch")
+        ok = False
+    except ValueError as e:
+        ok &= "'fault'" in str(e)
 
     # non-positive / non-finite eps must be refused at the choke point
     nan_arr = arr.copy(); nan_arr[n // 2] = np.nan

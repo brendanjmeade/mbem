@@ -34,19 +34,17 @@ frozen as an oracle once P1/P2 are ported.
    `mode="basis"`/`"legacy"` of the dense backend are compared to nothing.
 5. Near-trace displacement band (|x| < 1.5 eps) has no independent anchor.
 
-## Open — clean (B sweep)
+## Open — clean (B sweep, mostly done)
 
-* Say once: the 1/2 free term (five sites incl. an ungated preconditioner copy),
-  the eps-spec resolution (five copies), density selection (three), kernel tags
-  (silent `else` branches).
-* Delete: `la/scaling.py`, `wrappers.solve_three_region_box_v2` + builder,
-  `BlockSystem.mesh_pairs`, the unreachable complex-material path.
-* One backend API: same `solve()` return and `deflate` placement; `DenseBackend`
-  defaults matching use.
-* Harness: exit codes in every gate + `msd/verify/run_all.py`;
-  `verify_dd_pairing` skips moss silently; `verify_pde_residual` asserts
-  nothing; `defaults.py` tolerances unused by the gates; three demos still on
-  the approximate `anelastic.py`; stale `msd/CLAUDE.md` list of swapped copies.
+* Done: the 1/2 free term, the calibrated diagonal, the eps-spec resolution,
+  density selection and kernel tags are each stated once; `la/scaling.py`,
+  the three-region wrappers and the unreachable complex path are gone; both
+  backends share `Backend(jump, deflate).assemble(...).solve()` -> dict with
+  `asm.report`; every gate exits 1 on FAIL and `msd/verify/run_all.py` runs
+  them; the Navier-residual check replaced the sympy script; the demos use
+  the exact eigenstress.
+* Left: `medt_paper/topo_inclusion/mbem` is a frozen fork on the old API
+  (item 7 of the consolidation).
 
 ## Open — before the first benchmark (C)
 

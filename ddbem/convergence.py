@@ -392,7 +392,7 @@ def solve_msd(geom, level, eps, bc, jump=None, eps_label=""):
            "eps": float(np.mean(eps)), "eps_over_h": float(np.mean(eps)) / h,
            "clearance_over_eps": float("nan"),
            "u_int": eu, "u_int_rms": eu2, "sigma": es,
-           "cond": float(getattr(back, "cond_estimate", np.nan)),
+           "cond": float(back.report.cond_estimate),
            "residual": float("nan"), "rigid_defect": float("nan"),
            "t_assemble": t1 - t0, "t_solve": t2 - t1, "constrain": "-",
            "u_surf": float("nan"), "u_surf_rms": float("nan"),

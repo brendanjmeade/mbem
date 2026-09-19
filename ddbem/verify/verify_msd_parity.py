@@ -123,7 +123,7 @@ def main() -> int:
                 rep.check(f"nu={nu} jump={jump:11s} density (q == -u_msd)",
                           float(np.max(np.abs(sol.q.reshape(-1, 3) + u_msd)))
                           / float(np.max(np.abs(u_msd))), 1e-10,
-                          f"cond {sol.cond:.1e} / msd {back.cond_estimate:.1e}")
+                          f"cond {sol.cond:.1e} / msd {back.report.cond_estimate:.1e}")
                 ud = sol.displacement(OBS)
                 rep.check(f"nu={nu} jump={jump:11s} interior displacement field",
                           float(np.max(np.abs(ud - um)) / np.max(np.abs(um))),

@@ -303,7 +303,10 @@ def main():
           f"Rigid={'PASS' if ok3 else 'FAIL'}  "
           f"Scaling={'PASS' if ok4 else 'FAIL'}")
     print("=" * 70)
+    ok = ok1 and ok3 and ok4
+    print(("PASS" if ok else "FAIL") + ": arbitrary-triangle kernels (rigid covariance, size scaling)")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

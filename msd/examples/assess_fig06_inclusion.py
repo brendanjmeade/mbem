@@ -126,10 +126,10 @@ def main():
         asm = AssembledDense(system, EPS, "basis", jump=jump,
                              _basis_cache=basis_cache)
         sol_het = asm.solve()
-        cond_het = asm.cond_estimate
+        cond_het = asm.report.cond_estimate
         asm_h = asm.rebuild_for_materials({"inclusion": MAT_HOST})
         sol_hom = asm_h.solve()
-        cond_hom = asm_h.cond_estimate
+        cond_hom = asm_h.report.cond_estimate
         print(f"{jump}: het cond {cond_het:.3e}, homo cond {cond_hom:.3e} "
               f"({time.time()-t0:.0f} s)", flush=True)
         results[jump] = (sol_het, sol_hom)

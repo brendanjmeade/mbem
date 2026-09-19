@@ -285,6 +285,43 @@ transposition is invisible. It never
 compiles a numba kernel the caller was not about to use. The gate that covers
 the same ground offline is `verify/verify_solved_bvp.py` (check A3).
 
+## The eps/h operating envelope (measured 2026-09-18)
+
+**Use `eps/h` in [0.10, 0.30].** Measured with msd's own dense backend on a
+1280-triangle icosphere against the exact Kelvin point force, sweeping
+eps/h from 0.02 to 1.25 (`../audit_2026-09-18/scripts/floor.py`):
+
+| eps/h | Dirichlet interior u | Neumann surface u |
+|---|---|---|
+| 0.02  | 7.47e-4 | 6.58e-3 |
+| 0.075 | 7.07e-4 | 6.78e-3 |
+| 0.10  | 6.66e-4 | — |
+| 0.15  | 8.29e-4 | — |
+
+**Below eps/h ~ 0.10 nothing improves** — you pay in conditioning and gain no
+accuracy. Above ~0.5 convergence degrades, and `eps/h = 1.25` together with
+`jump="half"` is a NON-CONVERGENT combination (measured on a manufactured
+uniform-strain solution, `../audit_2026-09-18/scripts/probe_uniform.py`).
+
+**`defaults.EPS_OVER_H = 1.25` is therefore a known footgun** — 4.2x `ddbem`'s
+default, ~8x the measured optimum, 745x worse conditioned, and with no accuracy
+gate. It is left as-is only because changing it moves results for anything using
+`eps="auto"`; see `../HARDENING_AUDIT.md` item 2. Do not treat it as a
+recommended value.
+
+Why eps/h matters more than it looks: the error is governed by the collocation
+point's CLEARANCE from the element boundary measured in mollification lengths,
+not by element size. On a cube's boundary trace `log h` alone explains 0-2% of
+the error variance while clearance/eps explains 70-96% (that measurement is in
+`../ddbem/README.md`). Mollification is a floor on the resolvable structure of
+the unknown, so budget eps/h BEFORE expecting mesh refinement or higher-order
+elements to pay.
+
+Related: interior stress within ~1h of a boundary is h-INDEPENDENT — refinement
+narrows the bad zone but does not improve it (2.32e-1 -> 2.15e-1 -> 2.06e-1
+across a 16x refinement). `mbem/evaluate.py::_warn_near_boundary` fires at 0.5
+local h, about 4x too late. See `../HARDENING_AUDIT.md` item 4.
+
 ## Conventions
 
 - Numerics are **numba**-accelerated in `mbem/kernels/tri_kernels.py`; expect

@@ -9,3 +9,7 @@ __pycache__/
 
 # fbem: every .npz here is regenerable solver output or a mesh cache
 fbem/cache/
+
+# clq: figure outputs of examples/ (regenerable)
+clq/fig_*.png
+clq/fig_*.pdf

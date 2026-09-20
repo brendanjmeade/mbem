@@ -1,5 +1,11 @@
 # clq — constant, linear and quadratic slip *and force* on an arbitrary triangle, in closed form
 
+**Frozen oracle.** The trunk of the program is `msd/mbem`, whose numba
+general-order kernels (`mbem/kernels/tri_nodal.py`) are gated against `clq`
+at 1e-12 (`msd/verify/verify_nodal_kernels.py`). `clq` is kept as that
+reference and is not developed further; `verify/run_all.py` must stay green.
+The figures of `examples/` are regenerated on demand and not tracked.
+
 `clq` computes the displacement and stress of a **mollified** (Cortez,
 `R = sqrt(r^2 + eps^2)`) source on one flat triangle in a 3-D elastic full
 space, **analytically**, for a density that varies as a polynomial of degree

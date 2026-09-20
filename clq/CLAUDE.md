@@ -2,9 +2,15 @@
 
 Guidance for Claude Code when working in `clq/`.
 
+**FROZEN.** `clq` is the oracle for the general-order kernels of the trunk,
+`msd/mbem/kernels/tri_nodal.py`, which `msd/verify/verify_nodal_kernels.py`
+gates against it at 1e-12. Do not change code here (`verify/
+verify_baseline_bitwise.py` pins `U`/`H`/`E` bitwise); new kernel work goes
+in `msd/mbem`. Its own gates (`verify/run_all.py`) must stay green.
+
 ## What this is
 
-A self-contained, git-less Python sub-project of `moss-org`: **closed-form
+A self-contained Python sub-project of `moss-org` (one git repo): **closed-form
 mollified kernels on one flat triangle for constant, linear and quadratic
 nodal density** (Lagrange P0/P1/P2), full space, Cortez regularisation
 `R = sqrt(r^2 + eps^2)`, for two source types:

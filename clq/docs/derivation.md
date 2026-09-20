@@ -59,8 +59,8 @@ in the $\varepsilon\to0$ sense, so $\oint_S\sigma\hat{\mathbf n}\,dS=-\int_{\mat
 for any closed $S$ enclosing the element (`verify_force_jump.py`).  Unlike the
 dislocation kernels, the force element has **no $\hat{\mathbf n}$ dependence at
 all**: reversing the vertex order leaves (1.2) unchanged.  (Beware: the
-body-force drafts in `moss-org/body_forces_bem` write $\partial_i\sigma_{ij}=f_i$,
-the opposite sign convention.)
+equivalent-body-force drafts, removed from the tree, wrote
+$\partial_i\sigma_{ij}=f_i$, the opposite sign convention.)
 
 The stress read from Hooke's law on $\nabla\mathbf u$ is the **total** stress
 of the mollified dislocation (section 6); its kernel is

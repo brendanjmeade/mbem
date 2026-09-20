@@ -80,8 +80,8 @@ path; do not import those packages any other way.
   Do not "fix" this to match `clq.stress`.
 * `force` is (K,3) nodal force per unit AREA; `u_i = sum_k G[n,k,i,j] f[k,j]`
   and equilibrium is `div sigma + f phi_eps = 0`, so a closed surface around
-  the element carries `int sigma.nhat dS = -int f dS`.  (The body-force drafts
-  in `../body_forces_bem` use the OPPOSITE sign, `div sigma = f`.)  In a BEM
+  the element carries `int sigma.nhat dS = -int f dS`.  (The equivalent-body-
+  force drafts, removed from the tree, used the OPPOSITE sign, `div sigma = f`.)  In a BEM
   the force block is msd's `G`/`U` slot with scale `-sigma(R,p)` and NO `1/2 I`
   free term -- the single layer is continuous; only its traction jumps.  Note
   clq's `want` key `"H"` is the slip -> stress kernel, NOT msd's `BlockTerm`

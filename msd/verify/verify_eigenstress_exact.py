@@ -40,7 +40,17 @@ Gates (each prints [ok]/[XX]):
       double layer of sigma C:eps_star(jump), the fault's with its own sigma;
   [f] PER-ELEMENT / GRADED eps: the sum is element by element, so the
       near-uniform-fault-eps restriction ``evaluate_stress`` used to raise is
-      gone; gated against the per-element moss oracle and end to end.
+      gone; gated against the per-element moss oracle and end to end;
+  [g] NEAR LIST: the production readout sums each element over the points
+      within ``defaults.EIGEN_NEAR_RADIUS_EPS`` x (eps + h) of it only
+      (``evaluate._eigen_near_list``); against the full N_obs x N_src sum
+      (``near_list=False``) it must agree to 1e-6 of the on-fault eigenstress
+      on the fault centroids and at 1, 3, 10, 50 eps off the fault, and to
+      1e-8 of the local elastic stress on a 40 x 40 surface grid of the
+      fault box (every double layer, P1 top), at eps = "auto" and a scalar
+      eps -- while the truncation is shown to be live (pairs beyond the
+      radius exist and the two sums differ). Full vs near-list seconds on
+      the grid are printed, not gated.
 
 Run from the repo root:  python verify/verify_eigenstress_exact.py
 """
@@ -484,6 +494,95 @@ def f_graded_eps():
               np.abs((ela - tot) - star).max() / np.abs(star).max(), 1e-12)
 
 
+def g_near_list():
+    c_near = defaults.EIGEN_NEAR_RADIUS_EPS
+    print(f"\n[g] NEAR LIST: pairs within {c_near:g} (eps + h) only == the full "
+          "N_obs x N_src sum")
+    import time
+
+    from _fault_box import build_fault_box, build_model
+    from mbem.backends.dense import AssembledDense
+    from mbem.model import BCType, generate_system
+
+    mat = mb.ElasticMaterial(mu=30.0, lam=30.0)
+    meshes = build_fault_box(half_x=100.0, z_bottom=-60.0, fault_half_len=20.0,
+                             fault_depth=18.0, edge_fault=3.0, edge_near=24.0,
+                             edge_far=50.0, edge_side=50.0, near_field_radius=50.0)
+    # P1 top: the nodal eigenstress driver runs through both paths too
+    model = build_model(meshes, 0.01, mat, order_top=1)
+    system = generate_system(model)
+    region = model.regions[0]
+    fmesh = meshes["fault"]
+    fpatch = region.faults[0]
+    slip = fpatch.value_array()
+    n_hat = np.asarray(meshes["n_hat"], float)
+    cen = np.ascontiguousarray(fmesh.centroids())
+    hx = meshes["x_range"][1]
+    g = np.linspace(-hx, hx, 40)
+    X, Y = np.meshgrid(g, g)
+    grid = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
+    n_src = sum(p.mesh.n_triangles for p in region.patches) + fmesh.n_triangles
+
+    def eig(pts, mesh, dens, eps_arr, order, near):
+        return _stress_from_source(pts, mesh, dens, "eigen", mat.mu, mat.lam,
+                                   eps_arr, order, near_list=near)
+
+    for label, spec in (("eps='auto'", "auto"), ("eps=3", 3.0)):
+        sol = AssembledDense(system, spec, "direct", jump="calibrated").solve()
+        eps_f = kb.resolve_patch_eps(spec, fpatch)
+        e = float(eps_f[0])
+        # (a) on the fault, (b) off it: the fault's own eigenstress against
+        # its on-fault maximum
+        full = eig(cen, fmesh, slip, eps_f, 0, False)
+        scale = np.abs(full).max()
+        check(f"{label}: fault centroids, |near - full| / on-fault max",
+              np.abs(eig(cen, fmesh, slip, eps_f, 0, True) - full).max() / scale,
+              1e-6)
+        for k in (1, 3, 10, 50):
+            pts = cen + k * e * n_hat
+            d = np.abs(eig(pts, fmesh, slip, eps_f, 0, True)
+                       - eig(pts, fmesh, slip, eps_f, 0, False)).max() / scale
+            check(f"{label}: {k:2d} eps off the fault, / on-fault max", d, 1e-6)
+        # (c) the surface grid: every double layer with its own sigma, each
+        # patch at its own order, against the LOCAL elastic stress
+        ela = evaluate_stress(model, region, sol, grid, spec,
+                              subtract_anelastic=True, warn_near=False)
+        layers = [(fmesh, slip, eps_f, 0, float(model.orientation(region, fpatch)))]
+        for p in region.patches:
+            u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
+                   else sol[f"u:{p.name}"])
+            if np.any(u_p):
+                layers.append((p.mesh, u_p, kb.resolve_patch_eps(spec, p),
+                               p.order, float(model.orientation(region, p))))
+        full = np.zeros((len(grid), 3, 3))
+        near = np.zeros((len(grid), 3, 3))
+        t_full = t_near = 0.0
+        for mesh, dens, ea, order, sg in layers:
+            t0 = time.perf_counter()
+            full += sg * eig(grid, mesh, dens, ea, order, False)
+            t_full += time.perf_counter() - t0
+            t0 = time.perf_counter()
+            near += sg * eig(grid, mesh, dens, ea, order, True)
+            t_near += time.perf_counter() - t0
+        err = (np.abs(near - full).max(axis=(1, 2))
+               / np.abs(ela).max(axis=(1, 2))).max()
+        check(f"{label}: 40x40 surface grid, |near - full| / |sigma_el| pointwise",
+              err, 1e-8)
+        # the truncation must be LIVE here, else the checks above are vacuous
+        h_f = kb.element_sizes(fmesh)
+        dist = np.linalg.norm(grid[:, None, :] - cen[None, :, :], axis=2)
+        beyond = float((dist > c_near * (eps_f + h_f)[None, :]).mean())
+        live = np.abs(near - full).max() > 0.0
+        CHECKS.append(bool(live and beyond > 0.01))
+        print(f"  [{'ok' if live and beyond > 0.01 else 'XX'}] "
+              f"{label + ': truncation is live on the grid':58s} "
+              f"{100 * beyond:6.1f} % of (point, fault element) pairs beyond "
+              f"the radius; near != full: {live}")
+        print(f"      {label}: grid, {len(grid)} points x {n_src} elements, "
+              f"every double layer: full {t_full:.2f} s, near list {t_near:.2f} s "
+              f"(not gated)")
+
+
 def main():
     print("=" * 76)
     print("Exact finite-triangle eigenstress (mbem eigenstress_contract)")
@@ -494,6 +593,7 @@ def main():
     d_near_edge_disagreement()
     e_sign()
     f_graded_eps()
+    g_near_list()
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: exact finite-triangle eigenstress ({len(CHECKS)} checks)")

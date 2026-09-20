@@ -44,6 +44,13 @@ infinite-plane / nearest-triangle approximation of the frozen
 d/L -> 0 limit) and differ by up to ~2x near element edges -- i.e. over
 the whole fault RIM, where crack-tip stress and stress-drop diagnostics
 live. Gate: ``verify/verify_eigenstress_exact.py``.
+
+That sum is short-ranged -- an element's weight decays like (eps/R)^4 with
+the distance R from it -- so the readout sums, for every element, only the
+observation points within ``defaults.EIGEN_NEAR_RADIUS_EPS`` x (eps + h)
+of its centroid (a KD-tree near list, chunked so memory stays O(N_obs));
+the full N_obs x N_src sum stays available as ``near_list=False`` and is
+what the gate compares against.
 """
 
 from __future__ import annotations
@@ -181,8 +188,70 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     return u
 
 
+def _source_chunks(cen, radius):
+    """Spatially compact index chunks of source elements for the near list:
+    median bisection of the centroids along the longest bounding-box axis
+    until a chunk's bounding-box diagonal is within the smallest near radius
+    in it. One KD-tree ball of radius <= 3/2 r then serves the whole chunk,
+    at most (3/2)^2 the pairs of the per-element rule on a surface (a chunk
+    holds ~pi (r/2)^2 / A_tri elements, a few hundred at the default radius).
+    """
+    chunks, stack = [], [np.arange(cen.shape[0])]
+    while stack:
+        idx = stack.pop()
+        c = cen[idx]
+        span = c.max(axis=0) - c.min(axis=0)
+        if idx.size <= 1 or np.linalg.norm(span) <= radius[idx].min():
+            chunks.append(idx)
+            continue
+        order = idx[np.argsort(c[:, int(span.argmax())], kind="stable")]
+        stack.append(order[: idx.size // 2])
+        stack.append(order[idx.size // 2:])
+    return chunks
+
+
+def _eigen_near_list(points, verts, normals, eps_arr, density, h, mu, lam,
+                     order):
+    """``eigenstress_contract`` restricted to the near pairs: for every source
+    element the observation points within EIGEN_NEAR_RADIUS_EPS x (eps + h)
+    of its centroid (the weight beyond is below the readout's tolerance;
+    basis in ``defaults``). Elements are visited in spatially compact chunks
+    (``_source_chunks``); each chunk queries one ball of the point KD-tree
+    that covers every member's own ball and evaluates the (points, chunk)
+    block with the plain kernel, so no pair list is ever stored and memory
+    is O(N_obs) + O(chunk). Elements with zero density or eps <= 0 (no
+    eigenstress) are dropped first.
+    """
+    from scipy.spatial import cKDTree
+
+    from . import defaults
+    from .kernels.tri_nodal import eigenstress_contract
+
+    n_src = verts.shape[0]
+    dens = density.reshape(n_src, -1, 3)
+    live = np.flatnonzero((eps_arr > 0.0) & np.any(dens != 0.0, axis=(1, 2)))
+    sig = np.zeros((points.shape[0], 3, 3))
+    if live.size == 0 or points.shape[0] == 0:
+        return sig
+    cen = verts.mean(axis=1)
+    radius = defaults.EIGEN_NEAR_RADIUS_EPS * (eps_arr + h)
+    tree = cKDTree(points)
+    for S in _source_chunks(cen[live], radius[live]):
+        S = live[S]
+        c0 = cen[S].mean(axis=0)
+        reach = float(np.max(np.linalg.norm(cen[S] - c0, axis=1) + radius[S]))
+        P = np.asarray(tree.query_ball_point(c0, reach), dtype=np.intp)
+        if P.size == 0:
+            continue
+        sig[P] += eigenstress_contract(
+            np.ascontiguousarray(points[P]), np.ascontiguousarray(verts[S]),
+            np.ascontiguousarray(normals[S]), np.ascontiguousarray(eps_arr[S]),
+            np.ascontiguousarray(dens[S].reshape(-1, 3)), mu, lam, order)
+    return sig
+
+
 def _stress_from_source(points, src_mesh, density, kernel, mu, lam, eps_arr,
-                        order: int = 0):
+                        order: int = 0, near_list: bool = True):
     """Stress (N,3,3) at ``points`` from a triangulated source ``src_mesh``
     carrying a nodal ``density`` (K N_src,3) of Lagrange ``order``; material
     as ``(mu, lam)`` (rule 7).
@@ -200,6 +269,12 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, lam, eps_arr,
     ``verify/verify_stress_assembler.py``,
     ``verify/verify_eigenstress_exact.py``) while parallelising over
     observation points. All three take a PER-ELEMENT ``eps_arr``.
+
+    The "eigen" sum is short-ranged ((eps/R)^4 per element), so by default
+    (``near_list``) it runs over the near pairs only, each element against
+    the points within ``defaults.EIGEN_NEAR_RADIUS_EPS`` x (eps + h) of it
+    (``_eigen_near_list``); ``near_list=False`` is the full N_obs x N_src
+    sum the gate compares against.
     """
     from .kernels.tri_nodal import (dd_stress_contract, eigenstress_contract,
                                     kelvin_stress_contract)
@@ -214,6 +289,10 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, lam, eps_arr,
         normals, _ = src_mesh.normals_and_areas()
         normals = np.ascontiguousarray(np.asarray(normals, float))
         if kernel == "eigen":
+            if near_list:
+                return _eigen_near_list(points, verts, normals, eps_arr,
+                                        density, kb.element_sizes(src_mesh),
+                                        mu, lam, order)
             return eigenstress_contract(points, verts, normals, eps_arr,
                                         density, mu, lam, order)
         return dd_stress_contract(points, verts, normals, eps_arr,

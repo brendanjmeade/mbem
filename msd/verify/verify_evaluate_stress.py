@@ -41,6 +41,7 @@ from mollified_kernel.analytical_kernels import (                   # noqa: E402
 from tde_reference import classical_tde_stress                      # noqa: E402
 
 MU, NU = 30.0, 0.25
+LAM = 2.0 * MU * NU / (1.0 - 2.0 * NU)      # the mbem drivers take (mu, lam)
 
 
 def _relmax(a, b):
@@ -57,7 +58,7 @@ def check_dd_vs_cutde():
     ref = classical_tde_stress(obs, fault, s_hat, MU, NU)
     errs = []
     for eps in (0.5, 0.1, 0.02):
-        sig = _stress_from_source(obs, fault, slip, "dd", MU, NU,
+        sig = _stress_from_source(obs, fault, slip, "dd", MU, LAM,
                                   np.full(nt, eps))
         errs.append((eps, _relmax(sig, ref)))
     for eps, e in errs:
@@ -78,7 +79,7 @@ def check_force_vs_quadrature():
     obs = np.array([[2.0, 0.5, -3.0], [-1.5, -1.0, -2.0]])
     eps = 0.6
 
-    sig = _stress_from_source(obs, mesh, dens, "force", MU, NU,
+    sig = _stress_from_source(obs, mesh, dens, "force", MU, LAM,
                               np.full(nt, eps))
     ref = np.zeros_like(sig)
     for i, x in enumerate(obs):
@@ -101,8 +102,8 @@ def check_anelastic_subtraction():
     # OFF the fault: subtraction is negligible.
     off = np.array([[4.0, 0.0, -5.0]])
     e = 0.5
-    tot_off = _stress_from_source(off, fault, slip, "dd", MU, NU, np.full(nt, e))
-    star_off = _stress_from_source(off, fault, slip, "eigen", MU, NU,
+    tot_off = _stress_from_source(off, fault, slip, "dd", MU, LAM, np.full(nt, e))
+    star_off = _stress_from_source(off, fault, slip, "eigen", MU, LAM,
                                    np.full(nt, e))
     off_ratio = np.max(np.abs(star_off)) / max(np.max(np.abs(tot_off)), 1e-30)
     print(f"    off-fault eigenstress/total = {off_ratio:.3e} (want << 1)")
@@ -111,8 +112,8 @@ def check_anelastic_subtraction():
     c = fault.centroids()
     raw_pk, cor_pk = [], []
     for eps in (1.0, 0.25):
-        tot = _stress_from_source(c, fault, slip, "dd", MU, NU, np.full(nt, eps))
-        cor = tot - _stress_from_source(c, fault, slip, "eigen", MU, NU,
+        tot = _stress_from_source(c, fault, slip, "dd", MU, LAM, np.full(nt, eps))
+        cor = tot - _stress_from_source(c, fault, slip, "eigen", MU, LAM,
                                         np.full(nt, eps))
         raw_pk.append(np.max(np.abs(tot[:, 0, 1])))
         cor_pk.append(np.max(np.abs(cor[:, 0, 1])))
@@ -142,11 +143,11 @@ def check_evaluate_stress_endtoend():
     nsrc = sum(meshes[k].n_triangles for k in ("top", "sides", "base", "fault"))
     print(f"    box: {nsrc} src triangles, {system.layout.n_unknowns} unknowns")
     region = model.regions[0]
+    fpatch = region.faults[0]
     # A few on-fault centroids (full-centroid evaluation is needlessly slow).
     call = meshes["fault"].centroids()
     n_hat = np.asarray(meshes["n_hat"], float)
     s_hat = np.asarray(meshes["s_hat"], float)
-    slip = slip_mag * s_hat
     i_c = int(np.argmin(np.linalg.norm(call - [0, 0, -9.0], axis=1)))
     sel = np.argsort(np.linalg.norm(call - [0, 0, -9.0], axis=1))[:6]
     obs = call[sel]
@@ -161,25 +162,25 @@ def check_evaluate_stress_endtoend():
     sig_el = evaluate_stress(model, region, sol, obs, eps,
                              subtract_anelastic=True)
     # the EXACT finite-triangle eigenstress -- what evaluate_stress subtracts:
-    # the fault's PLUS every boundary patch's
-    # u_p, each with the patch's own sigma. Restated here by hand so the
-    # check is an independent statement of the wiring, not a call back
-    # into it.
+    # +sigma C:eps_star of EVERY double layer, the fault's Burgers vector with
+    # the fault's sigma and each boundary patch's u_p with the patch's own.
+    # Restated here by hand so the check is an independent statement of the
+    # wiring, not a call back into it.
     nt_f = meshes["fault"].n_triangles
-    star = _stress_from_source(obs, meshes["fault"],
-                               np.broadcast_to(slip, (nt_f, 3)), "eigen",
-                               mat.mu, mat.nu, np.full(nt_f, eps))
+    star = float(model.orientation(region, fpatch)) * _stress_from_source(
+        obs, meshes["fault"], fpatch.value_array(), "eigen",
+        mat.mu, mat.lam, np.full(nt_f, eps))
     for p in region.patches:
         u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
                else sol[f"u:{p.name}"])
         if np.any(u_p):
             star = star + float(model.orientation(region, p)) * \
-                _stress_from_source(obs, p.mesh, u_p, "eigen", mat.mu, mat.nu,
+                _stress_from_source(obs, p.mesh, u_p, "eigen", mat.mu, mat.lam,
                                     np.full(p.mesh.n_triangles, eps))
     finite = np.all(np.isfinite(sig_el))
     symm = float(np.max(np.abs(sig_el - np.transpose(sig_el, (0, 2, 1)))))
-    # elastic = total + eigenstress (every double layer enters as
-    # -sigma*Sdd@jump), so (elastic - total) must equal +eigenstress.
+    # elastic = total + sum sigma C:eps_star (every double layer enters as
+    # -sigma*Sdd@jump), so (elastic - total) must equal that sum.
     sub_ok = _relmax(sig_el - sig_tot, star)
     print(f"    finite={finite}  max asym={symm:.2e}  "
           f"(elastic-total) vs eigenstress rel={sub_ok:.2e}")
@@ -187,9 +188,9 @@ def check_evaluate_stress_endtoend():
     # The decisive test: on-fault ELASTIC shear must neither diverge nor
     # change sign as eps -> 0 (eigenstress removed, not doubled or negated).
     # Sign from physics: a stress drop is negative resolved on the Burgers
-    # vector b = u(+n) - u(-n). Here value = u(-n) - u(+n) = +|slip| s_hat,
-    # so b = -|slip| s_hat and tau = n.sigma.s must be POSITIVE at every eps
-    # (cutde with b = +|slip| s_hat gives the mirror image, -9.5 MPa).
+    # vector b = u(+n) - u(-n). build_model's fault is right-lateral, value =
+    # b = -|slip| s_hat, so tau = n.sigma.s_hat must be POSITIVE at every eps
+    # (b = +|slip| s_hat gives the mirror image, msd and cutde alike).
     ctr = call[i_c:i_c + 1]
 
     def tau_center(eps):

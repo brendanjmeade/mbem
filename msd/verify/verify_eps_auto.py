@@ -54,6 +54,7 @@ from tde_reference import classical_tde_stress                    # noqa: E402
 import _sphere as S                                               # noqa: E402
 
 MU, NU = 30.0, 0.25
+LAM = 2.0 * MU * NU / (1.0 - 2.0 * NU)      # the mbem drivers take (mu, lam)
 
 
 def check_resolve():
@@ -126,7 +127,7 @@ def check_h_convergence():
         tri_verts, normals = kb._source_arrays(fault)
         sig = dd_stress_contract(np.ascontiguousarray(obs), tri_verts,
                                  normals, eps_arr,
-                                 np.ascontiguousarray(slip), MU, NU)
+                                 np.ascontiguousarray(slip), MU, LAM)
         ref = classical_tde_stress(obs, fault, s_hat, MU, NU)
         err = float(np.max(np.abs(sig - ref)) / np.max(np.abs(ref)))
         errs.append(err)

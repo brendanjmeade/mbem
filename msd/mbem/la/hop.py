@@ -30,6 +30,18 @@ def _dof_idx(elems: np.ndarray) -> np.ndarray:
     return (3 * elems[:, None] + np.arange(3)[None, :]).ravel()
 
 
+def require_order0(model) -> None:
+    """The compressed path (PairCompressed, HBackend, DisplacementEvaluator)
+    is P0-only: one centroid per element on both sides of every pair. Raise
+    at construction on any patch or fault of ``model`` with order > 0."""
+    for r in model.regions:
+        for p in list(r.patches) + list(r.faults):
+            if p.order:
+                raise NotImplementedError(
+                    "compressed backend: order > 0 patches are not supported; "
+                    f"use DenseBackend (patch '{p.name}' has order {p.order})")
+
+
 class _BasisEval:
     """Subset evaluators for one (field, source, kernel) pair."""
 

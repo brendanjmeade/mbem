@@ -98,6 +98,49 @@ HALF_JUMP_MAX_EPS_OVER_H = 0.5
 # (~2e-1 relative stress error at d/h = 0.25 with eps/h = 0.3; ~10 % at 0.5).
 NEAR_BOUNDARY_H_RATIO = 0.5
 
+# --- Nodal (P1/P2) triangle kernels, kernels/tri_nodal.py --------------
+# The divergence-theorem closed form loses digits roughly like (R/L)^4-5 for
+# quadratic-weighted moments (R = sqrt(|x - centroid|^2 + eps^2), L = longest
+# edge; ~2e-9 relative at R = 10 L, 2e-4 at 100 L, O(1) by 500 L) and like
+# (R/L)^8 on the n = 7 row that carries the eigenstress weight (1e-2 relative
+# at 8 L, negligible in absolute terms because that weight is ~(eps/R)^4), so
+# beyond D_STAR * L the per-node weighted tables come from a collapsed product
+# Gauss rule of the smooth integrand instead (exact to ~1e-14).
+NODAL_D_STAR = 10.0
+NODAL_FAR_GAUSS_N = 12         # points per direction (144) up to D_STAR_DISTANT * L
+NODAL_FAR_GAUSS_N_DISTANT = 8  # points per direction (64) beyond it
+NODAL_D_STAR_DISTANT = 40.0
+# Edge primitives int u^k / R^m du: same-sign spans with min|u| >= SERIES_U_OVER_RHO
+# * rho use the large-|u| binomial series (terms decay like (rho/u)^2j, so 32
+# terms at ratio 2 truncate below 2^-64); spans with max|u| <= SMALL_U_OVER_RHO
+# * rho use the small-|u| series (the closed form's u^k reduction loses
+# (rho/u)^2 per level there); everything else the conjugate closed forms.
+NODAL_SERIES_U_OVER_RHO = 2.0
+NODAL_SERIES_TERMS = 32
+NODAL_SMALL_U_OVER_RHO = 0.5
+# A nodal (P1/P2) density on a thin triangle loses (L / height)^2 digits in
+# the closed form (height / L = 1e-4: 5e-9 relative; 1e-6: 1e-4; 1e-8: O(1)),
+# so the nodal drivers refuse source triangles with height / L below this
+# rather than return inaccurate columns (height = 2 area / L).
+NODAL_MIN_HEIGHT_OVER_L = 1e-3
+
+# --- Higher-order (P1/P2) collocation, model/core.py ---------------------
+# Collocation pull-in per element order, lam_c = (1 - t) lam_node + t / 3 (the
+# basis does not move). A P1/P2 node sits ON the element boundary, shared with
+# the neighbour: at t = 0 adjacent elements collocate at one point and the
+# Neumann rows are numerically singular (cond ~ 1e19), the Dirichlet rows only
+# mediocre; 0.5 sits in the flat-conditioning plateau (0.2-0.6) of both orders
+# and is a conditioning-guarded choice, not an error minimum (the traction-row
+# error is still falling at 0.8; one eps of edge clearance is what pays). P0
+# collocates at the centroid, where t is the identity.
+COLLOCATION_SHRINK_BY_ORDER = {0: 0.0, 1: 0.5, 2: 0.5}
+# Both backends warn when a boundary collocation point lies within this many
+# FAULT eps of a fault element (exact distance; eps of the nearest fault
+# element): the fault's mollified field there is the blob average across the
+# slip surface, not the one-sided value the boundary condition means (a fault
+# outcrop). Warned, not corrected.
+COLLOCATION_FAULT_CLEARANCE_EPS = 1.0
+
 # --- Not here ---------------------------------------------------------
 # The fault SIGN CONVENTION is not a tolerance and does not live here:
 # it is ``FAULT_ORIENTATION`` in ``mbem/model/core.py``, next to the

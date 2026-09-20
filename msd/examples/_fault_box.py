@@ -53,16 +53,26 @@ def build_fault_box(half_x=200.0, z_bottom=-100.0, fault_half_len=50.0,
                 n_hat=n_hat, s_hat=s_hat, x_range=x_range, z_bottom=z_bottom)
 
 
-def build_model(meshes, slip_mag, material):
+def build_model(meshes, slip_mag, material, order_top=0):
     """RegionModel for a single homogeneous region (top + sides + base) with the
-    fault as an interior slip source."""
+    fault as an interior slip source: RIGHT-lateral slip of magnitude
+    ``slip_mag``.
+
+    ``order_top`` is the Lagrange order of the free-surface patch. A P0 top
+    cannot follow the slope of the surface displacement at the trace, and the
+    first element row of on-fault stress below it is +30-46 % high at every h
+    and eps; a P1 top (``order_top=1``) at eps="auto" brings it to a few
+    percent (gate: ``verify/verify_solved_bvp.py`` A4). The sides and base
+    stay P0."""
     fault = meshes["fault"]
     s_hat = np.asarray(meshes["s_hat"], float)
-    top = Patch("top", meshes["top"], BCType.FREE_TRACTION)
+    top = Patch("top", meshes["top"], BCType.FREE_TRACTION, order=order_top)
     sides = Patch("sides", meshes["sides"], BCType.FREE_TRACTION)
     base = Patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)
+    # Patch.value is the Burgers vector b = u(+n) - u(-n); on this fault
+    # (n = +x, s_hat = +y) right-lateral slip is b = -slip_mag * s_hat.
     fpatch = Patch("fault", fault, BCType.FAULT,
-                   value=np.broadcast_to(slip_mag * s_hat,
+                   value=np.broadcast_to(-slip_mag * s_hat,
                                          (fault.n_triangles, 3)))
     hx = meshes["x_range"][1]
     region = Region("crust", material, [top, sides, base],

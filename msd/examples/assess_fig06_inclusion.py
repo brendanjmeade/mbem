@@ -69,8 +69,10 @@ def build_model(meshes, fault_mesh, s_hat, mat_inc=None):
                      BCType.INTERFACE)
     int_bot = Patch("interface_bot", meshes["interface_bot"],
                     BCType.INTERFACE)
+    # Patch.value is the Burgers vector b = u(+n) - u(-n); on this fault
+    # (n = +x, s_hat = +y) right-lateral slip is b = -0.01 * s_hat.
     fault = Patch("fault", fault_mesh, BCType.FAULT,
-                  value=np.broadcast_to(0.01 * np.asarray(s_hat),
+                  value=np.broadcast_to(-0.01 * np.asarray(s_hat),
                                         (fault_mesh.n_triangles, 3)))
     host = Region("host", MAT_HOST,
                   [host_top, host_sides, int_side, int_bot, host_base],

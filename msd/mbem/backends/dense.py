@@ -9,7 +9,7 @@ Three assembly modes:
 * ``mode="legacy"`` — every (field, source, kernel, material) block is
   produced by the legacy ``mollified_bem.assemble_BEM_matrices`` call,
   giving entrywise-identical blocks to the hand-written assemblers
-  (the parity gate). Global scalar eps only.
+  (the parity gate). Global scalar eps only, P0 patches only.
 
 * ``mode="basis"`` — geometry-only basis stacks are assembled ONCE per
   (field, source, kernel) pair with the numba kernels and recombined
@@ -20,6 +20,10 @@ Three assembly modes:
 
 Both backends share one API: ``Backend(jump=..., deflate=...).assemble(
 system, eps).solve()`` returns the slot dict and leaves ``asm.report``.
+
+Every block is field = the row patch's collocation points, source = the
+column patch's (mesh, order): rows are collocation points, columns nodal
+densities (``model/core.py``), any mix of P0/P1/P2 patches.
 """
 
 from __future__ import annotations
@@ -114,8 +118,49 @@ def warn_half_jump_eps(system: BlockSystem, eps, jump: str):
             f"jump='calibrated' or a smaller eps")
 
 
+def warn_collocation_near_fault(system: BlockSystem, eps):
+    """Warn when a boundary collocation point lies within
+    ``defaults.COLLOCATION_FAULT_CLEARANCE_EPS`` fault-eps of a fault element
+    of its region (exact point-to-triangle distance, eps of the nearest fault
+    element): that row sees the fault's blob average, not the one-sided value
+    its boundary condition means (a fault outcrop). Shared by both backends;
+    warned, not corrected.
+    """
+    from ..geometry import distance_to_mesh
+
+    limit = defaults.COLLOCATION_FAULT_CLEARANCE_EPS
+    n_close, worst, names = 0, np.inf, []
+    for r in system.model.regions:
+        if not r.faults:
+            continue
+        for q in r.patches:
+            x = q.collocation_points()
+            for f in r.faults:
+                try:
+                    eps_f = kb.resolve_patch_eps(eps, f)
+                except ValueError:
+                    continue          # the backend reports a bad spec itself
+                d, idx = distance_to_mesh(x, f.mesh)
+                ratio = d / eps_f[idx]
+                close = int(np.sum(ratio < limit))
+                if close:
+                    n_close += close
+                    worst = min(worst, float(ratio.min()))
+                    names.append(f"{q.name}/{f.name}")
+    if n_close:
+        import warnings
+        warnings.warn(
+            f"{n_close} boundary collocation point(s) lie within {limit:g} "
+            f"fault-eps of a fault element ({', '.join(names)}; min d/eps = "
+            f"{worst:.2f}): the fault's mollified field there is the blob "
+            f"average across the slip surface, not the one-sided value the "
+            f"boundary condition means (fault outcrop); the row is not "
+            f"corrected")
+
+
 def translation_basis(layout) -> np.ndarray:
-    """Orthonormal rigid-translation basis Z (n, 3) on the u-slots.
+    """Orthonormal rigid-translation basis Z (n, 3) on the u-slots (every
+    node of every element translates alike).
 
     With jump="calibrated" on an all-Neumann model these three vectors
     span the EXACT null space of A (the calibration annihilates constant
@@ -148,6 +193,7 @@ class AssembledDense:
             raise ValueError(jump)
         require_anchor_or_deflate(system, jump, deflate)
         warn_half_jump_eps(system, eps, jump)
+        warn_collocation_near_fault(system, eps)
         self.system = system
         self.layout = system.layout
         self.eps = eps
@@ -174,6 +220,8 @@ class AssembledDense:
         import mollified_bem as mb
         if isinstance(self.eps, (dict, str)):
             raise ValueError("legacy mode supports only global scalar eps")
+        if field_patch.order or source_patch.order:
+            raise ValueError("legacy mode supports only order-0 patches")
         kern = "T" if kernel == KERNEL_T else "U"
         return mb.assemble_BEM_matrices(field_patch.mesh, source_patch.mesh,
                                         material, float(self.eps), kern)
@@ -183,23 +231,28 @@ class AssembledDense:
         b = self._basis.get(key)
         if b is None:
             eps_arr = kb.resolve_patch_eps(self.eps, source_patch)
+            x_c = self._arrays.collocation_points(field_patch)
             if kernel == KERNEL_T:
-                b = kb.assemble_t_basis(field_patch.mesh, source_patch.mesh,
-                                        eps_arr, arrays=self._arrays)
+                b = kb.assemble_t_basis(x_c, source_patch.mesh, eps_arr,
+                                        arrays=self._arrays,
+                                        order=source_patch.order)
             else:
-                b = kb.assemble_u_basis(field_patch.mesh, source_patch.mesh,
-                                        eps_arr, arrays=self._arrays)
+                b = kb.assemble_u_basis(x_c, source_patch.mesh, eps_arr,
+                                        arrays=self._arrays,
+                                        order=source_patch.order)
             self._basis[key] = b
         return b.combine(material)
 
     def _block_direct(self, field_patch, source_patch, kernel, material):
         eps_arr = kb.resolve_patch_eps(self.eps, source_patch)
+        x_c = self._arrays.collocation_points(field_patch)
         if kernel == KERNEL_T:
-            return kb.assemble_t_matrix(field_patch.mesh, source_patch.mesh,
-                                        material, eps_arr,
-                                        arrays=self._arrays)
-        return kb.assemble_u_matrix(field_patch.mesh, source_patch.mesh,
-                                    material, eps_arr, arrays=self._arrays)
+            return kb.assemble_t_matrix(x_c, source_patch.mesh, material,
+                                        eps_arr, arrays=self._arrays,
+                                        order=source_patch.order)
+        return kb.assemble_u_matrix(x_c, source_patch.mesh, material, eps_arr,
+                                    arrays=self._arrays,
+                                    order=source_patch.order)
 
     def _block(self, field_patch, source_patch, kernel, region):
         material = self.materials[region.name]
@@ -246,8 +299,7 @@ class AssembledDense:
         if self.jump == "calibrated":
             def rowsum(region, q, p):
                 blk = self._cached_block(block_cache, q, p, KERNEL_T, region)
-                return blk.reshape(q.n_triangles, 3, p.n_triangles,
-                                   3).sum(axis=2)
+                return blk.reshape(q.n_nodes, 3, p.n_nodes, 3).sum(axis=2)
             self.calib = calibrated_diagonal(self.system, rowsum)
 
         A = np.zeros((n, n))
@@ -259,7 +311,8 @@ class AssembledDense:
             A[r0:r1, c0:c1] += t.scale * blk
             D = term_diagonal(t, self.calib)
             if D is not None:
-                add_block_diagonal(A, r0, c0, D)
+                add_block_diagonal(A, r0, c0, D,
+                                   t.field_patch.collocation_shape())
 
         b = np.zeros(n)
         for rt in self.system.rhs_terms:

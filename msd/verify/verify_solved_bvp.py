@@ -21,6 +21,13 @@ It uses THREE anchors because they fail differently:
      path -- all at once.  It is loose because msd's box is a TRUNCATED half
      space and its slip is mollified: both are physics, not error.
      A third sub-check pins the slip sense with NO external reference at all.
+     A fourth (A4) is the FIRST ELEMENT ROW of on-fault elastic shear below
+     the free surface against cutde's half-space stress: a P0 top cannot
+     follow the slope of the surface displacement at the trace and the row
+     is tens of percent high (the error is amplified by the image/total
+     ratio ~D/2z); a P1 top (``build_model(order_top=1)``) at eps="auto"
+     resolves the row below ~3 eps_top, and at eps_top = 0.025 h_top the
+     whole row. Both the defect (tripwires) and the cure are gated.
 
   B. INTERNAL, manufactured, tight.  Impose the exact data of a known
      elasticity solution on a closed box and check that the solve reproduces
@@ -98,6 +105,7 @@ from mbem.model import (                                          # noqa: E402
     RegionModel,
     generate_system,
 )
+from tde_reference import classical_tde_stress                    # noqa: E402
 
 CHECKS = []
 
@@ -114,11 +122,10 @@ FAULT_BOX_KW = dict(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
                     fault_depth=18.0, edge_fault=3.0, edge_near=12.0,
                     edge_far=50.0, edge_side=50.0, near_field_radius=80.0)
 # cutde carries slip as [strike, dip, tensile] in the per-triangle TDCS frame
-# and uses the OPPOSITE displacement-discontinuity sign convention to the mbem
-# fault source (mbem: u = -H @ slip).  This factor is FROZEN, not fitted: if it
-# were fitted from the data the gate would be sign-blind, which is the very
-# defect it exists to catch.
-CUTDE_SLIP_SIGN = -1.0
+# and the SAME Burgers-vector sign as a FAULT Patch.value (b = u(+n) - u(-n)),
+# so the reference is fed the model's own slip with no factor: a sign fitted
+# from the data, or written here by hand, would make the gate sign-blind,
+# which is the very defect it exists to catch.
 # Surface points within this many FAULT eps of the trace are mollification-
 # limited (the smeared slip under-predicts the surface step there); at the
 # production eps the band excludes only the x = 0 centroids beyond the fault
@@ -129,6 +136,31 @@ COS_TOL = 0.9998       # measured worst 1-cos 9.8e-5 (surface) / 8.0e-5 (interio
 #                        a sign flip drives the cosine negative
 MED_TOL_SURF = 0.10    # measured worst 0.051 -- box truncation
 MED_TOL_EVAL = 0.04    # measured worst 0.019
+# A4, the first element row: fault elements with a vertex on z = 0 within
+# Y_FIRST_ROW of mid-strike (the lateral tips are resolution-limited in every
+# method), elastic shear n.sigma.s at their centroids (0.38-1.64 km deep on
+# this Triangle mesh) vs cutde's half-space TDE, at ONE nu != 1/4. The top
+# double layer resolves a centroid only beyond ~FIRST_ROW_EPS_DEPTH eps_top
+# (eps_top = the "auto" eps of the top elements on the trace, 0.31 km here),
+# so the row splits into a resolved part (z <= -3 eps_top, 7 of 14 centroids)
+# and a mollification-limited part. Measured (nu = 0.30 / 0.25):
+#   P0 top, auto:  whole-row median +0.27 / +0.28, resolved-part median
+#                  +0.074 / +0.080 (max +0.13), shallow part +0.4 .. +3.6
+#   P1 top, auto:  resolved part max |err| 0.031 / 0.035 (median 0.002 /
+#                  0.004), shallow part +0.17 .. +3.0 (mollification-limited)
+#   P1 top, eps_top = EPS_TOP_ROW h_top: whole row max |err| 0.10 at the
+#                  shallowest centroid (4.9 eps_top deep), <= 0.03 elsewhere;
+#                  a P0 top at 0.05 h_top stays at +0.57 (shallow median)
+# Tolerances at ~1.5-2x the measurement; the P0 tripwires prove the check
+# sees the defect (a top that followed the trace would pass P1 and fail them).
+NU_FIRST_ROW = 0.30
+Y_FIRST_ROW = 10.0
+FIRST_ROW_EPS_DEPTH = 3.0
+EPS_TOP_ROW = 0.025
+TOL_ROW_P0 = 0.15          # tripwire: P0 whole-row median ABOVE this
+TOL_ROW_P0_DEEP = 0.04     # tripwire: P0 resolved-part median ABOVE this
+TOL_ROW_P1_DEEP = 0.06     # P1 auto, resolved part, max |rel err|
+TOL_ROW_P1_SMALL = 0.15    # P1 at EPS_TOP_ROW, whole row, max |rel err|
 
 # ---------------------------------------------------------------- anchor B --
 BOX_L, BOX_H, BOX_EDGE = 40.0, 40.0, 10.0
@@ -221,11 +253,12 @@ def _cutde_halfspace_disp(obs, fault, slip_cart, nu):
     rot = cg.compute_efcs_to_tdcs_rotations(tris)
     slip_tdcs = np.ascontiguousarray(np.einsum("sij,sj->si", rot, slip_cart))
     mat = hs.disp_matrix(np.ascontiguousarray(np.asarray(obs, float)), tris, nu)
-    return CUTDE_SLIP_SIGN * np.einsum("oisc,sc->oi", mat, slip_tdcs)
+    return np.einsum("oisc,sc->oi", mat, slip_tdcs)
 
 
 def a_external_cutde(meshes):
-    """Solved free-surface + interior displacement vs cutde half-space TDEs."""
+    """Solved free-surface + interior displacement vs cutde half-space TDEs
+    carrying the model's own Burgers vector."""
     print("\n[A] EXTERNAL anchor: solved fault box vs cutde half-space TDE")
     try:
         import cutde.halfspace  # noqa: F401
@@ -236,7 +269,6 @@ def a_external_cutde(meshes):
         CHECKS.append(False)
         return
     fault = meshes["fault"]
-    slip_vec = SLIP * np.asarray(meshes["s_hat"], float)
     eps = "auto"
     exclusion = TRACE_EXCLUSION_EPS * float(
         kb.resolve_patch_eps(eps, Patch("fault", meshes["fault"], BCType.FAULT))[0])
@@ -257,8 +289,9 @@ def a_external_cutde(meshes):
         model = build_model(meshes, SLIP, mat)
         region = model.regions[0]
         system = generate_system(model)
-        ref_surf = _cutde_halfspace_disp(obs_surf, fault, slip_vec, nu)
-        ref_int = _cutde_halfspace_disp(obs_int, fault, slip_vec, nu)
+        b = region.faults[0].value_array()          # the fault's Burgers vector
+        ref_surf = _cutde_halfspace_disp(obs_surf, fault, b, nu)
+        ref_int = _cutde_halfspace_disp(obs_int, fault, b, nu)
         for jump in JUMPS:
             sol = AssembledDense(system, eps, "direct", jump=jump).solve()
             u_surf = sol["u:top"][keep]
@@ -278,12 +311,13 @@ def a_external_cutde(meshes):
 def a_slip_sense(meshes):
     """Absolute slip sense -- no external reference, no fitted sign.
 
-    Fault normal n_hat = +x_hat, slip vector Du = +SLIP * y_hat.  msd's fault
-    source is u = -H @ slip, whose jump is u(+n) - u(-n) = -Du: the block on
-    the +x side must translate toward -y and the block on the -x side toward
-    +y, each by a fraction of |Du| at the free surface.  This is the single
-    statement the seeded RHS sign flip inverts, and it is frozen in the source
-    below rather than read off the data.
+    Fault normal n_hat = +x_hat, s_hat = +y_hat, and ``build_model`` gives the
+    fault the RIGHT-lateral Burgers vector b = u(+n) - u(-n) = -SLIP * y_hat
+    (``_fault_box.py``; msd's fault source ``-sigma H @ b`` produces exactly
+    that jump): the block on the +x side must translate toward -y and the
+    block on the -x side toward +y, each by a fraction of SLIP at the free
+    surface.  This is the single statement the seeded RHS sign flip inverts,
+    and it is frozen in the source below rather than read off the data.
     """
     print("\n[A3] ABSOLUTE slip sense at the free surface (no external ref)")
     n_hat = np.asarray(meshes["n_hat"], float)
@@ -305,7 +339,7 @@ def a_slip_sense(meshes):
             up = float(u[plus, 1].mean())
             um = float(u[minus, 1].mean())
             tag = f"nu={nu:.2f} {jump:10s}"
-            check_true(f"A3 +n side moves -Du, -n side +Du   {tag}",
+            check_true(f"A3 right-lateral: +x side -y, -x side +y {tag}",
                        up < 0.0 < um, f"u_y(+x)={up:+.3e} u_y(-x)={um:+.3e}")
             # near-antisymmetry about the fault plane
             check(f"A3 antisymmetry |sum|/|diff|         {tag}",
@@ -314,6 +348,86 @@ def a_slip_sense(meshes):
             frac = 0.5 * (abs(up) + abs(um)) / SLIP
             check_true(f"A3 surface |u_y| is 0.10-0.45 of slip {tag}",
                        0.10 < frac < 0.45, f"frac={frac:.3f}")
+
+
+def _first_row(fault, y_max):
+    """Centroids of the fault elements with a vertex on z = 0 and |y| < y_max,
+    shallowest first."""
+    c = fault.centroids()
+    tv = np.asarray(fault.vertices, float)[np.asarray(fault.triangles)]
+    sel = (tv[:, :, 2].max(axis=1) > -1e-9) & (np.abs(c[:, 1]) < y_max)
+    obs = c[sel]
+    return obs[np.argsort(-obs[:, 2])]
+
+
+def _trace_eps_top(top, half_len):
+    """Smallest "auto" eps among the top elements with an edge on the trace:
+    0.1 x the trace spacing (edge_fault). Triangle also puts a few larger
+    slivers on the trace; they do not set the band (centroids 2.3-2.7 eps of
+    a 4.8-km trace element are within 3 % at P1)."""
+    eps = kb.resolve_patch_eps("auto", top)
+    tv = np.asarray(top.mesh.vertices, float)[np.asarray(top.mesh.triangles)]
+    on = (np.abs(tv[:, :, 0]) < 1e-9) & (np.abs(tv[:, :, 1]) <= half_len + 1e-9)
+    return float(eps[on.sum(axis=1) >= 2].min())
+
+
+def a_first_row(meshes):
+    """First element row of on-fault elastic shear vs cutde half-space stress
+    (constants and measurements above): P0 tripwires, P1 cure."""
+    print("\n[A4] FIRST ELEMENT ROW of on-fault elastic shear vs cutde half-space TDE")
+    try:
+        import cutde.halfspace  # noqa: F401
+    except ImportError as exc:
+        print(f"  (cutde not importable -- {exc}); external anchor FAILED")
+        CHECKS.append(False)
+        return
+    fault = meshes["fault"]
+    n_hat = np.asarray(meshes["n_hat"], float)
+    s_hat = np.asarray(meshes["s_hat"], float)
+    obs = _first_row(fault, Y_FIRST_ROW)
+    mat = material(NU_FIRST_ROW)
+
+    def shear(order_top, eps):
+        model = build_model(meshes, SLIP, mat, order_top=order_top)
+        region = model.regions[0]
+        system = generate_system(model)
+        sol = AssembledDense(system, eps, "direct", jump="calibrated").solve()
+        # the row sits inside the near-boundary band by construction
+        sig = evaluate_stress(model, region, sol, obs, eps,
+                              subtract_anelastic=True, warn_near=False)
+        return region, np.einsum("nij,i,j->n", sig, n_hat, s_hat)
+
+    region, tau_p0 = shear(0, "auto")
+    _, tau_p1 = shear(1, "auto")
+    top = next(p for p in region.patches if p.name == "top")
+    eps_small = {"top": EPS_TOP_ROW * kb.element_sizes(top.mesh),
+                 "sides": "auto", "base": "auto", "fault": "auto"}
+    _, tau_p1s = shear(1, eps_small)
+    b = region.faults[0].value_array()
+    ref = np.einsum("nij,i,j->n",
+                    classical_tde_stress(obs, fault, b, mat.mu, mat.nu,
+                                         halfspace=True), n_hat, s_hat)
+    eps_top = _trace_eps_top(top, FAULT_BOX_KW["fault_half_len"])
+    deep = obs[:, 2] <= -FIRST_ROW_EPS_DEPTH * eps_top
+    r0, r1, r1s = tau_p0 / ref - 1.0, tau_p1 / ref - 1.0, tau_p1s / ref - 1.0
+    print(f"  nu = {NU_FIRST_ROW}, {obs.shape[0]} centroids, trace eps_top = "
+          f"{eps_top:.3f} km, resolved below {FIRST_ROW_EPS_DEPTH * eps_top:.2f} km "
+          f"({int(deep.sum())} centroids); rel err of n.sigma.s vs half space")
+    print(f"  {'z (km)':>8} {'hs (MPa)':>9} {'P0 auto':>9} {'P1 auto':>9} "
+          f"{'P1 ' + str(EPS_TOP_ROW) + 'h':>10}")
+    for i in range(obs.shape[0]):
+        print(f"  {obs[i, 2]:8.3f} {ref[i] * 1e3:9.4f} {r0[i]:+9.3f} {r1[i]:+9.3f} "
+              f"{r1s[i]:+10.3f}{'' if deep[i] else '   (mollification band)'}")
+    check_true("A4 P0 top, auto: whole-row median ABOVE tripwire",
+               float(np.median(r0)) > TOL_ROW_P0,
+               f"{np.median(r0):+.3f} > {TOL_ROW_P0}")
+    check_true("A4 P0 top, auto: resolved-part median ABOVE tripwire",
+               float(np.median(r0[deep])) > TOL_ROW_P0_DEEP,
+               f"{np.median(r0[deep]):+.3f} > {TOL_ROW_P0_DEEP}")
+    check("A4 P1 top, auto: resolved part max |rel err|",
+          float(np.abs(r1[deep]).max()), TOL_ROW_P1_DEEP, "{:.4f}")
+    check(f"A4 P1 top, eps_top = {EPS_TOP_ROW} h: whole row max |rel err|",
+          float(np.abs(r1s).max()), TOL_ROW_P1_SMALL, "{:.4f}")
 
 
 # ============================================================== ANCHOR B =====
@@ -766,6 +880,7 @@ def main():
     print(f"  fault box triangles: {nt}")
     a_external_cutde(meshes)
     a_slip_sense(meshes)
+    a_first_row(meshes)
 
     box = _closed_box()
     print(f"\n  closed box triangles: "

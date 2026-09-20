@@ -14,6 +14,7 @@ from .basis import (  # noqa: E402
     assemble_t_matrix,
     u_coeffs,
     t_coeffs,
+    n_nodes,
 )
 
 
@@ -40,5 +41,5 @@ __all__ = [
     "UBasis", "TBasis",
     "assemble_u_basis", "assemble_t_basis",
     "assemble_u_matrix", "assemble_t_matrix",
-    "u_coeffs", "t_coeffs",
+    "u_coeffs", "t_coeffs", "n_nodes",
 ]

@@ -108,13 +108,13 @@ def hand_eigen(model, region, sol, eps_spec, pts, nu):
         u_p = (p.value_array() if p.bc is BCType.PRESCRIBED_DISPLACEMENT
                else sol[f"u:{p.name}"])
         e = float(model.orientation(region, p)) * _stress_from_source(
-            pts, p.mesh, u_p, "eigen", mat.mu, mat.nu,
+            pts, p.mesh, u_p, "eigen", mat.mu, mat.lam,
             kb.resolve_eps(eps_spec[p.name], p.mesh))
         parts[p.name] = e
         out += e
     for f in region.faults:
         e = float(model.orientation(region, f)) * _stress_from_source(
-            pts, f.mesh, f.value_array(), "eigen", mat.mu, mat.nu,
+            pts, f.mesh, f.value_array(), "eigen", mat.mu, mat.lam,
             kb.resolve_eps(eps_spec[f.name], f.mesh))
         parts[f.name] = e
         out += e

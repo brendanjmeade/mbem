@@ -32,8 +32,12 @@ def main():
         if proc.returncode != 0:
             verdict = "FAIL"
         results.append((s.name, verdict, dt, proc.returncode))
-        tail = (proc.stderr.strip().splitlines()[-1]
-                if proc.returncode != 0 and proc.stderr.strip() else "")
+        tail = ""
+        if proc.returncode != 0 and proc.stderr.strip():
+            # the last exception line, not numba's OMP notice
+            lines = proc.stderr.strip().splitlines()
+            errs = [ln for ln in lines if "Error" in ln or "Exception" in ln]
+            tail = (errs or lines)[-1]
         print(f"{verdict:4s}  {s.name:40s} {dt:7.1f} s  exit {proc.returncode}  {tail}",
               flush=True)
     n_fail = sum(1 for r in results if r[1] != "PASS")

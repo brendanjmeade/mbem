@@ -19,6 +19,14 @@ collocation free term on the single-valued u: ``COLLOCATION_JUMP * I``
 traction unknown is t_p = sigma_stored * n_stored, so region R sees
 sigma(R,p) * t_p — hence the -sigma on G.
 
+Rows are the collocation points of q (K per element, ``Patch.order``),
+columns the nodal densities. The free term of collocation point c (node kc
+of element s) acts on u(x_c) = sum_k N_k(x_c) u[s, k], so on q's own
+element columns it is ``N[kc, k] * D_c`` with ``N = q.collocation_shape()``
+and D_c the (3,3) diagonal of that point; at P0 N = [[1]] and this is the
+plain block diagonal. The row-sum identity behind the calibrated diagonal
+carries to P1/P2 through the partition of unity ``sum_k N_k = 1``.
+
 A FAULT is not a special case: ``sigma(R,f)`` is defined for it too
 (``FAULT_ORIENTATION``, see ``core.py``), so a fault's slip enters the
 RHS through the very same ``-sigma`` coefficient a prescribed boundary
@@ -52,7 +60,9 @@ class BlockTerm:
     region: Region               # material provider
     scale: float                 # +-1 from the sigma rule
     diag: float = 0.0            # free term on this block: COLLOCATION_JUMP
-                                 # on the q == p u-block, else 0
+                                 # on the q == p u-block, else 0; applied per
+                                 # collocation point through term_diagonal /
+                                 # add_block_diagonal
 
 
 @dataclass(frozen=True)
@@ -64,8 +74,9 @@ class RhsTerm:
     source_patch: Patch
     region: Region
     scale: float
-    vector: np.ndarray           # flattened known value (3*N_source,)
+    vector: np.ndarray           # flattened known nodal value (3*K*N_source,)
     add_half_of_vector: bool = False   # also b[row] += scale_half * vector
+                                       # (interpolated to the collocation points)
     scale_half: float = 0.0
 
 
@@ -145,23 +156,27 @@ def generate_system(model: RegionModel) -> BlockSystem:
 # ---- the collocation diagonal, shared by every backend --------------------
 
 def calibrated_diagonal(system: BlockSystem, rowsum) -> dict:
-    """{(id(region), id(q)): C (Nq,3,3)} -- the rigid-body-calibrated
-    collocation diagonal of each BIE row (region R, collocation patch q):
+    """{(id(region), id(q)): C (q.n_nodes,3,3)} -- the rigid-body-calibrated
+    collocation diagonal of each BIE row (region R, collocation point c of
+    patch q):
 
-        C_q = -sum_{p in dR} sigma(R,p) * rowsum_j H^{m(R)}_{qp}
+        C_c = -sum_{p in dR} sigma(R,p) * rowsum_over_all_columns H^{m(R)}_{qp}[c]
 
     so that a constant displacement over ALL of dR (prescribed patches
     included) with zero traction is annihilated exactly, where the
     mollified Gauss identity sum_j H_qj = -1/2 I holds only approximately.
-    ``rowsum(region, q, p) -> (Nq,3,3)`` is the backend's own row-sum of
-    the H block it applies, so the calibrated operator is exact for the
-    operator actually used (dense block, or compressed pair).
+    ``rowsum(region, q, p) -> (q.n_nodes,3,3)`` is the backend's own row-sum
+    of the H block it applies (over every node column of p), so the
+    calibrated operator is exact for the operator actually used (dense
+    block, or compressed pair). A constant nodal density is constant at
+    every collocation point (sum_k N_k = 1), which is why the identity is
+    order-independent.
     """
     model = system.model
     calib: dict = {}
     for region in model.regions:
         for q in region.patches:
-            C = np.zeros((q.n_triangles, 3, 3))
+            C = np.zeros((q.n_nodes, 3, 3))
             for p in region.patches:
                 C -= float(model.orientation(region, p)) * rowsum(region, q, p)
             calib[(id(region), id(q))] = C
@@ -169,42 +184,56 @@ def calibrated_diagonal(system: BlockSystem, rowsum) -> dict:
 
 
 def term_diagonal(term: BlockTerm, calib: dict | None):
-    """The (Nq,3,3) diagonal D_q this term adds to its block, or None:
-    ``calib[(region, q)]`` under the calibrated jump (``calib`` is a dict),
-    else ``term.diag * I``."""
+    """The (q.n_nodes,3,3) per-collocation-point diagonal D_c this term adds
+    to its block, or None: ``calib[(region, q)]`` under the calibrated jump
+    (``calib`` is a dict), else ``term.diag * I``."""
     if not term.diag:
         return None
     if calib is not None:
         return calib[(id(term.region), id(term.field_patch))]
     return np.broadcast_to(term.diag * np.eye(3),
-                           (term.field_patch.n_triangles, 3, 3))
+                           (term.field_patch.n_nodes, 3, 3))
 
 
 def diagonal_matvec(D: np.ndarray, x: np.ndarray) -> np.ndarray:
-    """(Nq,3,3) block-diagonal times a flattened (3*Nq,) vector."""
+    """(Nc,3,3) block-diagonal times a flattened (3*Nc,) vector of values
+    AT the collocation points."""
     return np.einsum("nij,nj->ni", D, x.reshape(-1, 3)).ravel()
 
 
-def add_block_diagonal(A: np.ndarray, r0: int, c0: int, D: np.ndarray):
-    """A[r0 + 3i + a, c0 + 3i + b] += D[i, a, b] (in place)."""
-    idx = 3 * np.arange(D.shape[0])
-    for a in range(3):
-        for b in range(3):
-            A[r0 + idx + a, c0 + idx + b] += D[:, a, b]
+def add_block_diagonal(A: np.ndarray, r0: int, c0: int, D: np.ndarray,
+                       shape: np.ndarray):
+    """A[r0 + 3c + a, c0 + 3(K s + k) + b] += shape[kc, k] * D[c, a, b] in
+    place, for collocation point c = K s + kc of element s: the free term of
+    each row spread over its own element's K node columns by the shape
+    functions at the collocation point (``Patch.collocation_shape``, (K, K)).
+    At P0 ``shape = [[1]]`` and this is the plain block diagonal."""
+    K = shape.shape[0]
+    c = np.arange(D.shape[0])
+    s, kc = c // K, c % K
+    rows = r0 + 3 * c
+    for k in range(K):
+        w = shape[kc, k]
+        cols = c0 + 3 * (K * s + k)
+        for a in range(3):
+            for b in range(3):
+                A[rows + a, cols + b] += w * D[:, a, b]
 
 
 def add_jump_rhs(system: BlockSystem, calib: dict | None, b: np.ndarray):
     """Prescribed-displacement rows: the free term multiplies the KNOWN
-    u_bar of the row's own patch, so it moves to the RHS with its LHS
-    sign -- ``b[row] -= C_q @ u_bar`` (calibrated) or
-    ``b[row] += scale_half * u_bar`` (scale_half = -COLLOCATION_JUMP).
+    u_bar of the row's own patch at the collocation points (the nodal value
+    interpolated by ``Patch.collocation_values``), so it moves to the RHS
+    with its LHS sign -- ``b[row] -= C_c @ u_bar(x_c)`` (calibrated) or
+    ``b[row] += scale_half * u_bar(x_c)`` (scale_half = -COLLOCATION_JUMP).
     The emitting RhsTerm is the one with ``add_half_of_vector``."""
     for rt in system.rhs_terms:
         if not rt.add_half_of_vector:
             continue
         r0, r1 = rt.row.offset, rt.row.stop
+        u_c = rt.field_patch.collocation_values(rt.vector).ravel()
         if calib is None:
-            b[r0:r1] += rt.scale_half * rt.vector
+            b[r0:r1] += rt.scale_half * u_c
         else:
             b[r0:r1] -= diagonal_matvec(
-                calib[(id(rt.region), id(rt.field_patch))], rt.vector)
+                calib[(id(rt.region), id(rt.field_patch))], u_c)

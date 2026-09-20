@@ -142,7 +142,7 @@ def check_evaluate_end_to_end():
         if np.any(slip):
             H = kb.assemble_t_matrix(obs, f.mesh, MAT,
                                      kb.as_eps_array(3.0, f.n_triangles))
-            u_ref -= H @ slip
+            u_ref -= float(model.orientation(region, f)) * (H @ slip)
     err = _relmax(u_new, u_ref.reshape(-1, 3))
     print(f"    evaluate_displacement vs dense-matrix path: rel = {err:.2e}")
     finite = bool(np.all(np.isfinite(u_new)))

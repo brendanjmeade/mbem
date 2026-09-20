@@ -1066,15 +1066,16 @@ def _precompute_frames(tri_verts):
 
 
 @njit(cache=True, parallel=True)
-def kelvin_stress_contract(x_field, tri_verts, eps_arr, density, mu, nu):
+def kelvin_stress_contract(x_field, tri_verts, eps_arr, density, mu, lam):
     """Stress (N_f,3,3) from a triangulated FORCE source (single-layer).
 
     sigma(obs) = sum_s S[obs,s][:,:,k] density[s,k]. Parallel over obs.
+    Material as (mu, lam); nu is derived, never lam from a 1/(1-2nu).
     """
     N_f = x_field.shape[0]
     N_s = tri_verts.shape[0]
     EX, EY, NH, OK = _precompute_frames(tri_verts)
-    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    nu = lam / (2.0 * (lam + mu))
     sig = np.zeros((N_f, 3, 3))
     for f in prange(N_f):
         M3 = np.zeros((3, 3)); M5 = np.zeros((4, 4)); M7 = np.zeros((5, 5))
@@ -1108,15 +1109,16 @@ def kelvin_stress_contract(x_field, tri_verts, eps_arr, density, mu, nu):
 
 
 @njit(cache=True, parallel=True)
-def dd_stress_contract(x_field, tri_verts, normals, eps_arr, density, mu, nu):
+def dd_stress_contract(x_field, tri_verts, normals, eps_arr, density, mu, lam):
     """Stress (N_f,3,3) from a triangulated SLIP/displacement source (DD).
 
     sigma(obs) = sum_s H[obs,s][:,:,k] density[s,k]. Parallel over obs.
+    Material as (mu, lam); nu is derived, never lam from a 1/(1-2nu).
     """
     N_f = x_field.shape[0]
     N_s = tri_verts.shape[0]
     EX, EY, NH, OK = _precompute_frames(tri_verts)
-    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
+    nu = lam / (2.0 * (lam + mu))
     sig = np.zeros((N_f, 3, 3))
     for f in prange(N_f):
         M3 = np.zeros((3, 3)); M5 = np.zeros((4, 4)); M7 = np.zeros((5, 5))
@@ -1214,7 +1216,7 @@ def _eigenstress_pair(tv, ex, ey, nhat, nrm, obs, eps, mu, lam,
 
 @njit(cache=True, parallel=True)
 def eigenstress_contract(x_field, tri_verts, normals, eps_arr, density,
-                         mu, nu):
+                         mu, lam):
     """Eigenstress +C:eps* (N_f,3,3) of a triangulated SLIP source.
 
     sigma*(obs) = sum_s H*[obs,s][:,:,k] density[s,k], summed over ALL
@@ -1222,11 +1224,11 @@ def eigenstress_contract(x_field, tri_verts, normals, eps_arr, density,
     points, per-element `eps_arr`; the twin of `dd_stress_contract`, whose
     divergent on-fault part this is. Returns +C:eps*, so
     sigma_elastic = dd_stress_contract(...) - eigenstress_contract(...).
+    Material as (mu, lam), the only pair the eigenstress needs.
     """
     N_f = x_field.shape[0]
     N_s = tri_verts.shape[0]
     EX, EY, NH, OK = _precompute_frames(tri_verts)
-    lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
     sig = np.zeros((N_f, 3, 3))
     for f in prange(N_f):
         M3 = np.zeros((3, 3)); M5 = np.zeros((4, 4)); M7 = np.zeros((5, 5))

@@ -32,7 +32,6 @@ import mollified_bem as mb                                         # noqa: E402
 from _fault_box import build_fault_box, build_model  # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.evaluate import _stress_from_source                     # noqa: E402
-from mbem.model import BCType, Patch                             # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 
@@ -50,10 +49,11 @@ VIEW = 100.0                    # km plotting half-window
 GRID_N = 161
 
 
-def free_surface_stress(meshes, sol, eps):
+def free_surface_stress(meshes, model, sol, eps):
     """Elastic surface stress on a regular grid: interpolate the free-surface
     displacement, apply the free-surface Hooke law to the in-plane gradients,
-    then remove the anelastic eigenstress (``eps`` is the solve's spec)."""
+    then remove the anelastic eigenstress of the model's fault (``eps`` is
+    the solve's spec)."""
     top = meshes["top"]
     c = top.centroids()
     u = sol["u:top"]
@@ -79,19 +79,20 @@ def free_surface_stress(meshes, sol, eps):
     sig[:, 0, 1] = sig[:, 1, 0] = (mu * (dux_dy + duy_dx)).ravel()
 
     obs = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
-    slip_cart = SLIP_MAG * np.asarray(meshes["s_hat"], float)
     # ``sig`` is differentiated from the BEM displacement field, whose fault
-    # term is -H@slip, so its divergent near-fault part is MINUS the
-    # eigenstress C:eps_star; recovering the elastic field therefore ADDS the
-    # eigenstress back (the same sign convention as mbem.evaluate_stress, where
-    # the fault stress term is -Sdd@slip). The eigenstress is negligible off
+    # term is -sigma H@b (b the Burgers vector, sigma = FAULT_ORIENTATION),
+    # so its divergent near-fault part is -sigma times the eigenstress
+    # C:eps_star(b); recovering the elastic field adds +sigma C:eps_star(b),
+    # exactly as mbem.evaluate_stress does (``_double_layer_stress``), with
+    # sigma read through the one accessor. The eigenstress is negligible off
     # the surface-breaking trace and the trace strip is masked below, so this
     # only matters in a thin band hugging the mask -- but the sign is kept
     # consistent so a future on/near-fault evaluation does not double the spike.
-    fault = meshes["fault"]
-    slip_tri = np.broadcast_to(slip_cart, (fault.n_triangles, 3))
-    sig_el = sig + _stress_from_source(obs, fault, slip_tri, "eigen", mu, MAT.nu,
-                                       kb.resolve_patch_eps(eps, Patch("fault", fault, BCType.FAULT)))
+    region = model.regions[0]
+    fpatch = region.faults[0]
+    sig_el = sig + float(model.orientation(region, fpatch)) * _stress_from_source(
+        obs, fpatch.mesh, fpatch.value_array(), "eigen", mu, lam,
+        kb.resolve_patch_eps(eps, fpatch))
     comps = {"xx": sig_el[:, 0, 0], "yy": sig_el[:, 1, 1], "xy": sig_el[:, 0, 1]}
     S = {k: (v * GPA_TO_MPA).reshape(X.shape) for k, v in comps.items()}
     # Mask the thin surface-breaking fault strip: the slip is DISCONTINUOUS
@@ -125,7 +126,7 @@ def main():
     tri = mtri.Triangulation(top.vertices[:, 0], top.vertices[:, 1],
                              top.triangles)
     u = sol["u:top"] * KM_TO_MM
-    X, Y, S = free_surface_stress(meshes, sol, eps)
+    X, Y, S = free_surface_stress(meshes, model, sol, eps)
 
     fig, axes = plt.subplots(2, 3, figsize=(11.0, 7.2),
                              gridspec_kw=dict(wspace=0.32, hspace=0.28))

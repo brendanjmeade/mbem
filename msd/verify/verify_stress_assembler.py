@@ -38,6 +38,12 @@ from mollified_kernel.analytical_kernels import (                    # noqa: E40
 MU, NU = 30.0, 0.25
 
 
+def _lam(nu):
+    """The test material is stated by nu (the scalar oracles take nu); the
+    mbem drivers take (mu, lam)."""
+    return 2.0 * MU * nu / (1.0 - 2.0 * nu)
+
+
 def _scalar(obs_pts, verts, normals, density, eps_arr, kernel):
     """Scalar oracle: sum over triangles, contract with density -> (N,3,3)."""
     sig = np.zeros((len(obs_pts), 3, 3))
@@ -89,9 +95,9 @@ def check_kernel(kernel):
     obs, density = _obs_and_density(verts)
     eps = np.full(verts.shape[0], 0.5)
     if kernel == "dd":
-        num = dd_stress_contract(obs, verts, normals, eps, density, MU, NU)
+        num = dd_stress_contract(obs, verts, normals, eps, density, MU, _lam(NU))
     else:
-        num = kelvin_stress_contract(obs, verts, eps, density, MU, NU)
+        num = kelvin_stress_contract(obs, verts, eps, density, MU, _lam(NU))
     ref = _scalar(obs, verts, normals, density, eps, kernel)
     err = _relmax(num, ref)
     print(f"    {kernel:>5} numba vs scalar oracle: rel = {err:.2e}")
@@ -103,7 +109,7 @@ def check_per_element_eps():
     obs, density = _obs_and_density(verts, seed=3)
     rng = np.random.default_rng(7)
     eps = rng.uniform(0.3, 1.2, verts.shape[0])     # non-constant eps
-    num = dd_stress_contract(obs, verts, normals, eps, density, MU, NU)
+    num = dd_stress_contract(obs, verts, normals, eps, density, MU, _lam(NU))
     ref = _scalar(obs, verts, normals, density, eps, "dd")
     err = _relmax(num, ref)
     print(f"    per-element eps (dd): rel = {err:.2e}")
@@ -114,9 +120,9 @@ def speed_report():
     verts, normals = _geometry(target_edge=3.0)
     obs, density = _obs_and_density(verts, n_obs=60, seed=1)
     eps = np.full(verts.shape[0], 0.5)
-    dd_stress_contract(obs[:1], verts, normals, eps, density, MU, NU)  # warm JIT
+    dd_stress_contract(obs[:1], verts, normals, eps, density, MU, _lam(NU))  # warm JIT
     t0 = time.time()
-    dd_stress_contract(obs, verts, normals, eps, density, MU, NU)
+    dd_stress_contract(obs, verts, normals, eps, density, MU, _lam(NU))
     t_numba = time.time() - t0
     t0 = time.time()
     _scalar(obs, verts, normals, density, eps, "dd")

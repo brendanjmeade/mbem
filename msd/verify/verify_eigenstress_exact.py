@@ -36,7 +36,8 @@ Gates (each prints [ok]/[XX]):
   [e] the SIGN, pinned by finiteness: as eps -> 0 the raw total on-fault shear
       diverges like 1/eps while the corrected one stays bounded, and the
       opposite sign (a DOUBLED eigenstress) diverges too -- plus the
-      ``evaluate_stress`` wiring identity (elastic - total) == +C:eps_star;
+      ``evaluate_stress`` wiring identity (elastic - total) == sum over every
+      double layer of sigma C:eps_star(jump), the fault's with its own sigma;
   [f] PER-ELEMENT / GRADED eps: the sum is element by element, so the
       near-uniform-fault-eps restriction ``evaluate_stress`` used to raise is
       gone; gated against the per-element moss oracle and end to end.
@@ -103,6 +104,12 @@ def _load_moss():
     return out[0], out[1]
 
 
+def _lam(mu, nu):
+    """The test materials are stated by nu (the oracles take nu); the mbem
+    drivers take (mu, lam)."""
+    return 2.0 * mu * nu / (1.0 - 2.0 * nu)
+
+
 def _eig(obs, verts, normals, eps_arr, density, mu, nu):
     """eigenstress_contract with contiguous arrays (N,3,3)."""
     return eigenstress_contract(
@@ -110,7 +117,7 @@ def _eig(obs, verts, normals, eps_arr, density, mu, nu):
         np.ascontiguousarray(np.asarray(verts, float)),
         np.ascontiguousarray(np.asarray(normals, float)),
         np.ascontiguousarray(np.asarray(eps_arr, float)),
-        np.ascontiguousarray(np.asarray(density, float)), mu, nu)
+        np.ascontiguousarray(np.asarray(density, float)), mu, _lam(mu, nu))
 
 
 def _boundary_eigen(model, region, sol, obs, eps_spec, mat):
@@ -127,7 +134,7 @@ def _boundary_eigen(model, region, sol, obs, eps_spec, mat):
             continue
         e = eps_spec[p.name] if isinstance(eps_spec, dict) else eps_spec
         out += float(model.orientation(region, p)) * _stress_from_source(
-            obs, p.mesh, u_p, "eigen", mat.mu, mat.nu,
+            obs, p.mesh, u_p, "eigen", mat.mu, mat.lam,
             kb.resolve_eps(e, p.mesh))
     return out
 
@@ -232,7 +239,7 @@ def c_deep_interior():
     for nu in (0.25, 0.30):
         for zoff in (0.0, 0.5, 1.0, 2.0):
             obs = np.ascontiguousarray((inc + np.array([0.0, 0.0, zoff]))[None, :])
-            ex = _stress_from_source(obs, mesh, slip, "eigen", MU, nu,
+            ex = _stress_from_source(obs, mesh, slip, "eigen", MU, _lam(MU, nu),
                                      np.full(1, eps))
             ap = eigenstress_at_points(obs, mesh, slip, MU, nu, eps)
             check(f"nu={nu:.2f} incenter + {zoff:.1f} eps: exact vs anelastic.py",
@@ -249,7 +256,8 @@ def d_near_edge_disagreement():
     slip = np.broadcast_to(SLIP * np.asarray(s_hat, float), (nt, 3)).copy()
     eps = 0.3                                    # << h, so the patch is locally a half plane
     edge = np.array([[0.0, 0.0, -12.0]])         # midpoint of the bottom patch edge
-    ex = _stress_from_source(edge, fault, slip, "eigen", MU, 0.30, np.full(nt, eps))
+    ex = _stress_from_source(edge, fault, slip, "eigen", MU, _lam(MU, 0.30),
+                             np.full(nt, eps))
     ap = eigenstress_at_points(edge, fault, slip, MU, 0.30, eps)
     check_band("patch-edge midpoint: anelastic.py / exact",
                float(np.abs(ap).max() / np.abs(ex).max()), 1.95, 2.05)
@@ -266,7 +274,7 @@ def d_near_edge_disagreement():
     eps_arr = 1.25 * h
     e_scalar = float(eps_arr.mean())
     cen = np.ascontiguousarray(fault.centroids())
-    ex = _stress_from_source(cen, fault, slip, "eigen", MU, 0.30, eps_arr)
+    ex = _stress_from_source(cen, fault, slip, "eigen", MU, _lam(MU, 0.30), eps_arr)
     ap = eigenstress_at_points(cen, fault, slip, MU, 0.30, e_scalar)
     y, z = cen[:, 1], cen[:, 2]
     dist = np.minimum.reduce([5.0 - np.abs(y), z + 6.0, -z])
@@ -310,11 +318,12 @@ def e_sign():
     raw, cor, wrong = [], [], []
     for eps in eps_list:
         ea = np.full(nt, eps)
-        tot = -_stress_from_source(obs, fault, slip, "dd", MU, nu, ea)
-        star = _stress_from_source(obs, fault, slip, "eigen", MU, nu, ea)
-        raw.append(tau(tot))                 # uncorrected TOTAL
-        cor.append(tau(tot + star))          # SHIPPED sign: the fault term is
-        wrong.append(tau(tot - star))        #   -Sdd@slip, so removing C:eps* ADDS it
+        tot = _stress_from_source(obs, fault, slip, "dd", MU, _lam(MU, nu), ea)
+        star = _stress_from_source(obs, fault, slip, "eigen", MU, _lam(MU, nu), ea)
+        raw.append(tau(tot))                 # uncorrected TOTAL Sdd@b of jump b
+        cor.append(tau(tot - star))          # its eigenstress is +C:eps*(b), so
+        wrong.append(tau(tot + star))        #   the elastic part SUBTRACTS it
+        # (evaluate_stress applies the same pairing under one common -sigma)
     for eps, r, c, w in zip(eps_list, raw, cor, wrong):
         print(f"      eps={eps:6.3f}  total {r:10.3f}  corrected {c:8.3f}  "
               f"wrong-sign {w:10.3f}   MPa")
@@ -328,7 +337,9 @@ def e_sign():
     check_band("|wrong-sign| / |corrected| at the smallest eps",
                abs(wrong[-1]) / abs(cor[-1]), 3.0, 1e9)
 
-    # the evaluate_stress WIRING: (elastic - total) must be +C:eps_star exactly
+    # the evaluate_stress WIRING: (elastic - total) must be sigma C:eps_star
+    # of every double layer exactly, the fault's Burgers vector with the
+    # fault's own sigma (read through the one accessor, like the patches)
     from _fault_box import build_fault_box, build_model
     from mbem.backends.dense import AssembledDense
     from mbem.model import generate_system
@@ -341,8 +352,9 @@ def e_sign():
     system = generate_system(model)
     region = model.regions[0]
     fmesh = meshes["fault"]
-    fslip = np.broadcast_to(0.01 * np.asarray(meshes["s_hat"], float),
-                            (fmesh.n_triangles, 3)).copy()
+    fpatch = region.faults[0]
+    fslip = fpatch.value_array()
+    sig_f = float(model.orientation(region, fpatch))
     call = fmesh.centroids()
     # three deep-interior centroids and three at the BOTTOM RIM, where the old
     # approximation is ~2x off -- the rim points are what make the "no longer
@@ -358,11 +370,12 @@ def e_sign():
                           subtract_anelastic=False, warn_near=False)
     ela = evaluate_stress(model, region, sol, obs_b, eps,
                           subtract_anelastic=True, warn_near=False)
-    star = _stress_from_source(obs_b, fmesh, fslip, "eigen", mat.mu, mat.nu,
-                               np.full(fmesh.n_triangles, eps))
+    star = sig_f * _stress_from_source(obs_b, fmesh, fslip, "eigen",
+                                       mat.mu, mat.lam,
+                                       np.full(fmesh.n_triangles, eps))
     star_f = star.copy()                      # the fault's own eigenstress
     star = star + _boundary_eigen(model, region, sol, obs_b, eps, mat)
-    check("evaluate_stress: (elastic - total) == +C:eps_star (fault + patches)",
+    check("evaluate_stress: (elastic - total) == sum sigma C:eps_star (fault + patches)",
           np.abs((ela - tot) - star).max() / np.abs(star).max(), 1e-12)
     # the boundary part must be a genuine contribution at these points (the
     # top row of the fault is 3 eps below host_top), else the check above
@@ -374,7 +387,7 @@ def e_sign():
           f"{d_bdy:9.2e} (want > 1e-6)")
     star = star_f
     # and it must NOT be the old approximate one any more
-    old = eigenstress_at_points(obs_b, fmesh, fslip, mat.mu, mat.nu, eps)
+    old = sig_f * eigenstress_at_points(obs_b, fmesh, fslip, mat.mu, mat.nu, eps)
     d_old = np.abs((ela - tot) - old).max() / np.abs(star).max()
     CHECKS.append(bool(d_old > 0.1))
     print(f"  [{'ok' if d_old > 0.1 else 'XX'}] "
@@ -463,12 +476,11 @@ def f_graded_eps():
     print(f"  [{'ok' if ran else 'XX'}] "
           f"{'evaluate_stress accepts a graded fault eps (3x spread)':58s}")
     if ran:
-        fslip = np.broadcast_to(0.01 * np.asarray(meshes["s_hat"], float),
-                                (fmesh.n_triangles, 3)).copy()
-        star = _stress_from_source(obs_b, fmesh, fslip, "eigen", mat.mu, mat.nu,
-                                   fgrad)
+        fpatch = region.faults[0]
+        star = float(model.orientation(region, fpatch)) * _stress_from_source(
+            obs_b, fmesh, fpatch.value_array(), "eigen", mat.mu, mat.lam, fgrad)
         star = star + _boundary_eigen(model, region, sol, obs_b, spec, mat)
-        check("graded end to end: (elastic - total) == +C:eps_star",
+        check("graded end to end: (elastic - total) == sum sigma C:eps_star",
               np.abs((ela - tot) - star).max() / np.abs(star).max(), 1e-12)
 
 

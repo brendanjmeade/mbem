@@ -13,7 +13,9 @@ stress of the SAME triangulated fault, so:
 The codebase carries Cartesian slip; cutde wants slip in the per-triangle
 strike/dip/tensile (TDCS) frame, so we rotate with
 ``compute_efcs_to_tdcs_rotations``.  Reconciled to the mollified DD kernel
-(no sign flip) at machine-vs-eps accuracy.
+(no sign flip) at machine-vs-eps accuracy: ``slip_cart`` is the Burgers
+vector b = u(+n) - u(-n), the same quantity a FAULT ``Patch.value`` holds,
+so a patch's value passes through unchanged.
 """
 from __future__ import annotations
 

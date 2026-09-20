@@ -50,7 +50,9 @@ COR_C = "#1f5fa6"     # cool -> corrected (elastic)
 REF_C = "0.25"        # cutde classical reference
 
 MU, NU = 30.0, 0.25                  # GPa, Poisson 1/4
-SLIP_MAG = 1.0e-3                    # km == 1 m, right-lateral strike-slip
+LAM = 2.0 * MU * NU / (1.0 - 2.0 * NU)   # the mbem drivers take (mu, lam)
+SLIP_MAG = 1.0e-3                    # km == 1 m; b = +SLIP_MAG s_hat = u(+n) - u(-n)
+#                                      (left-lateral on this n = +x, s_hat = +y fault)
 L, D = 50.0, 50.0                    # fault half-length and depth (km)
 TARGET_EDGE = 10.0                   # fault element size (km)
 EPS_LADDER = [4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625]   # km (center sweep)
@@ -61,14 +63,14 @@ GPA_TO_MPA = 1.0e3
 def dd_stress(obs, fault, slip, eps):
     """Total (raw) mollified slip->stress, (N,3,3), via the mbem assembler."""
     nt = fault.n_triangles
-    return _stress_from_source(obs, fault, slip, "dd", MU, NU,
+    return _stress_from_source(obs, fault, slip, "dd", MU, LAM,
                                np.full(nt, float(eps)))
 
 
 def eigenstress(obs, fault, slip, eps):
     """Exact finite-triangle anelastic eigenstress +C:eps_star, (N,3,3)."""
     nt = fault.n_triangles
-    return _stress_from_source(obs, fault, slip, "eigen", MU, NU,
+    return _stress_from_source(obs, fault, slip, "eigen", MU, LAM,
                                np.full(nt, float(eps)))
 
 

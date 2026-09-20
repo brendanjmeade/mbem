@@ -5,6 +5,8 @@ source, kernel) pair is stored ONCE as a material-basis PairCompressed;
 materials only enter through coefficient vectors. ``rebuild_for_materials``
 is therefore nearly free (the compressed geometry is shared), and the
 preconditioner refactorizes only its small dense diagonal blocks.
+P0 patches only (``la.hop.require_order0``); higher order is the dense
+backend's.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import numpy as np
 from .. import defaults
 from ..kernels import KERNEL_T, kernel_coeffs
 from ..kernels import basis as kb
-from ..la.hop import PairCompressed
+from ..la.hop import PairCompressed, require_order0
 from ..la.preconditioner import BlockGaussSeidel
 from ..la.solver import fgmres
 from ..model.equations import (BlockSystem, add_block_diagonal,
@@ -69,11 +71,14 @@ class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
                  jump: str = "calibrated", deflate: bool = False,
                  storage: str = "basis", _shared=None):
-        from .dense import require_anchor_or_deflate, warn_half_jump_eps
+        from .dense import (require_anchor_or_deflate,
+                            warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
+        require_order0(system.model)
         require_anchor_or_deflate(system, jump, deflate)
         warn_half_jump_eps(system, eps, jump)
+        warn_collocation_near_fault(system, eps)
         self.system = system
         self.layout = system.layout
         self.eps = eps
@@ -167,20 +172,20 @@ class AssembledH:
             mat = self.materials[region.name]
             coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
             pair = self._pairs.get((id(q), id(p), KERNEL_T))
-            S = np.zeros((q.n_triangles, 3, 3))
+            S = np.zeros((q.n_nodes, 3, 3))
             for k in range(3):
                 if pair is not None:
-                    const = np.zeros(3 * p.n_triangles)
+                    const = np.zeros(3 * p.n_nodes)
                     const[k::3] = 1.0
                     col = pair.matvec(coeffs, const)
                 else:
                     xq = arrays.field_points(q.mesh)
                     tv, nrm = arrays.source_arrays(p.mesh)
-                    dens = np.zeros((p.n_triangles, 3))
+                    dens = np.zeros((p.n_nodes, 3))
                     dens[:, k] = 1.0
                     col = tk.t_disp_contract(xq, tv, nrm, self.eps_for(p),
                                              dens, *coeffs).ravel()
-                S[:, :, k] = col.reshape(q.n_triangles, 3)
+                S[:, :, k] = col.reshape(q.n_nodes, 3)
             return S
 
         return calibrated_diagonal(self.system, rowsum)
@@ -231,7 +236,8 @@ class AssembledH:
               term.col.offset:term.col.stop] += term.scale * blk
             D = term_diagonal(term, self.calib)
             if D is not None:
-                add_block_diagonal(A, term.row.offset, term.col.offset, D)
+                add_block_diagonal(A, term.row.offset, term.col.offset, D,
+                                   term.field_patch.collocation_shape())
         return A
 
     # -- solve -------------------------------------------------------

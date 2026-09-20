@@ -20,32 +20,33 @@ few milliseconds. For
 
 the displacement discontinuity msd's fault source produces is
 
-    u(x + 0+ n) - u(x - 0+ n) = -Du
+    u(x + 0+ n) - u(x - 0+ n) = +Du
 
-(the fault enters as ``u = ... - sigma * H @ slip`` with sigma = +1), so
-the material on the +x side of the fault must move toward -y and the
-material on the -x side toward +y. Nothing in that sentence is read from
-the code; it is written out below as ``> 0`` / ``< 0`` and the four
-checks are:
+(``Patch.value`` is the Burgers vector: the fault enters as ``u = ... -
+sigma * H @ slip`` with sigma = FAULT_ORIENTATION = -1, and the density of
+H is the jump u(+n) - u(-n)), so the material on the +x side of the fault
+must move toward +y and the material on the -x side toward -y. Nothing in
+that sentence is read from the code; it is written out below as ``> 0`` /
+``< 0`` and the five checks are:
 
   [1] readout, displacement  ``evaluate_displacement``
-        u_y at (+d, 0, 0) < 0 < u_y at (-d, 0, 0), each |u_y| a sizeable
+        u_y at (+d, 0, 0) > 0 > u_y at (-d, 0, 0), each |u_y| a sizeable
         fraction of SLIP.
   [2] readout, stress (total)  ``evaluate_stress(subtract_anelastic=False)``
         ON the fault the smeared slip carries the anelastic eigenstress
         C:eps_star, and the fault term is -sigma*Sdd@slip, so its
-        divergent part is -sigma*C:eps_star: sigma_xy must be NEGATIVE.
-        Only the SIGN is asserted here; the (3/4) mu SLIP / eps blob-peak
-        magnitude window is applied to [3], not to [2].
+        divergent part is -sigma*C:eps_star = +C:eps_star: sigma_xy must
+        be POSITIVE. Only the SIGN is asserted here; the (3/4) mu SLIP /
+        eps blob-peak magnitude window is applied to [3], not to [2].
   [3] readout, stress (eigenstress branch)
-        subtracting the eigenstress must ADD +sigma*C:eps_star, i.e.
-        sigma_xy(elastic) - sigma_xy(total) must be POSITIVE and of the
-        same size -- this is the branch whose sign no self-consistency
-        check can see.
+        subtracting the eigenstress must add +sigma*C:eps_star, i.e.
+        REMOVE the positive blob: sigma_xy(elastic) - sigma_xy(total) must
+        be NEGATIVE and of the same size -- this is the branch whose sign
+        no self-consistency check can see.
   [4] solve  ``generate_system`` + dense LU
         a small box with five clamped faces and one free face, the fault
-        the ONLY source of load: the free face must move toward -y where
-        x > 0 and toward +y where x < 0. The fault RhsTerm is the entire
+        the ONLY source of load: the free face must move toward +y where
+        x > 0 and toward -y where x < 0. The fault RhsTerm is the entire
         right-hand side, so flipping its sign negates the whole solution
         and this check inverts.
   [5] readout, compressed  ``DisplacementEvaluator``
@@ -115,7 +116,7 @@ _OBS_D = 0.5               # km, |x| of the straddling observation points
 # -1, not a few percent. Measured values are quoted.
 _MIN_JUMP_FRAC = 0.05      # measured 0.237 of SLIP at |x| = 0.5
 _MAX_JUMP_FRAC = 1.00      # the jump cannot exceed the slip itself
-_EIGEN_LO, _EIGEN_HI = 0.5, 2.0   # x (3/4) mu SLIP / eps; measured 0.993
+_EIGEN_LO, _EIGEN_HI = 0.5, 2.0   # x (3/4) mu SLIP / eps; measured -0.993 (removed)
 
 STAGES = ("core", "stress", "compressed")
 _REQUIRES = {"stress": "core", "compressed": "core"}
@@ -147,8 +148,9 @@ def _fail(statement: str, measured: str) -> "FaultConventionError":
         f"  measured: {measured}\n"
         f"  For a fault with normal n = +x_hat carrying slip "
         f"Du = +{_SLIP} y_hat, msd's fault source gives the jump "
-        f"u(+n) - u(-n) = -Du, so the +x side moves toward -y and the -x "
-        f"side toward +y (verify/verify_solved_bvp.py, check A3).\n"
+        f"u(+n) - u(-n) = +Du (Patch.value is the Burgers vector), so the "
+        f"+x side moves toward +y and the -x side toward -y "
+        f"(verify/verify_solved_bvp.py, check A3).\n"
         f"  FAULT_ORIENTATION is the ONE place this convention is stated; "
         f"the solve (mbem/model/equations.py) and the readouts "
         f"(mbem/evaluate.py: evaluate_displacement, evaluate_stress, "
@@ -247,10 +249,10 @@ def _model(lam: float):
 def _assert_jump(who: str, u: np.ndarray):
     """Statement [1]: u[0] is at (+d,0,0), u[1] at (-d,0,0)."""
     u_plus, u_minus = float(u[0, 1]), float(u[1, 1])
-    if not (u_plus < 0.0 < u_minus):
+    if not (u_minus < 0.0 < u_plus):
         raise _fail(
-            f"{who}: with n = +x_hat and Du = +y_hat, u_y must be < 0 on "
-            f"the +x side and > 0 on the -x side",
+            f"{who}: with n = +x_hat and Du = +y_hat, u_y must be > 0 on "
+            f"the +x side and < 0 on the -x side",
             f"u_y(+x) = {u_plus:+.4e}, u_y(-x) = {u_minus:+.4e}")
     frac = 0.5 * (abs(u_plus) + abs(u_minus)) / _SLIP
     if not (_MIN_JUMP_FRAC < frac < _MAX_JUMP_FRAC):
@@ -292,10 +294,10 @@ def _check_core_at(_lam: float) -> dict:
     uy = sol["u:selfcheck_top"][:, 1]
     s_plus = float(uy[xc > 0.0].mean())
     s_minus = float(uy[xc < 0.0].mean())
-    if not (s_plus < 0.0 < s_minus):
+    if not (s_minus < 0.0 < s_plus):
         raise _fail(
             "generate_system + solve: on the free face the solved u_y must "
-            "be < 0 where x > 0 and > 0 where x < 0",
+            "be > 0 where x > 0 and < 0 where x < 0",
             f"u_y(free, x>0) = {s_plus:+.4e}, "
             f"u_y(free, x<0) = {s_minus:+.4e}")
 
@@ -325,16 +327,16 @@ def _check_stress_at(_lam: float) -> dict:
     blob = 0.75 * _MU * _SLIP / _EPS          # Cortez on-fault peak, > 0
     xy_tot = float(np.mean(s_tot[:, 0, 1]))
     xy_eig = float(np.mean(s_el[:, 0, 1] - s_tot[:, 0, 1]))
-    if not (xy_tot < 0.0):
+    if not (xy_tot > 0.0):
         raise _fail(
             "evaluate_stress(subtract_anelastic=False): the TOTAL on-fault "
-            "sigma_xy carries -C:eps_star and must be NEGATIVE",
+            "sigma_xy carries +C:eps_star and must be POSITIVE",
             f"sigma_xy = {xy_tot:+.4e} GPa "
-            f"(expected about {-blob:+.4e})")
-    if not (_EIGEN_LO * blob < xy_eig < _EIGEN_HI * blob):
+            f"(expected about {blob:+.4e})")
+    if not (-_EIGEN_HI * blob < xy_eig < -_EIGEN_LO * blob):
         raise _fail(
-            "evaluate_stress: subtracting the anelastic term must ADD "
-            "+C:eps_star to the on-fault sigma_xy, i.e. a POSITIVE change "
+            "evaluate_stress: subtracting the anelastic term must REMOVE "
+            "+C:eps_star from the on-fault sigma_xy, i.e. a NEGATIVE change "
             "of order (3/4) mu |Du| / eps",
             f"sigma_xy(elastic) - sigma_xy(total) = {xy_eig:+.4e} GPa, "
             f"(3/4) mu |Du| / eps = {blob:.4e} GPa")

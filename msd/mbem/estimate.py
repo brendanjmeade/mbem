@@ -18,6 +18,7 @@ from . import defaults
 from .kernels import kernel_n_basis
 from .kernels import basis as kb
 from .la.cluster import build_cluster_tree, build_partition
+from .la.hop import require_order0
 
 ASSUMED_BASIS_RANK = 40      # typical measured per-basis ACA rank
 
@@ -66,12 +67,12 @@ def estimate_memory(system, mode: str = "direct",
         if mode == "basis":
             for fp, sp, kern in _pair_keys(system).values():
                 B = kernel_n_basis(kern)
-                basis_bytes += B * (3 * fp.n_triangles) \
-                    * (3 * sp.n_triangles) * 8
+                basis_bytes += B * (3 * fp.n_nodes) * (3 * sp.n_nodes) * 8
         out["basis_bytes"] = basis_bytes
         out["total_bytes"] = a_bytes * 2 + basis_bytes
     elif mode == "hmat":
-        arrays = kb.MeshArrays()
+        require_order0(system.model)     # the trees below are on centroids:
+        arrays = kb.MeshArrays()         # a P1/P2 model would get P0's number
         tree_cache: dict = {}
 
         def _tree(mesh):

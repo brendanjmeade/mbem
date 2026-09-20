@@ -3,7 +3,8 @@ OUTSIDE the unit sphere, so the sharp Kelvin field is a homogeneous elastic
 solution inside, and the sphere BVP (Dirichlet: Kelvin u prescribed;
 Neumann: Kelvin traction prescribed) must reproduce it.
 
-Used by ``verify_boundary_eigenstress.py`` and ``verify_eps_auto.py``.
+Used by ``verify_boundary_eigenstress.py``, ``verify_eps_auto.py`` and
+``verify_nodal_solve.py``.
 Self-contained (own icosphere, own Kelvin formulas) so the msd gates do not
 depend on ``ddbem``.
 """
@@ -131,33 +132,40 @@ def material(nu):
 
 # ------------------------------------------------------------- models --
 def sphere_model(level, bc, nu, eps_over_h=0.3, value=None, fault=None,
-                 slip=None, jump=None, eps=None, return_asm=False):
+                 slip=None, jump=None, eps=None, return_asm=False, order=0,
+                 fault_order=0):
     """Kelvin BVP on the icosphere; returns (model, region, sol, eps_spec, h)
     (+ the AssembledDense when ``return_asm``).
 
     ``eps``: an explicit eps spec for the sphere patch (scalar, array or
     "auto"); by default ``eps_over_h * h``. ``jump``: defaults to "half" for
     Dirichlet and "calibrated" (+ deflate) for Neumann -- the choices the
-    near-boundary ladders were measured with.
+    near-boundary ladders were measured with. ``order``: the sphere patch's
+    Lagrange order; the Kelvin data are callables sampled at its nodes (the
+    displacement ``u(x)``, the traction ``sigma(x) . n`` with the element
+    normal ``Patch`` hands a two-argument callable); ``value`` overrides
+    either datum as ``Patch.value``.
     """
     mesh = icosphere(level)
     h = float(kb.element_sizes(mesh).mean())
-    c = mesh.centroids()
-    nrm, _ = mesh.normals_and_areas()
     if bc == "dirichlet":
-        val = kelvin_u(c, nu) if value is None else np.broadcast_to(value, c.shape)
-        patch = Patch("sphere", mesh, BCType.PRESCRIBED_DISPLACEMENT, value=val)
+        val = (lambda x: kelvin_u(x, nu)) if value is None else value
+        patch = Patch("sphere", mesh, BCType.PRESCRIBED_DISPLACEMENT,
+                      value=val, order=order)
         jump = "half" if jump is None else jump
         deflate = False
     else:
-        val = np.einsum("nij,nj->ni", kelvin_sigma(c, nu), nrm)
-        patch = Patch("sphere", mesh, BCType.FREE_TRACTION, value=val)
+        val = ((lambda x, n: np.einsum("nij,nj->ni", kelvin_sigma(x, nu), n))
+               if value is None else value)
+        patch = Patch("sphere", mesh, BCType.FREE_TRACTION, value=val,
+                      order=order)
         jump = "calibrated" if jump is None else jump
         deflate = jump == "calibrated"
     faults = []
     eps_spec = {"sphere": eps_over_h * h if eps is None else eps}
     if fault is not None:
-        faults = [Patch("fault", fault, BCType.FAULT, value=slip)]
+        faults = [Patch("fault", fault, BCType.FAULT, value=slip,
+                        order=fault_order)]
         eps_spec["fault"] = eps_over_h * float(kb.element_sizes(fault).mean())
     region = Region("body", material(nu), [patch], np.zeros(3), faults=faults)
     model = RegionModel([region])

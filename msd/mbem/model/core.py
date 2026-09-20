@@ -36,9 +36,27 @@ wrong. Runtime guard: ``mbem.selfcheck``.
 from __future__ import annotations
 
 import enum
+import inspect
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from .. import defaults
+from ..kernels.basis import lagrange_nodes, lagrange_shape, n_nodes
+
+
+def _call_value(fn, points, normals):
+    """``fn(points)``, or ``fn(points, normals)`` when ``fn`` takes two
+    required positional arguments (ddbem's convention): a traction datum
+    needs the element normal at every node, and the caller should not have
+    to rebuild the repeat-by-K itself. C callables count as one-argument."""
+    try:
+        n_pos = sum(1 for p in inspect.signature(fn).parameters.values()
+                    if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+                    and p.default is p.empty)
+    except (TypeError, ValueError):
+        n_pos = 1
+    return fn(points, normals) if n_pos >= 2 else fn(points)
 
 
 class BCType(enum.Enum):
@@ -51,36 +69,115 @@ class BCType(enum.Enum):
 # THE FAULT SIGN CONVENTION, stated once. A fault is interior to its region
 # (same material on both faces), so its sigma is a convention: every site
 # treats it as a prescribed boundary displacement with the one coefficient
-# -sigma. With +1 and n the stored normal, Patch.value = u(x - 0+ n) -
-# u(x + 0+ n) = -b, MINUS the Burgers vector b = u(+n) - u(-n) (ddbem/clq use
-# +b). -1 would be equally self-consistent; mbem.selfcheck pins +1.
-FAULT_ORIENTATION = +1
+# -sigma. With -1 that coefficient is +1 on the fault source and, n being
+# the stored normal, Patch.value = u(x + 0+ n) - u(x - 0+ n) = b, the
+# Burgers vector -- the same sign clq, ddbem and cutde use. +1 would be
+# equally self-consistent (value = -b); mbem.selfcheck pins -1 against
+# hardcoded physics.
+FAULT_ORIENTATION = -1
 
 
 @dataclass(eq=False)
 class Patch:
     """A named triangulated boundary piece with a boundary condition.
 
-    ``value`` is the prescribed quantity, broadcastable to (N_tri, 3):
-    traction for FREE_TRACTION, displacement for PRESCRIBED_DISPLACEMENT,
-    slip for FAULT: ``value = u(-n face) - u(+n face)`` with ``n`` the
-    stored normal. ``None`` means zeros. Patch identity (``is``) is what
-    links an INTERFACE patch shared by two regions — share the object.
+    ``value`` is the prescribed quantity: traction for FREE_TRACTION,
+    displacement for PRESCRIBED_DISPLACEMENT, slip for FAULT (the Burgers
+    vector ``value = b = u(+n face) - u(-n face)`` with ``n`` the stored
+    normal -- the sign clq and cutde use); ``None`` means zeros. It is a NODAL
+    density of the patch's Lagrange order: a (3,) constant, an (N_tri, 3)
+    per-element array (every node of the element), a (K N_tri, 3) nodal
+    array, or a callable sampled at the nodes -- ``f(points (M, 3)) -> (M, 3)``,
+    or ``f(points, normals)`` with the element normal at every node (a
+    traction datum). Patch identity (``is``) is what links an INTERFACE
+    patch shared by two regions -- share the object.
+
+    ``order`` in {0, 1, 2} (K = 1, 3, 6 nodes per element) sets the
+    DISCONTINUOUS nodal layout: row K s + k is node k of element s in the
+    kernels' node order (P0 centroid; P1 v1, v2, v3; P2 v1, v2, v3, m12, m23,
+    m31), matching the kernel column layout 3 (K s + k) + j. One collocation
+    point per node, pulled toward the centroid by
+    ``defaults.COLLOCATION_SHRINK_BY_ORDER`` (the basis does not move), so
+    the system stays square. At P0 the node IS the centroid.
     """
     name: str
     mesh: object              # TriMesh-compatible (vertices, triangles, ...)
     bc: BCType
-    value: np.ndarray | None = None
+    value: object = None
+    order: int = 0
+
+    def __post_init__(self):
+        if self.order != int(self.order):       # 1.5 must not truncate to P1
+            raise ValueError(f"patch '{self.name}': order must be an integer "
+                             f"0, 1 or 2 (got {self.order!r})")
+        self.order = int(self.order)
+        n_nodes(self.order)                     # raises unless 0, 1, 2
 
     @property
     def n_triangles(self) -> int:
         return self.mesh.n_triangles
 
+    @property
+    def n_nodes(self) -> int:
+        """K * N_tri: density rows / collocation points of the patch."""
+        return n_nodes(self.order) * self.mesh.n_triangles
+
+    def _points(self, lam) -> np.ndarray:
+        """Points (K N_tri, 3) at barycentric ``lam`` (K, 3) of every element,
+        element-major."""
+        tv = np.asarray(self.mesh.vertices, float)[np.asarray(self.mesh.triangles)]
+        return np.einsum("kv,svc->skc", lam, tv).reshape(-1, 3)
+
+    def nodes(self) -> np.ndarray:
+        """Node coordinates (K N_tri, 3); at P0 the mesh's own centroids."""
+        if self.order == 0:
+            return np.asarray(self.mesh.centroids(), float)
+        return self._points(lagrange_nodes(self.order))
+
+    def collocation_points(self) -> np.ndarray:
+        """Collocation points (K N_tri, 3): the nodes pulled toward the
+        centroid by ``COLLOCATION_SHRINK_BY_ORDER[order]``."""
+        t = defaults.COLLOCATION_SHRINK_BY_ORDER[self.order]
+        if t == 0.0:
+            return self.nodes()
+        return self._points(lagrange_nodes(self.order, t))
+
+    def collocation_shape(self) -> np.ndarray:
+        """N[kc, k] = N_k(x_c) (K, K): the shape functions at the collocation
+        points, which spread a row's free term over its element's nodes.
+        The identity at P0 and at shrink 0."""
+        t = defaults.COLLOCATION_SHRINK_BY_ORDER[self.order]
+        return lagrange_shape(self.order, lagrange_nodes(self.order, t))
+
     def value_array(self) -> np.ndarray:
-        v = np.zeros((self.n_triangles, 3)) if self.value is None \
-            else np.broadcast_to(np.asarray(self.value, dtype=float),
-                                 (self.n_triangles, 3))
+        """The prescribed value as a nodal density (K N_tri, 3) (docstring)."""
+        K = n_nodes(self.order)
+        if self.value is None:
+            return np.zeros((self.n_nodes, 3))
+        if callable(self.value):
+            normals, _ = self.mesh.normals_and_areas()
+            v = np.asarray(_call_value(self.value, self.nodes(),
+                                       np.repeat(normals, K, axis=0)), dtype=float)
+            if v.shape != (self.n_nodes, 3):
+                raise ValueError(
+                    f"patch '{self.name}': callable value returned {v.shape}, "
+                    f"expected {(self.n_nodes, 3)}")
+            return np.ascontiguousarray(v)
+        v = np.asarray(self.value, dtype=float)
+        if K > 1 and v.shape == (self.n_nodes, 3):
+            return np.ascontiguousarray(v)
+        v = np.broadcast_to(v, (self.n_triangles, 3))
+        if K > 1:
+            v = np.repeat(v, K, axis=0)
         return np.ascontiguousarray(v)
+
+    def collocation_values(self, nodal) -> np.ndarray:
+        """A nodal density (K N_tri, 3) interpolated to the collocation
+        points, ``sum_k N[kc, k] v[s, k]`` -- what the free term multiplies."""
+        K = n_nodes(self.order)
+        v = np.asarray(nodal, float).reshape(self.n_triangles, K, 3)
+        return np.einsum("ck,skj->scj", self.collocation_shape(),
+                         v).reshape(-1, 3)
 
 
 @dataclass(eq=False)

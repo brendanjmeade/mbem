@@ -5,6 +5,10 @@ regions in model order; within a region, patches in declaration order,
 skipping patches already emitted; FREE_TRACTION emits its u-slot,
 PRESCRIBED_DISPLACEMENT emits its t-slot, INTERFACE emits u then t.
 
+A slot holds the patch's nodal density, 3 * n_nodes entries (element-major,
+K nodes per element); a patch's rows are its K N_tri collocation points, so
+the system is square at every order.
+
 Row assignment: the BIE of region R collocated on patch q lands on
   * q's u-slot if q is FREE_TRACTION,
   * q's t-slot if q is PRESCRIBED_DISPLACEMENT,
@@ -25,7 +29,7 @@ class Slot:
     patch: Patch
     kind: str          # "u" | "t"
     offset: int
-    size: int          # 3 * n_triangles
+    size: int          # 3 * patch.n_nodes (K nodes per element)
 
     @property
     def name(self) -> str:
@@ -55,7 +59,7 @@ class UnknownLayout:
                     BCType.INTERFACE: ("u", "t"),
                 }[patch.bc]
                 for kind in kinds:
-                    slot = Slot(patch, kind, offset, 3 * patch.n_triangles)
+                    slot = Slot(patch, kind, offset, 3 * patch.n_nodes)
                     self.slots.append(slot)
                     self._by_key[(id(patch), kind)] = slot
                     offset += slot.size

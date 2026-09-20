@@ -68,9 +68,9 @@ def _region(model: RegionModel, region: Region | str) -> Region:
 
 
 def _density(patch, kind: str, solution: dict) -> np.ndarray:
-    """The (N,3) density of ``kind`` on a patch: ``"u"`` / ``"t"`` is the
-    prescribed value when the BC fixes it, else the solved slot;
-    ``"slip"`` is a fault's value."""
+    """The nodal (K N,3) density of ``kind`` on a patch (``patch.order``):
+    ``"u"`` / ``"t"`` is the prescribed value when the BC fixes it, else the
+    solved slot; ``"slip"`` is a fault's value."""
     if kind == "slip":
         return patch.value_array()
     fixed = {"u": BCType.PRESCRIBED_DISPLACEMENT,
@@ -114,25 +114,27 @@ def _warn_near_boundary(points, region):
             f"d/h = 0.25 measured); refine the patch or evaluate deeper")
 
 
-def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr):
+def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr,
+                      order: int = 0):
     """Displacement (N,3) at ``points`` from a triangulated source
-    carrying a per-triangle ``density`` (N_src,3), via the matrix-free
-    numba contraction drivers (``t_disp_contract`` / ``u_disp_contract``)
-    -- O(N_obs) memory at any source count; the (3N_obs, 3N_src)
-    influence matrix is never materialized.
+    carrying a nodal ``density`` (K N_src,3) of Lagrange ``order``, via the
+    matrix-free numba contraction drivers (``t_disp_contract`` /
+    ``u_disp_contract``) -- O(N_obs) memory at any source count; the
+    (3N_obs, 3K N_src) influence matrix is never materialized.
     """
-    from .kernels import tri_kernels as tk
+    from .kernels import tri_nodal as tn
 
     tri_verts, normals = kb._source_arrays(src_mesh)
     density = np.ascontiguousarray(np.asarray(density, float).reshape(-1, 3))
     points = np.ascontiguousarray(np.asarray(points, float))
     if kernel == KERNEL_T:
         c = kb.t_coeffs(material.mu, material.lam)
-        return tk.t_disp_contract(points, tri_verts, normals, eps_arr,
-                                  density, *c)
+        return tn.t_disp_contract(points, tri_verts, normals, eps_arr,
+                                  density, *c, order)
     if kernel == KERNEL_U:
         g = kb.u_coeffs(material.mu, material.lam)
-        return tk.u_disp_contract(points, tri_verts, eps_arr, density, *g)
+        return tn.u_disp_contract(points, tri_verts, eps_arr, density, *g,
+                                  order)
     raise ValueError(f"unknown kernel {kernel!r}; expected one of {KERNELS}")
 
 
@@ -157,11 +159,13 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
         u_p = _density(p, "u", solution)
         if np.any(u_p):
             u -= sigma * _disp_from_source(points, p.mesh, u_p, KERNEL_T,
-                                           mat, kb.resolve_patch_eps(eps, p))
+                                           mat, kb.resolve_patch_eps(eps, p),
+                                           p.order)
         t_p = _density(p, "t", solution)
         if np.any(t_p):
             u += sigma * _disp_from_source(points, p.mesh, t_p, KERNEL_U,
-                                           mat, kb.resolve_patch_eps(eps, p))
+                                           mat, kb.resolve_patch_eps(eps, p),
+                                           p.order)
 
     # Faults carry an orientation too (FAULT_ORIENTATION), so this is
     # literally the u_p branch above with sigma supplied by the same
@@ -171,14 +175,17 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
         slip = _density(f, "slip", solution)
         if np.any(slip):
             u -= sigma * _disp_from_source(points, f.mesh, slip, KERNEL_T,
-                                           mat, kb.resolve_patch_eps(eps, f))
+                                           mat, kb.resolve_patch_eps(eps, f),
+                                           f.order)
 
     return u
 
 
-def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
+def _stress_from_source(points, src_mesh, density, kernel, mu, lam, eps_arr,
+                        order: int = 0):
     """Stress (N,3,3) at ``points`` from a triangulated source ``src_mesh``
-    carrying a per-triangle ``density`` (N_src,3).
+    carrying a nodal ``density`` (K N_src,3) of Lagrange ``order``; material
+    as ``(mu, lam)`` (rule 7).
 
     ``kernel="dd"`` uses the displacement-discontinuity stress kernel
     (slip / boundary displacement -> stress); ``kernel="force"`` uses the
@@ -194,9 +201,8 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
     ``verify/verify_eigenstress_exact.py``) while parallelising over
     observation points. All three take a PER-ELEMENT ``eps_arr``.
     """
-    from .kernels.tri_kernels import (dd_stress_contract,
-                                      eigenstress_contract,
-                                      kelvin_stress_contract)
+    from .kernels.tri_nodal import (dd_stress_contract, eigenstress_contract,
+                                    kelvin_stress_contract)
 
     verts = np.ascontiguousarray(
         np.asarray(src_mesh.vertices, float)[np.asarray(src_mesh.triangles)])
@@ -209,17 +215,18 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, nu, eps_arr):
         normals = np.ascontiguousarray(np.asarray(normals, float))
         if kernel == "eigen":
             return eigenstress_contract(points, verts, normals, eps_arr,
-                                        density, mu, nu)
+                                        density, mu, lam, order)
         return dd_stress_contract(points, verts, normals, eps_arr,
-                                  density, mu, nu)
+                                  density, mu, lam, order)
     elif kernel == "force":
-        return kelvin_stress_contract(points, verts, eps_arr, density, mu, nu)
+        return kelvin_stress_contract(points, verts, eps_arr, density, mu, lam,
+                                      order)
     raise ValueError(f"unknown stress kernel {kernel!r}; "
                      f"expected 'dd', 'force' or 'eigen'")
 
 
-def _double_layer_stress(points, src_mesh, jump, sigma, mu, nu, eps_arr,
-                         subtract_anelastic):
+def _double_layer_stress(points, src_mesh, jump, sigma, mu, lam, eps_arr,
+                         subtract_anelastic, order: int = 0):
     """``-sigma * Sdd @ jump`` for one mollified double layer (boundary
     ``u_p`` or fault ``slip``); with ``subtract_anelastic`` its divergent
     on-surface part ``-sigma * C:eps_star`` is removed by adding
@@ -228,10 +235,10 @@ def _double_layer_stress(points, src_mesh, jump, sigma, mu, nu, eps_arr,
     eps -> 0 (``verify_eigenstress_exact.py`` [e]).
     """
     sig = -sigma * _stress_from_source(points, src_mesh, jump, "dd",
-                                       mu, nu, eps_arr)
+                                       mu, lam, eps_arr, order)
     if subtract_anelastic:
         sig += sigma * _stress_from_source(points, src_mesh, jump, "eigen",
-                                           mu, nu, eps_arr)
+                                           mu, lam, eps_arr, order)
     return sig
 
 
@@ -260,7 +267,8 @@ class DisplacementEvaluator:
     solutions / materials at matvec cost. Worth building only for
     REPEATED evaluation on the same grid (Laplace sweeps, time series);
     one-shot maps are cheaper through ``evaluate_displacement`` (the
-    matrix-free contraction kernels).
+    matrix-free contraction kernels). P0 patches only
+    (``la.hop.require_order0``).
     """
 
     def __init__(self, model: RegionModel, region: Region | str,
@@ -268,6 +276,8 @@ class DisplacementEvaluator:
                  tol: float = None, n_workers: int | None = None,
                  warn_near: bool = True):
         from . import defaults
+        from .la.hop import PairCompressed, require_order0
+        require_order0(model)
         region = _region(model, region)
         if region.faults:
             ensure_fault_convention("compressed")
@@ -278,7 +288,6 @@ class DisplacementEvaluator:
         self.cloud = PointCloud(points)
         tol = defaults.BLOCK_COMPRESSION_TOL if tol is None else tol
 
-        from .la.hop import PairCompressed
         arrays = kb.MeshArrays()
         tree_cache: dict = {}
 
@@ -351,22 +360,22 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     sig = np.zeros((points.shape[0], 3, 3))
 
     mat = region.material
-    mu, nu = mat.mu, mat.nu
+    mu, lam = mat.mu, mat.lam
     for p in region.patches:
         sigma = float(model.orientation(region, p))
         # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
         # the boundary u_p is a jump exactly as a fault slip is.
         u_p = _density(p, "u", solution)
         if np.any(u_p):
-            sig += _double_layer_stress(points, p.mesh, u_p, sigma, mu, nu,
+            sig += _double_layer_stress(points, p.mesh, u_p, sigma, mu, lam,
                                         kb.resolve_patch_eps(eps, p),
-                                        subtract_anelastic)
+                                        subtract_anelastic, p.order)
         # t_p term (single layer): + sigma * SG @ t_p
         t_p = _density(p, "t", solution)
         if np.any(t_p):
             sig += sigma * _stress_from_source(
-                points, p.mesh, t_p, "force", mu, nu,
-                kb.resolve_patch_eps(eps, p))
+                points, p.mesh, t_p, "force", mu, lam,
+                kb.resolve_patch_eps(eps, p), p.order)
 
     # As in evaluate_displacement: the fault term is the u_p branch with
     # sigma = FAULT_ORIENTATION through the same accessor and the same
@@ -375,8 +384,8 @@ def evaluate_stress(model: RegionModel, region: Region | str,
         sigma = float(model.orientation(region, f))
         slip = _density(f, "slip", solution)
         if np.any(slip):
-            sig += _double_layer_stress(points, f.mesh, slip, sigma, mu, nu,
+            sig += _double_layer_stress(points, f.mesh, slip, sigma, mu, lam,
                                         kb.resolve_patch_eps(eps, f),
-                                        subtract_anelastic)
+                                        subtract_anelastic, f.order)
 
     return sig

@@ -15,12 +15,27 @@ independent reference is cutde's half-space triangular dislocation
       ladder, then the production spec eps="auto") and lands
       on the half-space value (to box-truncation accuracy);
   (b) the down-dip on-fault elastic shear profile at the production eps
-      matches the half-space dislocation; the full-space TDE is drawn too, so
-      the gap between them is the free-surface contribution the BEM captures.
+      matches the half-space dislocation, FIRST ELEMENT ROW INCLUDED; the
+      full-space TDE is drawn too, so the gap between them is the free-surface
+      contribution the BEM captures.
 
-The mbem fault (-H@slip) and cutde's TDE use OPPOSITE slip-sign conventions, so
-the reference is sign-aligned to the BEM with a global g = +-1 measured at one
-off-fault point.  eps must be small relative to the fault (so the planar-fault
+The free surface is a P1 (linear nodal) patch, ``build_model(order_top=1)``.
+A P0 top cannot follow the slope of the surface displacement at the trace,
+and the first element row of on-fault stress below it is tens of percent high
+(the error is amplified by the image/total ratio ~D/2z), so panel (b) draws
+the P0-top production solve as well. Measured on this box at eps="auto"
+(rel. to the half space; verify_solved_bvp A4 gates the same on the 200-km
+box): the mid-strike first-row centroid 1.12 km deep goes from +3.9 % (P0)
+to +0.7 % (P1); the two at 0.54 and 0.58 km -- 2.7-2.9 eps_top below the
+surface, inside the top patch's own mollification band -- go from +49-65 %
+to +25-35 %, and reach +/-0.7 % only at eps_top = 0.025 h_top (the row is
+eps_top-limited there, not order-limited: P2 changes nothing). The deepest
+element row is still dropped from (b): the tip stress concentration there is
+resolution-limited in every method (BEM and TDE).
+
+The mbem fault and cutde's TDE carry the same Burgers vector b = u(+n) - u(-n)
+(a fault's Patch.value), so the reference is fed the model's own slip and
+compared directly.  eps must be small relative to the fault (so the planar-fault
 eigenstress marginal is valid and the fault interior is many eps from the free
 surface) -- the opposite regime to a free-surface displacement plot.
 
@@ -54,7 +69,8 @@ try:
 except Exception:
     pass
 
-BEM_C = "#1f5fa6"     # cool -> BEM elastic
+BEM_C = "#1f5fa6"     # cool -> BEM elastic (P1 top, production)
+P0_C = "#9ecae1"      # light blue -> BEM elastic with a P0 top (panel b only)
 HS_C = "#117733"      # green -> half-space reference
 FS_C = "0.45"         # gray -> full-space reference
 
@@ -80,17 +96,22 @@ def main():
         edge_far=60.0, edge_side=60.0, near_field_radius=60.0)
     n_hat = np.asarray(meshes["n_hat"], float)
     s_hat = np.asarray(meshes["s_hat"], float)
-    slip_vec = SLIP_MAG * s_hat
     fault = meshes["fault"]
 
-    model = build_model(meshes, SLIP_MAG, MAT)
+    # Production model: P1 top. The P0-top model is solved once, at the
+    # production eps, for the first-row contrast in panel (b).
+    model = build_model(meshes, SLIP_MAG, MAT, order_top=1)
+    model_p0 = build_model(meshes, SLIP_MAG, MAT, order_top=0)
     system = generate_system(model)
+    system_p0 = generate_system(model_p0)
     region = model.regions[0]
+    b = region.faults[0].value_array()       # the model's Burgers vector (nt, 3)
     nt = {k: meshes[k].n_triangles for k in ("top", "sides", "base", "fault")}
-    print(f"meshes: {nt}; unknowns: {system.layout.n_unknowns}", flush=True)
+    print(f"meshes: {nt}; unknowns: {system.layout.n_unknowns} (P1 top), "
+          f"{system_p0.layout.n_unknowns} (P0 top)", flush=True)
 
     def ref_shear(obs, halfspace):
-        sig = classical_tde_stress(obs, fault, slip_vec, MAT.mu, MAT.nu,
+        sig = classical_tde_stress(obs, fault, b, MAT.mu, MAT.nu,
                                    halfspace=halfspace)
         return resolved_shear(sig, n_hat, s_hat) * GPA_TO_MPA
 
@@ -99,29 +120,20 @@ def main():
     cz = c[:, 2]
     target = np.array([0.0, 0.0, -0.5 * FAULT_DEPTH])
     center = c[int(np.argmin(np.linalg.norm(c - target, axis=1)))][None]
-    # Down-dip line at mid-strike, INTERIOR only: drop the shallowest and
-    # deepest element rows, where the tip stress concentration + the
-    # surface-breaking edge are resolution-limited in every method.
+    # Down-dip line at mid-strike, first element row INCLUDED (docstring);
+    # only the deepest element row is dropped, where the tip stress
+    # concentration is resolution-limited in every method.
     margin = 1.5 * EDGE_FAULT
-    band = (np.abs(c[:, 1]) < EDGE_FAULT) & (cz < -margin) \
-        & (cz > -(FAULT_DEPTH - margin))
+    band = (np.abs(c[:, 1]) < EDGE_FAULT) & (cz > -(FAULT_DEPTH - margin))
     dd_idx = np.where(band)[0]
     dd_idx = dd_idx[np.argsort(cz[dd_idx])]
     dd = c[dd_idx]
+    tv = np.asarray(fault.vertices, float)[np.asarray(fault.triangles)]
+    first_row = tv[dd_idx][:, :, 2].max(axis=1) > -1e-9   # a vertex on z = 0
 
-    # Reconcile the BEM<->cutde slip-sign convention at one off-fault point.
-    off = np.array([[15.0, 6.0, -28.0]])
     eps_prod = "auto"
     eps_f_prod = float(kb.resolve_patch_eps(eps_prod, region.faults[0])[0])
-    asm0 = AssembledDense(system, eps_prod, "direct", jump="calibrated")
-    sol0 = asm0.solve()
-    ev_off = resolved_shear(evaluate_stress(model, region, sol0, off, eps_prod,
-                                            subtract_anelastic=True),
-                            n_hat, s_hat)[0] * GPA_TO_MPA
-    g = float(np.sign(ev_off * ref_shear(off, True)[0]))
-    print(f"  slip-sign reconciliation: g = {g:+.0f}", flush=True)
-
-    hs_center = g * ref_shear(center, True)[0]
+    hs_center = ref_shear(center, True)[0]
 
     # ---- (a) eps sweep: BEM on-fault elastic shear at the center ----
     # (spec, fault eps for the axis): the scalar ladder, then eps="auto".
@@ -146,14 +158,30 @@ def main():
           f"{abs(tau_center[-1] - hs_center):.3e} MPa "
           f"({abs(tau_center[-1]/hs_center - 1)*100:.1f} %)\n")
 
-    # ---- (b) down-dip profile at the production eps (the last rung's sol) --
+    # ---- (b) down-dip profile at the production eps (the last rung's sol),
+    # and the P0-top solve at the same eps for the first-row contrast. The
+    # first row sits inside the near-boundary band by construction, so the
+    # evaluator's near-boundary warning is switched off here.
     eps_f = eps_f_prod
     sig_dd = evaluate_stress(model, region, sol, dd, eps_prod,
-                             subtract_anelastic=True)
+                             subtract_anelastic=True, warn_near=False)
     tau_dd = resolved_shear(sig_dd, n_hat, s_hat) * GPA_TO_MPA
-    tau_hs = g * ref_shear(dd, True)
-    tau_fs = g * ref_shear(dd, False)
+    t0 = time.time()
+    sol_p0 = AssembledDense(system_p0, eps_prod, "direct",
+                            jump="calibrated").solve()
+    sig_p0 = evaluate_stress(model_p0, model_p0.regions[0], sol_p0, dd,
+                             eps_prod, subtract_anelastic=True, warn_near=False)
+    tau_p0 = resolved_shear(sig_p0, n_hat, s_hat) * GPA_TO_MPA
+    print(f"    P0-top solve at eps=auto: {time.time() - t0:.0f}s")
+    tau_hs = ref_shear(dd, True)
+    tau_fs = ref_shear(dd, False)
     depth = -dd[:, 2]
+    print("\n  first element row at mid-strike (MPa): depth, half-space, "
+          "P0 top, P1 top")
+    for i in np.where(first_row)[0]:
+        print(f"    {depth[i]:5.2f} km  {tau_hs[i]:8.4f}  "
+              f"{tau_p0[i]:8.4f} ({tau_p0[i] / tau_hs[i] - 1:+.1%})  "
+              f"{tau_dd[i]:8.4f} ({tau_dd[i] / tau_hs[i] - 1:+.1%})")
 
     # ------------------------------ figure ---------------------------------
     fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(8.6, 4.3))
@@ -179,14 +207,17 @@ def main():
 
     ax1.plot(tau_fs, depth, ":", color=FS_C, lw=1.4, label="full-space TDE")
     ax1.plot(tau_hs, depth, "--", color=HS_C, lw=1.4, label="half-space TDE")
+    ax1.plot(tau_p0, depth, "s-", color=P0_C, lw=1.0, ms=3.5, mfc="none",
+             label="BEM, P0 top")
     ax1.plot(tau_dd, depth, "o-", color=BEM_C, lw=1.3, ms=3.5,
-             label=fr"BEM ($\varepsilon={eps_f:.2g}$)")
+             label=fr"BEM, P1 top ($\varepsilon={eps_f:.2g}$)")
     ax1.invert_yaxis()
     ax1.set_xlabel(r"on-fault shear $\tau$ (MPa)")
     ax1.set_ylabel(r"depth (km)")
     ax1.set_box_aspect(1)
     ax1.legend(frameon=False, fontsize=8, loc="best")
-    ax1.text(0.04, 0.96, "b", transform=ax1.transAxes, ha="left", va="top")
+    # top-right: the first element row now occupies the top-left corner
+    ax1.text(0.96, 0.96, "b", transform=ax1.transAxes, ha="right", va="top")
 
     fig.suptitle(r"BEM on-fault elastic stress: converges in $\varepsilon$ and "
                  r"matches the half-space dislocation", fontsize=10.5, y=0.99)

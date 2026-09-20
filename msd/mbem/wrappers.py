@@ -13,6 +13,8 @@ from .model import BCType, Patch, Region, RegionModel
 
 
 def _slip_value(fault_mesh, fault_slip_vector, slip_magnitude) -> np.ndarray:
+    """``slip_magnitude * fault_slip_vector`` IS the Burgers vector
+    b = u(+n) - u(-n) of the fault (Patch.value); no hidden sign."""
     v = slip_magnitude * np.asarray(fault_slip_vector, dtype=float)
     return np.broadcast_to(v, (fault_mesh.n_triangles, 3))
 

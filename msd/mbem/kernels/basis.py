@@ -1,4 +1,4 @@
-"""Material-basis assembly API.
+"""Material-basis assembly API, eps resolution, Lagrange element nodes.
 
 The mollified Kelvin U/T influence matrices decompose exactly as
 
@@ -8,6 +8,8 @@ with GEOMETRY-ONLY basis matrices B_k (3 for the U kernel, 6 for the T
 kernel; eps^2 is baked into the relevant B_k). Assemble the basis once
 per (field mesh, source mesh, eps) and recombine for every region
 material. Materials are real; both backends allocate real accumulators.
+The source density of every block is Lagrange nodal of the source patch's
+``order`` (P0/P1/P2); the field side is any point set.
 
 BINDING RULES (from the approved plan's cross-review):
   * coefficients are computed from (mu, lam) directly — NEVER via a
@@ -24,7 +26,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from .. import defaults
-from . import tri_kernels as tk
+from . import tri_nodal as tn
+from .tri_nodal import n_nodes                                     # noqa: F401
 
 
 # ---------------------------------------------------------------------
@@ -89,7 +92,8 @@ class MeshArrays:
 
     TriMesh recomputes centroids()/normals_and_areas() on every call, and
     one assembly requests the same mesh's arrays once per block it appears
-    in (~2x the patch count). This memo computes them once per mesh.
+    in (~2x the patch count). This memo computes them once per mesh, and a
+    patch's collocation points once per patch.
 
     Scope rule (why this is NOT a module-level cache): TriMesh is an
     unhashable dataclass keyed here by id(), and
@@ -102,6 +106,7 @@ class MeshArrays:
     def __init__(self):
         self._src: dict[int, tuple] = {}
         self._pts: dict[int, np.ndarray] = {}
+        self._coll: dict[int, np.ndarray] = {}
 
     def source_arrays(self, mesh_source):
         key = id(mesh_source)
@@ -120,6 +125,53 @@ class MeshArrays:
             v = _field_points(mesh_or_points)
             self._pts[key] = v
         return v
+
+    def collocation_points(self, patch):
+        """``patch.collocation_points()`` (K N_tri, 3), once per patch."""
+        key = id(patch)
+        v = self._coll.get(key)
+        if v is None:
+            v = np.ascontiguousarray(patch.collocation_points())
+            self._coll[key] = v
+        return v
+
+
+# ---------------------------------------------------------------------
+# Lagrange element nodes and shape functions, in tri_nodal's node order
+# (p = 0 centroid; p = 1 v1, v2, v3; p = 2 v1, v2, v3, m12, m23, m31), so
+# node k of element s is density row K * s + k and column 3 (K s + k) + j.
+# ---------------------------------------------------------------------
+
+def lagrange_nodes(order: int, shrink: float = 0.0) -> np.ndarray:
+    """Barycentric coordinates (K, 3) of the nodes; ``shrink`` = t pulls each
+    toward the centroid, ``lam = (1 - t) lam_node + t / 3`` (a collocation
+    point; the basis itself never moves)."""
+    K = n_nodes(order)
+    if order == 0:
+        lam = np.full((1, 3), 1.0 / 3.0)
+    elif order == 1:
+        lam = np.eye(3)
+    else:
+        lam = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+                        [0.5, 0.5, 0.0], [0.0, 0.5, 0.5], [0.5, 0.0, 0.5]])
+    t = float(shrink)
+    if t:
+        lam = (1.0 - t) * lam + t / 3.0
+    assert lam.shape == (K, 3)
+    return lam
+
+
+def lagrange_shape(order: int, lam) -> np.ndarray:
+    """Shape functions N_k (M, K) at barycentric points ``lam`` (M, 3)."""
+    lam = np.atleast_2d(np.asarray(lam, float))
+    l1, l2, l3 = lam[:, 0], lam[:, 1], lam[:, 2]
+    if n_nodes(order) == 1:
+        return np.ones((lam.shape[0], 1))
+    if order == 1:
+        return np.stack([l1, l2, l3], axis=1)
+    return np.stack([l1 * (2.0 * l1 - 1.0), l2 * (2.0 * l2 - 1.0),
+                     l3 * (2.0 * l3 - 1.0),
+                     4.0 * l1 * l2, 4.0 * l2 * l3, 4.0 * l3 * l1], axis=1)
 
 
 def as_eps_array(eps, n_source: int) -> np.ndarray:
@@ -196,7 +248,7 @@ def resolve_patch_eps(spec, patch) -> np.ndarray:
 
 @dataclass
 class UBasis:
-    """Geometry-only U-kernel basis stack, shape (3, 3*N_f, 3*N_s)."""
+    """Geometry-only U-kernel basis stack, shape (3, 3*N_f, 3*K*N_s)."""
     stack: np.ndarray
 
     def combine(self, material=None, mu=None, lam=None) -> np.ndarray:
@@ -209,7 +261,7 @@ class UBasis:
 
 @dataclass
 class TBasis:
-    """Geometry-only T-kernel basis stack, shape (6, 3*N_f, 3*N_s)."""
+    """Geometry-only T-kernel basis stack, shape (6, 3*N_f, 3*K*N_s)."""
     stack: np.ndarray
 
     def combine(self, material=None, mu=None, lam=None) -> np.ndarray:
@@ -221,44 +273,46 @@ class TBasis:
 
 
 # ---------------------------------------------------------------------
-# Assembly entry points
+# Assembly entry points. ``order`` is the source density's Lagrange order
+# (0, 1, 2; columns 3*(K*s + k) + j, K = n_nodes(order)); order 0 is
+# tri_kernels' P0 code, higher orders tri_nodal's.
 # ---------------------------------------------------------------------
 
 def assemble_u_basis(mesh_field, mesh_source, eps,
-                     arrays: MeshArrays | None = None) -> UBasis:
+                     arrays: MeshArrays | None = None, order: int = 0) -> UBasis:
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, _ = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
-    return UBasis(tk.u_basis_matrices(x_field, tri_verts, eps_arr))
+    return UBasis(tn.u_basis_matrices(x_field, tri_verts, eps_arr, order))
 
 
 def assemble_t_basis(mesh_field, mesh_source, eps,
-                     arrays: MeshArrays | None = None) -> TBasis:
+                     arrays: MeshArrays | None = None, order: int = 0) -> TBasis:
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, normals = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
-    return TBasis(tk.t_basis_matrices(x_field, tri_verts, normals, eps_arr))
+    return TBasis(tn.t_basis_matrices(x_field, tri_verts, normals, eps_arr, order))
 
 
 def assemble_u_matrix(mesh_field, mesh_source, material, eps,
-                      arrays: MeshArrays | None = None) -> np.ndarray:
+                      arrays: MeshArrays | None = None, order: int = 0) -> np.ndarray:
     """One-shot real-material U matrix (coefficients applied in-loop)."""
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, _ = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
     g1, g2, g3 = u_coeffs(material.mu, material.lam)
-    return tk.u_matrix_direct(x_field, tri_verts, eps_arr, g1, g2, g3)
+    return tn.u_matrix_direct(x_field, tri_verts, eps_arr, g1, g2, g3, order)
 
 
 def assemble_t_matrix(mesh_field, mesh_source, material, eps,
-                      arrays: MeshArrays | None = None) -> np.ndarray:
+                      arrays: MeshArrays | None = None, order: int = 0) -> np.ndarray:
     """One-shot real-material T matrix (coefficients applied in-loop)."""
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, normals = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
     c = t_coeffs(material.mu, material.lam)
-    return tk.t_matrix_direct(x_field, tri_verts, normals, eps_arr, *c)
+    return tn.t_matrix_direct(x_field, tri_verts, normals, eps_arr, *c, order)

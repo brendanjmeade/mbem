@@ -45,7 +45,9 @@ RAW_C = "#c1272d"     # warm  -> raw (with anelastic term)
 COR_C = "#1f5fa6"     # cool  -> corrected (elastic only)
 
 MU, NU = 30.0, 0.25                 # GPa, Poisson 1/4
-SLIP_MAG = 1.0e-3                   # km == 1 m, right-lateral strike-slip
+LAM = 2.0 * MU * NU / (1.0 - 2.0 * NU)   # the mbem drivers take (mu, lam)
+SLIP_MAG = 1.0e-3                   # km == 1 m; b = +SLIP_MAG s_hat = u(+n) - u(-n)
+#                                     (left-lateral on this n = +x, s_hat = +y fault)
 L, D = 50.0, 50.0                   # fault half-length and depth (km)
 EPS_LADDER = [2.0, 1.0, 0.5, 0.25, 0.125]   # km
 GPA_TO_MPA = 1.0e3
@@ -84,7 +86,7 @@ def main():
     for eps in EPS_LADDER:
         sig_raw = fault_stress(obs, fault, slip_cart, MU, NU, eps)
         sig_cor = sig_raw - _stress_from_source(
-            obs, fault, slip_tri, "eigen", MU, NU, np.full(fault.n_triangles, eps))
+            obs, fault, slip_tri, "eigen", MU, LAM, np.full(fault.n_triangles, eps))
         sxy_raw = sig_raw[:, 0, 1] * GPA_TO_MPA
         sxy_cor = sig_cor[:, 0, 1] * GPA_TO_MPA
         pk_raw, pk_cor = float(np.max(np.abs(sxy_raw))), float(np.max(np.abs(sxy_cor)))

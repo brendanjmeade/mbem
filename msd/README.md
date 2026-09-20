@@ -18,11 +18,20 @@ kernel, the triangular displacement-discontinuity solution, the `mbem` BEM
 solver (region model + calibrated dense backend), and worked examples.  There is
 **no half-space / Mindlin code, no viscoelasticity, and no LaTeX** here.
 
+Boundary patches and faults carry a piecewise-constant (P0) density by default
+or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
+collocation at the shrunk element nodes, the free term a shape-function matrix,
+kernels integrated in closed form for every order (`mbem/kernels/tri_nodal.py`,
+gated against the frozen `../clq` oracle).  Higher order pays on traction
+(Neumann) rows and is the cure for the first element row of on-fault stress
+below a free surface (beyond ~3-5 eps_top; `verify/verify_solved_bvp.py` A4);
+the compressed backend is P0-only.
+
 ## The anelastic (eigenstrain) term
 
-A fault's `Patch.value` is `u(-n face) - u(+n face)` for stored normal `n`, the
-negative of the conventional Burgers vector; ddbem/clq use the conventional
-sign, so their slip = -(msd slip).
+A fault's `Patch.value` is the Burgers vector `b = u(+n face) - u(-n face)` for
+stored normal `n`, the same sign clq and cutde use (`mbem/selfcheck.py` pins it
+at runtime).
 
 A fault slip is an **anelastic** (inelastic / eigen-) strain.  Stress read off a
 mollified slip source is therefore the *total* stress `C:eps_total =
@@ -114,6 +123,8 @@ python verify/verify_dense_backend.py              # dense assembly invariants (
 python verify/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, BJ rung)
 python verify/verify_eps_auto.py                   # eps="auto" (0.1 h): kernel order-2 convergence, solved-BVP accuracy vs Kelvin, half-jump guard
 python verify/verify_deflation_estimate.py         # all-Neumann rigid-body deflation; memory estimator
+python verify/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
+python verify/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals
 ```
 
 ## Scaling

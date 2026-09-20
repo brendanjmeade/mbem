@@ -24,6 +24,8 @@ Diagonal solves form a two-rung ladder:
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
@@ -123,10 +125,17 @@ class _SuperBlock:
             off += s.size
         self.solve_fn = None
         self.lower_terms = []   # terms with col in an earlier super-block
+        self.rung = None        # "dense_lu" | "hodlr" | "block_jacobi"
+        self.build_s = 0.0
+        self.detail: dict = {}  # rung-specific: HODLR max rank, BJ chunks
 
 
 class BlockGaussSeidel:
-    """Right preconditioner z = M(r) for an AssembledH system."""
+    """Right preconditioner z = M(r) for an AssembledH system.
+
+    ``summary()`` reports which rung each super-block landed on and what
+    its build cost, so a solve report can say why an iteration count
+    moved (a super-block crossing a rung boundary) without re-running."""
 
     def __init__(self, assembled,
                  max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
@@ -165,7 +174,9 @@ class BlockGaussSeidel:
                 self.sbs[kr].lower_terms.append(term)
 
         # ---- diagonal solves: dense LU rung or HODLR rung ----
+        t_start = time.perf_counter()
         for k, sb in enumerate(self.sbs):
+            t_sb = time.perf_counter()
             ev = _SBEvaluator(assembled, sb.slots, sb_terms[k])
             if sb.size <= max_dense:
                 all_elems = np.arange(ev.n_elems)
@@ -177,6 +188,7 @@ class BlockGaussSeidel:
                     return _permuted_lu_solve(lu, r, perm)
 
                 sb.solve_fn = solve_fn
+                sb.rung = "dense_lu"
                 if verbose:
                     print(f"  SB {[s.name for s in sb.slots]}: dense LU "
                           f"({sb.size} DOFs)")
@@ -190,6 +202,8 @@ class BlockGaussSeidel:
                     return _permuted_solver(hod.solve, r, perm)
 
                 sb.solve_fn = solve_fn
+                sb.rung = "hodlr"
+                sb.detail = {"hodlr_max_rank": int(hod.max_rank())}
                 if verbose:
                     print(f"  SB {[s.name for s in sb.slots]}: HODLR "
                           f"({sb.size} DOFs, tol {hodlr_tol:g}); "
@@ -234,10 +248,25 @@ class BlockGaussSeidel:
                     return z
 
                 sb.solve_fn = solve_fn
+                sb.rung = "block_jacobi"
+                sb.detail = {"chunks": len(chunks)}
                 if verbose:
                     print(f"  SB {[s.name for s in sb.slots]}: cluster "
                           f"block-Jacobi ({sb.size} DOFs, "
                           f"{len(chunks)} chunks)")
+            sb.build_s = time.perf_counter() - t_sb
+        self.build_s = time.perf_counter() - t_start
+
+    def summary(self) -> dict:
+        """{"build_s": total wall, "super_blocks": [{"slots", "size",
+        "rung", "build_s", ...rung detail}]} in sweep order; JSON-ready."""
+        return {
+            "build_s": self.build_s,
+            "super_blocks": [
+                {"slots": [s.name for s in sb.slots], "size": sb.size,
+                 "rung": sb.rung, "build_s": sb.build_s, **sb.detail}
+                for sb in self.sbs],
+        }
 
     def __call__(self, r: np.ndarray) -> np.ndarray:
         z = np.zeros_like(r)

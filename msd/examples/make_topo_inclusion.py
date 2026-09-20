@@ -58,14 +58,18 @@ OUT = pathlib.Path(__file__).parent / "topo_inclusion_fields_mu10.npz"
 
 
 def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
-          bump_height=BUMP_HEIGHT):
+          bump_height=BUMP_HEIGHT, scale=1.0):
     """fig06 geometry + refinement disk under the bump + the warp.
 
     If the bump's support reaches the fault trace, the fault mesh is
     warped consistently (same h, depth-tapered) so its top edge conforms
     to the deformed free surface — topography may overlap the fault.
     The inclusion rim and box edges must always stay clear.
+
+    ``scale`` divides every target edge (the same geometry ~scale^2 times
+    finer): the mesh ladder of ``bench_scaling.py --model topo_inclusion``.
     """
+    s = float(scale)
     bump = gaussian_bump(bump_center, bump_height, bump_sigma,
                          taper=(2.5, 3.0))
     fault_trace = np.array([[0.0, -100.0], [0.0, 100.0]])
@@ -73,17 +77,18 @@ def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
         x_range=(-200.0, 200.0), y_range=(-200.0, 200.0), z_bottom=-200.0,
         inclusion_center_xy=(-100.0, 100.0), inclusion_radius=75.0,
         inclusion_depth=50.0,
-        target_edge_inclusion=6.0, target_edge_top=9.0,
-        target_edge_far=80.0, target_edge_side=80.0,
-        fault_trace=fault_trace, fault_edge=4.5, host_top_max_edge=20.0,
-        top_refine_disks=[(bump_center, bump.support_radius, BUMP_EDGE,
-                           0.5 * BUMP_EDGE ** 2)])
+        target_edge_inclusion=6.0 / s, target_edge_top=9.0 / s,
+        target_edge_far=80.0 / s, target_edge_side=80.0 / s,
+        fault_trace=fault_trace, fault_edge=4.5 / s,
+        host_top_max_edge=20.0 / s,
+        top_refine_disks=[(bump_center, bump.support_radius, BUMP_EDGE / s,
+                           0.5 * (BUMP_EDGE / s) ** 2)])
     fault_mesh, n_hat, s_hat = make_vertical_fault_eq(
-        strike_length=200.0, depth_range=(-20.0, 0.0), target_edge=4.5)
+        strike_length=200.0, depth_range=(-20.0, 0.0), target_edge=4.5 / s)
 
     # Hard watertightness guards (curves shared with UNWARPED patches).
-    rim, _ = _circle_boundary((-100.0, 100.0), 75.0, 6.0)
-    rect = _rectangle_boundary((-200.0, 200.0), (-200.0, 200.0), 9.0)
+    rim, _ = _circle_boundary((-100.0, 100.0), 75.0, 6.0 / s)
+    rect = _rectangle_boundary((-200.0, 200.0), (-200.0, 200.0), 9.0 / s)
     for label, pts in (("inclusion rim", rim), ("box edge", rect)):
         assert_zero_clearance(bump, pts, tol=0.0, label=label)
 

@@ -19,6 +19,12 @@ Three checks, each PASS/FAIL:
      reproduce a fresh HBackend assembly at that material (compressed
      geometry is material-independent; ACA is seeded, so this is
      deterministic).
+
+The later checks cover the view cache, parallel determinism, the
+calibrated jump, combined storage, the block-Jacobi rung, and the
+convergence rate: FGMRES iterations on the fault-zone model at two sizes
+~2.7x apart may grow by at most ``defaults.GMRES_ITER_GROWTH_MAX`` and
+never past ``defaults.GMRES_ITER_CEILING`` (the ladder is size-independent).
 """
 import pathlib
 import sys
@@ -31,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh import make_rectangular_patch                 # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
+from mbem import defaults                                         # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.kernels import KERNEL_T, KERNEL_U, kernel_coeffs        # noqa: E402
@@ -41,7 +48,12 @@ from mbem.model import generate_system                            # noqa: E402
 from mbem.wrappers import build_vertical_fault_zone_model         # noqa: E402
 
 EPS = 3.0
-TOL = 1e-6          # compression tolerance used throughout
+TOL = defaults.BLOCK_COMPRESSION_TOL    # the operator tolerance the H path runs at
+# H-vs-dense parity (defaults.H_PARITY_*): operator/RHS entries and
+# solutions per slot; rebuild, combined-storage and determinism checks
+# stay bitwise.
+OP_PARITY = defaults.H_PARITY_OPERATOR * TOL
+SOL_PARITY = defaults.H_PARITY_SOLUTION * TOL
 
 
 def _relmax(a, b):
@@ -59,13 +71,13 @@ def check_pair_aca():
 
     ok = True
     try:                       # a kernel tag outside KERNELS must not
-        PairCompressed(field, source, "T", eps_arr, tol=TOL)   # silently
+        PairCompressed(field, source, "T", eps_arr)            # silently
         print("    PairCompressed accepted kernel 'T'")        # be U
         ok = False
     except ValueError:
         pass
     for kernel in (KERNEL_T, KERNEL_U):
-        pc = PairCompressed(field, source, kernel, eps_arr, tol=TOL)
+        pc = PairCompressed(field, source, kernel, eps_arr)
         coeffs = kernel_coeffs(kernel, mat)
         # exact dense reference: basis stack combined with coefficients
         tri_verts, normals = kb._source_arrays(source)
@@ -81,20 +93,24 @@ def check_pair_aca():
         print(f"    [{kernel}] {pc.summary()}")
         print(f"    [{kernel}] to_dense vs exact combine: rel = {err:.2e}  "
               f"(low-rank blocks: {nlr})")
-        ok &= (err < 50 * TOL) and (nlr >= 1)
+        ok &= (err < OP_PARITY) and (nlr >= 1)
     return ok
 
 
-def _build_zone_model(mat_zone):
+def _build_zone_model(mat_zone, refine: float = 1.0):
+    """The three-region fault-zone box; ``refine`` multiplies every
+    element count per direction (unknowns scale ~refine^2)."""
+    r = float(refine)
     fault, _n_hat, s_hat = make_vertical_fault_eq(
-        strike_length=16.0, depth_range=(-24.0, -6.0), target_edge=4.0)
+        strike_length=16.0, depth_range=(-24.0, -6.0), target_edge=4.0 / r)
     mat_outer = mb.ElasticMaterial(mu=30.0, lam=30.0)
     model = build_vertical_fault_zone_model(
         x_range=(-60.0, 60.0), y_range=(-40.0, 40.0), z_bottom=-40.0,
         zone_half_width=12.0, material_outer=mat_outer,
         material_zone=mat_zone, fault_mesh=fault,
         fault_slip_vector=s_hat, slip_magnitude=0.01,
-        nx_outer=4, nx_zone=2, ny=8, nz=4)
+        nx_outer=round(4 * r), nx_zone=round(2 * r), ny=round(8 * r),
+        nz=round(4 * r))
     return model
 
 
@@ -105,7 +121,7 @@ def check_end_to_end():
     print(f"    fault-zone model: {n} unknowns")
 
     dense = AssembledDense(system, EPS, "direct", jump="half")
-    hasm = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
+    hasm = HBackend(jump="half").assemble(system, EPS)
 
     op_err = _relmax(hasm.to_dense(), dense.A)
     rhs_err = _relmax(hasm.b, dense.b)
@@ -120,7 +136,7 @@ def check_end_to_end():
     print(f"    solution parity : rel = {worst:.2e}")
     print(f"    FGMRES          : converged={report.converged} "
           f"iters={report.iterations} true_relres={report.true_relres:.2e}")
-    return (op_err < 50 * TOL and rhs_err < 50 * TOL and worst < 1e-5
+    return (op_err < OP_PARITY and rhs_err < OP_PARITY and worst < SOL_PARITY
             and report.converged and report.true_relres < 1e-9)
 
 
@@ -130,13 +146,13 @@ def check_rebuild():
     model = _build_zone_model(mat_a)
     system = generate_system(model)
 
-    h1 = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
+    h1 = HBackend(jump="half").assemble(system, EPS)
     h2 = h1.rebuild_for_materials({"zone": mat_b})
     sol_rebuild, rep_r = h2.solve(rtol=1e-9), h2.report
 
     model_b = _build_zone_model(mat_b)
     system_b = generate_system(model_b)
-    fresh = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system_b, EPS)
+    fresh = HBackend(jump="half").assemble(system_b, EPS)
     sol_fresh, rep_f = fresh.solve(rtol=1e-9), fresh.report
 
     worst = max(_relmax(sol_rebuild[k], sol_fresh[k]) for k in sol_fresh
@@ -151,11 +167,9 @@ def check_views_bounded():
     beyond the LRU bound (the pre-fix behaviour cached one recombined
     operator per material forever), and a solve at a revisited material
     must still match its first solve exactly."""
-    from mbem import defaults
-
     model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0))
     system = generate_system(model)
-    h = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
+    h = HBackend(jump="half").assemble(system, EPS)
     sol_first = h.solve(rtol=1e-9)
 
     mus = np.linspace(8.0, 24.0, 50)
@@ -197,14 +211,14 @@ def check_parallel_determinism():
     mat = mb.ElasticMaterial(mu=30.0, lam=30.0)
     coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
     t0 = time.perf_counter()
-    pc1 = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
+    pc1 = PairCompressed(field, source, KERNEL_T, eps_arr,
                          max_admissible=1024, n_workers=1)
     t_serial = time.perf_counter() - t0
     t0 = time.perf_counter()
-    pc8 = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
+    pc8 = PairCompressed(field, source, KERNEL_T, eps_arr,
                          max_admissible=1024)
     t_par = time.perf_counter() - t0
-    pc8b = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
+    pc8b = PairCompressed(field, source, KERNEL_T, eps_arr,
                           max_admissible=1024)
 
     d1 = pc1.to_dense(coeffs)
@@ -231,7 +245,7 @@ def check_calibrated():
     layout = system.layout
 
     dense = AssembledDense(system, EPS, "direct", jump="calibrated")
-    hasm = HBackend(eta=0.8, tol=TOL, jump="calibrated").assemble(system, EPS)
+    hasm = HBackend(jump="calibrated").assemble(system, EPS)
 
     op_err = _relmax(hasm.to_dense(), dense.A)
     rhs_err = _relmax(hasm.b, dense.b)
@@ -270,8 +284,8 @@ def check_calibrated():
                    if np.max(np.abs(sol_db[k])) > 0)
     print(f"    rebuild solution parity vs dense: rel = {worst_rb:.2e}")
 
-    return (op_err < 50 * TOL and rhs_err < 50 * TOL and worst < 1e-5
-            and report.converged and worst_rb < 1e-5)
+    return (op_err < OP_PARITY and rhs_err < OP_PARITY and worst < SOL_PARITY
+            and report.converged and worst_rb < SOL_PARITY)
 
 
 def check_combined_storage():
@@ -289,9 +303,9 @@ def check_combined_storage():
     ca = np.asarray(kb.t_coeffs(mat_a.mu, mat_a.lam))
     cb = np.asarray(kb.t_coeffs(mat_b.mu, mat_b.lam))
 
-    basis = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
+    basis = PairCompressed(field, source, KERNEL_T, eps_arr,
                            max_admissible=512)
-    comb = PairCompressed(field, source, KERNEL_T, eps_arr, tol=TOL,
+    comb = PairCompressed(field, source, KERNEL_T, eps_arr,
                           max_admissible=512, storage="combined",
                           combine_for=[ca])
     ratio = basis.nbytes() / max(comb.nbytes(), 1)
@@ -311,8 +325,7 @@ def check_combined_storage():
     model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0))
     system = generate_system(model)
     dense = AssembledDense(system, EPS, "direct", jump="calibrated")
-    hc = HBackend(eta=0.8, tol=TOL, jump="calibrated",
-                  storage="combined").assemble(system, EPS)
+    hc = HBackend(jump="calibrated", storage="combined").assemble(system, EPS)
     sol_d = dense.solve()
     sol_h, rep = hc.solve(rtol=1e-9), hc.report
     worst = max(_relmax(sol_h[k], sol_d[k]) for k in sol_d
@@ -321,7 +334,7 @@ def check_combined_storage():
           f"(converged {rep.converged})")
 
     return (ratio > 2.5 and same_a and err_b == 0.0
-            and still_dropped and worst < 1e-5 and rep.converged)
+            and still_dropped and worst < SOL_PARITY and rep.converged)
 
 
 def check_bj_rung():
@@ -347,7 +360,7 @@ def check_bj_rung():
     print(f"    {system.layout.n_unknowns} unknowns; "
           f"largest super-block (top) = {top_dofs} DOFs")
 
-    hasm = HBackend(eta=0.8, tol=TOL, jump="half").assemble(system, EPS)
+    hasm = HBackend(jump="half").assemble(system, EPS)
     sol_ref = AssembledDense(system, EPS, "direct", jump="half").solve()
 
     # max_dense=1500 forces the top super-block OFF the dense-LU rung so
@@ -367,11 +380,47 @@ def check_bj_rung():
         print(f"    {name:>12}: build {t_build:5.1f} s, "
               f"{rep.iterations:3d} iters, converged {rep.converged}, "
               f"vs dense rel = {worst:.2e}")
-        if not (rep.converged and worst < 1e-5):
+        if not (rep.converged and worst < SOL_PARITY):
             return False
     penalty = results["block-Jacobi"] / max(results["HODLR"], 1)
     print(f"    iteration penalty BJ/HODLR: {penalty:.1f}x")
     return penalty < 4.0
+
+
+def check_convergence_rate():
+    """The block-Gauss-Seidel ladder is size-independent: on the fault-zone
+    model at two sizes ~2.7x apart (eps = "auto", calibrated jump, the
+    caller settings of the other checks) both solves must converge with a
+    true residual below rtol, and iterations(large) may be at most
+    GMRES_ITER_GROWTH_MAX x iterations(small) and GMRES_ITER_CEILING."""
+    import time
+
+    iters = {}
+    ok = True
+    for label, refine in (("small", 1.0), ("large", 1.64)):
+        model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0),
+                                  refine=refine)
+        system = generate_system(model)
+        t0 = time.perf_counter()
+        hasm = HBackend().assemble(system, "auto")
+        t_build = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        hasm.solve()
+        t_solve = time.perf_counter() - t0
+        rep = hasm.report
+        iters[label] = rep.iterations
+        rungs = sorted({sb["rung"] for sb in rep.precond_summary["super_blocks"]})
+        print(f"    {label:>5} ({system.layout.n_unknowns:5d} unknowns): "
+              f"{rep.iterations:3d} iters, converged {rep.converged}, "
+              f"true relres {rep.true_relres:.2e}; build {t_build:.1f} s, "
+              f"solve {t_solve:.1f} s, rungs {rungs}")
+        ok &= rep.converged and rep.true_relres < defaults.GMRES_RTOL
+    growth = iters["large"] / max(iters["small"], 1)
+    print(f"    iteration growth large/small: {growth:.2f} "
+          f"(limit {defaults.GMRES_ITER_GROWTH_MAX}); ceiling "
+          f"{defaults.GMRES_ITER_CEILING}")
+    return (ok and growth <= defaults.GMRES_ITER_GROWTH_MAX
+            and iters["large"] <= defaults.GMRES_ITER_CEILING)
 
 
 def main():
@@ -384,6 +433,7 @@ def main():
         ("calibrated jump in the H path", check_calibrated),
         ("combined storage (1x memory) parity", check_combined_storage),
         ("cluster block-Jacobi preconditioner rung", check_bj_rung),
+        ("convergence rate across sizes", check_convergence_rate),
     ]
     results = []
     for name, fn in checks:

@@ -15,6 +15,14 @@ GMRES_MAXITER = 600
 # over STAGNATION_WINDOW iterations.
 GMRES_STAGNATION_WINDOW = 100
 GMRES_STAGNATION_FACTOR = 10.0
+# The block-Gauss-Seidel ladder is size-independent: the preconditioned
+# iteration count is the number of outlier eigenvalues of A M, not a
+# function of N, so between two meshes ~2.7x apart it may grow by at most
+# this factor (verify_hbackend.py, convergence-rate check) ...
+GMRES_ITER_GROWTH_MAX = 1.25
+# ... and never past this absolute count: beyond it a ladder rung, not the
+# operator, is what changed.
+GMRES_ITER_CEILING = 40
 
 # --- Conditioning ------------------------------------------------------
 # Warn when a dense solve's 1-norm condition estimate exceeds this.
@@ -25,26 +33,65 @@ GMRES_STAGNATION_FACTOR = 10.0
 COND_WARN_THRESHOLD = 1e10
 
 # --- Compression ------------------------------------------------------
-BLOCK_COMPRESSION_TOL = 1e-8  # rel-Frobenius per admissible block
-CLUSTER_MIN_LEAF = 32         # elements per leaf cluster
+# Relative Frobenius tolerance of every admissible block of the FAST
+# OPERATOR (the compressed pairs FGMRES applies); the solve's own stop,
+# GMRES_RTOL, is separate and stays 1e-8. 1e-4 is the operator target:
+# the per-basis rank of a far-field T block drops 42 -> 16 against 1e-8,
+# the preconditioned iteration count is the same at 1e-6 and 1e-4, and a
+# 1e-4 operator error at 2-norm condition ~1e3-8e3 leaves ~2e-5 in the
+# solution.
+BLOCK_COMPRESSION_TOL = 1e-4
+# Elements per leaf cluster. The admissible list is the same at 32 and
+# 96 (eta 2) while the dense near-field leaf count drops 19k -> 1.9k at
+# 10k elements: fewer, larger leaves, fewer per-block launches.
+CLUSTER_MIN_LEAF = 96
 ADMISSIBILITY_ETA = 2.0
 # Admissible blocks smaller than this (elements per side) are stored
 # dense: at small sizes the epsilon-rank is a large fraction of the
 # block and cross approximation cannot be certified by sampling.
 ACA_MIN_BLOCK = 64
-# Cap on admissible block side (elements). Controls the size of the
-# dense FALLBACK bomb when a borderline block fails verification: at
-# 4096 a failed T block transiently materializes a ~7 GB basis stack
-# (measured: a 51k-tri panel pair took 471 s / 91 GB peak at 4096 vs
-# 112 s / 33 GB at 2048). Larger values compress the far field slightly
+# Cap on admissible block side (elements). Bounds the exact stack a
+# block materializes when its ACA hits the rank cap or fails its
+# certificate: one T stack is B x (3 n)^2 x 8 bytes -- 0.45 GB at 1024,
+# 1.8 GB at 2048, 7 GB at 4096 -- and ACA_FALLBACK_CONCURRENCY of them
+# may be live at once. Larger values compress the far field slightly
 # better; raise only for smooth, well-separated geometry.
-MAX_ADMISSIBLE_BLOCK = 2048
+MAX_ADMISSIBLE_BLOCK = 1024
 # ACA must converge within this fraction of full element rank, else the
-# block is declared not-low-rank and falls back to dense evaluation.
+# block is not low rank at this tolerance and is stored as its exact
+# stack, like a near-field leaf (at eta 2 about a third of the
+# 64-127-element blocks; factors of that rank are no smaller than the
+# stack, and the SVD that used to follow bought nothing).
 ACA_MAX_RANK_FRACTION = 1.0 / 3.0
-# Max CONCURRENT dense fallbacks during parallel block compression --
-# each fallback transiently materializes a full (B, 3nr, 3nc) basis
-# stack (~7 GB at max_admissible=4096 for the T kernel).
+# Certificate of every ACA block: this many full random rows and as many
+# full random columns, evaluated exactly -- 2 x 3 (nr + nc) kernel pairs,
+# negligible against the ACA's k (nr + nc) -- give an unbiased estimate
+# of the block's relative Frobenius error (a fixed 10 x 10 sample did
+# not): per basis at build, and per material when its view is combined
+# (a per-basis bound does not cover a mixed-sign combination). A block
+# is certified below CERTIFY_FACTOR x the tolerance: the ACA stops at
+# half the tolerance and the recompression may add the other half.
+ACA_CERTIFY_LINES = 3
+ACA_CERTIFY_FACTOR = 3.0
+# H-vs-dense parity gates (verify_hbackend, verify_deflation_estimate,
+# demo_hmatrix), as multiples of BLOCK_COMPRESSION_TOL: operator and RHS
+# ENTRIES within H_PARITY_OPERATOR x tol (each block is certified at
+# ACA_CERTIFY_FACTOR x tol of its own norm, the view adds up to tol, and
+# an entrywise max over a matrix of many blocks lands within an order of
+# that: 5 x measured on the pair check); SOLUTIONS per slot within
+# H_PARITY_SOLUTION x tol (2-norm condition ~1e3 x the operator error;
+# the same ratio as BENCH_SOLUTION_ERROR_MAX / BENCH_OPERATOR_ERROR_MAX).
+# Rebuild-vs-fresh, combined-vs-basis and determinism stay bitwise.
+H_PARITY_OPERATOR = 50
+H_PARITY_SOLUTION = 10
+# A block whose certificate fails is re-done from its exact stack:
+# stored dense below this many elements on its shorter side (an SVD of
+# a stack the ACA already found not low rank buys little on 6 x 768^2
+# x 8 B = 28 MB), SVD-truncated at the block tolerance above it.
+ACA_SVD_FALLBACK_MIN_SIDE = 256
+# Max CONCURRENT exact-stack materializations during parallel block
+# compression -- each is a full (B, 3nr, 3nc) basis stack (0.45 GB at
+# MAX_ADMISSIBLE_BLOCK = 1024 for the T kernel).
 ACA_FALLBACK_CONCURRENCY = 2
 # Only admissible blocks at least this many elements per (shorter) side
 # are compressed on the thread pool. Below it, per-eval kernel work is
@@ -53,12 +100,19 @@ ACA_FALLBACK_CONCURRENCY = 2
 # small blocks are compressed inline instead. Thread parallelism is for
 # the LARGE blocks that dominate at 1e5-1e6 elements.
 ACA_PARALLEL_MIN_SIDE = 192
-# Per-material recombined views cached per PairCompressed (LRU). Must
-# comfortably exceed the number of DISTINCT (material x kernel)
-# coefficient vectors live in one solve (preconditioner included), or
-# every matvec re-runs the per-block recompression; 16 covers models
-# with up to ~8 regions. Bounds memory across Laplace sweeps.
+# Per-material recombined views cached per PairCompressed (LRU), bounded
+# by count and by bytes. The count must exceed the number of DISTINCT
+# coefficient vectors one solve applies to a pair (preconditioner
+# included) or every matvec re-runs the recompression; 16 covers models
+# with up to ~8 regions. The bytes bound is what stops a material sweep
+# from holding one operator per material: a combined T view is ~0.5 GB
+# per pair at 100k unknowns, so a sweep keeps ~4 materials per pair
+# (~20 GB over a 10-pair model) instead of 16. The MIN_KEEP most recent
+# views -- the two region materials of an interface pair, one solve's
+# working set on that pair -- are never evicted by the bytes bound.
 HOP_VIEW_CACHE_MAX = 16
+HOP_VIEW_CACHE_MAX_BYTES = 2_000_000_000
+HOP_VIEW_CACHE_MIN_KEEP = 2
 
 # --- Dense fallbacks --------------------------------------------------
 MAX_DENSE_PRECOND_DOF = 9000  # exact dense LU below this, per block
@@ -97,6 +151,19 @@ HALF_JUMP_MAX_EPS_OVER_H = 0.5
 # distance: the piecewise-constant density limits the representation there
 # (~2e-1 relative stress error at d/h = 0.25 with eps/h = 0.3; ~10 % at 0.5).
 NEAR_BOUNDARY_H_RATIO = 0.5
+# The eigenstress readout sums each element only over the observation points
+# within this many (eps_j + h_j) of its centroid (evaluate._eigen_near_list):
+# the element's weight is (15 eps^4 / 8 pi) I7, ~(eps/R)^4 per element and
+# ~(eps/R)^5 for the whole surface beyond R. Basis (fault box, eps="auto",
+# so eps + h = 15-20 eps; remainder beyond c (eps + h) at c = 10 / 20 / 30 /
+# 50): on the fault centroids and at 1-50 eps off the fault 4e-13 / 0 / 0 / 0
+# of the on-fault eigenstress; on a 40x40 surface grid, pointwise against
+# the local elastic stress, 3e-9 / 1e-10 / 3e-11 / 2e-12 (every double
+# layer summed); on the 1280-triangle Kelvin sphere at eps/h = 0.3 (eps + h
+# = 4.3 eps), a shell at d/h = 0.5 against the exact stress, 1.6e-8 / 0 /
+# 0 / 0. 20 is the smallest rung under 1e-8 everywhere (~100x on the grid;
+# 10 fails on the sphere) at ~pi (20 (eps + h))^2 / A_tri pairs per point.
+EIGEN_NEAR_RADIUS_EPS = 20.0
 
 # --- Nodal (P1/P2) triangle kernels, kernels/tri_nodal.py --------------
 # The divergence-theorem closed form loses digits roughly like (R/L)^4-5 for
@@ -140,6 +207,30 @@ COLLOCATION_SHRINK_BY_ORDER = {0: 0.0, 1: 0.5, 2: 0.5}
 # slip surface, not the one-sided value the boundary condition means (a fault
 # outcrop). Warned, not corrected.
 COLLOCATION_FAULT_CLEARANCE_EPS = 1.0
+
+# --- Benchmark gate, examples/bench_scaling.py --gate ---------------------
+# Fast-operator accuracy target (relative max-norm of A_h v against the
+# dense operator, or against exact matrix-free rows beyond
+# BENCH_DENSE_MAX_UNKNOWNS); the solve keeps GMRES_RTOL under it.
+BENCH_OPERATOR_ERROR_MAX = 1e-4
+# Compressed solution vs the dense LU, max-norm relative, per slot.
+BENCH_SOLUTION_ERROR_MAX = 1e-3
+# Regression bands against the baseline rung in the reference commit.
+BENCH_TIME_RATIO_MAX = 1.15        # any phase wall time
+BENCH_TIME_FLOOR_S = 0.5           # phases shorter than this are timer noise, not gated
+BENCH_RSS_RATIO_MAX = 1.10         # peak RSS
+BENCH_RSS_RAM_FRACTION_MAX = 0.7   # peak RSS against physical RAM
+BENCH_ITER_SLACK = 2               # FGMRES iterations may exceed the baseline by this
+# A gate run is refused above this 1-minute load average: another process
+# on the machine invalidates every timing.
+BENCH_LOAD_MAX = 2.0
+# Dense reference (operator + LU solution) up to this many unknowns
+# (A + LU = 58 GB at 60k); beyond it the operator error is measured on
+# BENCH_EXACT_ROWS matrix-free rows (AssembledH.matvec_exact_rows).
+BENCH_DENSE_MAX_UNKNOWNS = 60_000
+BENCH_EXACT_ROWS = 1024
+BENCH_RANDOM_VECTORS = 3           # seeded test vectors, plus the unit translation
+BENCH_MATVEC_REPEATS = 5           # matvec wall = median of this many
 
 # --- Not here ---------------------------------------------------------
 # The fault SIGN CONVENTION is not a tolerance and does not live here:

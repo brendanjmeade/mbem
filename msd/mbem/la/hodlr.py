@@ -6,8 +6,10 @@ at every node the matrix splits as
     A = [[A11, U12 V12^T], [U21 V21^T, A22]]
       = D + U W           D = blkdiag(A11, A22)
 
-with the off-diagonal blocks compressed by ACA (d-DOF element-block
-pivots, sampled-residual stopping). The factorization recursively
+with the off-diagonal blocks compressed by the certified ACA of
+``aca.compress_block`` (d-DOF element-block pivots; exact rows and
+columns certify every factor, a block that is not low rank at the
+tolerance enters exactly). The factorization recursively
 prepares, per node,
 
     Z = D^{-1} U          (child solves on k RHS columns)
@@ -26,7 +28,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
-from .aca import BlockEvalCache, aca_single, _svd_keep
+from .aca import BasisLR, BlockEvalCache, compress_block
 from .cluster import build_cluster_tree
 
 
@@ -91,6 +93,8 @@ class HodlrSolver:
         self.inv_perm = np.empty_like(dof_perm)
         self.inv_perm[dof_perm] = np.arange(self.n_dofs)
         self.rank_profile: list[tuple[int, int]] = []  # (block size, rank)
+        self.n_exact = 0        # off-diagonal blocks entered exactly
+        self.n_fallback = 0     # ... after a failed certificate
 
         self.root = self._build(tree)
 
@@ -111,22 +115,29 @@ class HodlrSolver:
     # -- construction -------------------------------------------------
 
     def _lowrank(self, rows: np.ndarray, cols: np.ndarray):
-        """Compress eval_block[rows, cols] (ordered subsets) by ACA."""
-        n_rows, n_cols = len(rows), len(cols)
-
+        """Compress eval_block[rows, cols] (ordered subsets) with
+        ``aca.compress_block``'s ACA, certificate and fallback policy, as
+        one basis (the block is already material-combined): certified
+        factors; the exact block when the ACA hits the rank cap or a
+        block below ``ACA_SVD_FALLBACK_MIN_SIDE`` fails its certificate;
+        its SVD truncation when a larger one does. An exact block enters
+        the factorization as (M, I) with the identity on the shorter
+        side -- rank min(n1, n2), a dense half-matrix at the root -- so
+        the rung never applies an uncertified factor."""
         def stack_fn(r, c):
             return self.eval_block(r, c)[None, :, :]
 
         cache = BlockEvalCache(stack_fn, rows, cols, d=self.d)
-        srows, scols, stop_exact = cache.sample(self.rng, 10)
-        uv = aca_single(cache, 0, n_rows, n_cols, self.tol,
-                        srows, scols, stop_exact[0])
-        if uv is None:
-            M = self.eval_block(rows, cols)
-            u, s, vt = np.linalg.svd(M, full_matrices=False)
-            keep = _svd_keep(s, self.tol)
-            uv = (u[:, :keep] * s[:keep], vt[:keep, :].T)
-        return uv
+        res = compress_block(cache, 1, tol=self.tol, rng=self.rng)
+        self.n_fallback += 1 if res.fallback else 0
+        if isinstance(res.payload, BasisLR):
+            return res.payload.U[0], res.payload.V[0]
+        self.n_exact += 1
+        M = res.payload[0]
+        n1, n2 = M.shape
+        if n2 <= n1:
+            return M, np.eye(n2)
+        return np.eye(n1), M.T
 
     def _build(self, node):
         elems = node.indices
@@ -173,7 +184,9 @@ class HodlrSolver:
             return "HODLR: single leaf (dense)"
         tops = sorted(self.rank_profile, reverse=True)[:4]
         return ("HODLR ranks (size, rank): "
-                + ", ".join(f"({s}, {r})" for s, r in tops))
+                + ", ".join(f"({s}, {r})" for s, r in tops)
+                + f"; {self.n_exact} exact block(s), "
+                f"{self.n_fallback} certificate fallback(s)")
 
 
 def _solve_node(node, B: np.ndarray) -> np.ndarray:

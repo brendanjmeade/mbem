@@ -10,12 +10,12 @@ Notes
 -----
 * Both backends are built with jump="half" here (an apples-to-apples
   comparison of the SAME operator; the backends default to "calibrated").
-* eta=0.8 (stricter admissibility) routes near-field blocks to exact dense;
-  this is required for correctness -- the looser default admissibility can
-  accept inaccurate low-rank factors for a near-field block.
-* The compressed operator stores a per-material basis per block (cheap material
-  recombination); net memory compression vs a single-material dense matrix
-  emerges at larger problem sizes, not at this ~11k-unknown demo size.
+* The compressed backend runs at its defaults (ADMISSIBILITY_ETA,
+  BLOCK_COMPRESSION_TOL, combined storage): every admissible block is
+  certified on exact rows and columns, so the H-vs-dense difference is a
+  bounded multiple of the operator tolerance (H_PARITY_SOLUTION; printed).
+  Net memory compression vs a single-material dense matrix emerges at
+  larger problem sizes than this ~11k-unknown demo.
 
 Output (repo root): fig_hmatrix.png/.pdf
   (a) surface u_x from the compressed FGMRES solve (host + inclusion tops)
@@ -38,6 +38,7 @@ sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                       # noqa: E402
 from assess_fig06_inclusion import build, build_model           # noqa: E402
+from mbem import defaults                                       # noqa: E402
 from mbem.backends import AssembledDense, HBackend              # noqa: E402
 from mbem.model import generate_system                          # noqa: E402
 
@@ -65,13 +66,12 @@ def main():
     print(f"dense LU (half jump): {time.time()-t0:.0f} s", flush=True)
 
     t0 = time.time()
-    hasm = HBackend(eta=0.8, tol=1e-6, jump="half",
-                    verbose=False).assemble(system, "auto")
+    hasm = HBackend(jump="half", verbose=False).assemble(system, "auto")
     sol = hasm.solve(rtol=1e-8)
     report = hasm.report
     t_h = time.time() - t0
     n_iter = getattr(report, "iterations", getattr(report, "n_iter", None))
-    print(f"H-matrix FGMRES (eta=0.8): {t_h:.0f} s, {n_iter} iters", flush=True)
+    print(f"H-matrix FGMRES: {t_h:.0f} s, {n_iter} iters", flush=True)
 
     worst = scale = 0.0
     for k in ("u:host_top", "u:inclusion_top"):
@@ -81,7 +81,11 @@ def main():
     print(f"  operator storage   : {hasm.nbytes()/1e9:.2f} GB "
           f"(dense single-material {(n*n*8)/1e9:.2f} GB)")
     print(f"  FGMRES iterations  : {n_iter}")
-    print(f"  max rel diff vs dense LU: {rel_err:.2e}\n")
+    tol = defaults.BLOCK_COMPRESSION_TOL
+    print(f"  max rel diff vs dense LU: {rel_err:.2e} "
+          f"({rel_err / tol:.2g} x BLOCK_COMPRESSION_TOL; parity bound "
+          f"{defaults.H_PARITY_SOLUTION} x: "
+          f"{'within' if rel_err < defaults.H_PARITY_SOLUTION * tol else 'EXCEEDED'})\n")
 
     # --- figure ---
     th = mtri.Triangulation(meshes["host_top"].vertices[:, 0],

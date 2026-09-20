@@ -48,20 +48,43 @@ P0/P1/P2 kernels; `ddbem` and `fbem` are closed (`FINDINGS.md` each).
    height/L = 1e-3 (`NODAL_MIN_HEIGHT_OVER_L`); the far-field switch keys on
    the longest edge, so a needle observed along its axis stays closed-form.
 
-## Open — before the first benchmark (C)
+## Scale program (approved 2026-09-20; the plan file has the details)
 
-* An H-matrix configuration with real low-rank blocks and single-digit
-  fallback, gated (`ADMISSIBILITY_ETA = 2.0` is used by no caller; at 10k
-  unknowns the "compressed" operator is 1.4–2.1x dense). Per-patch / "auto"
-  eps through the H path; a convergence-rate gate.
-* The compressed backend is P0-only (`la.hop.require_order0`);
-  `MAX_ADMISSIBLE_BLOCK` and `ACA_FALLBACK_CONCURRENCY` are sized for K = 1 and
-  must shrink by K when it gets `order`.
-* The general-order pair code (`tri_nodal.py`) at P0 is 5–7x slower per pair
-  than the unrolled P0 code (`tri_kernels.py`), so order 0 still routes to the
-  old pair kernels; retire them once the general code is measured equal.
-* `medt_paper/topo_inclusion/mbem` is a frozen fork on the old API; figure 10
-  is rendered from its cache.
+Decisions: target 1e5–1e6 elements on the interface topology (4 unknowns per
+triangle, so 0.4–4 M unknowns), designed first around ~1 M unknowns with an FMM
+far field as the follow-on; this workstation only (16 cores, 128 GB, CPU);
+fast operator 1e-4 relative, FGMRES rtol 1e-8; one stored operator (~2x) for
+the 2–22 material solves per geometry; P1/P2 into the fast path after the
+flat-H fixes; region graphs = host + a few inclusions; numba on the OpenMP
+layer and `threadpoolctl` are requirements.
+
+Measured facts the program rests on: the reported cond 5e5 of the interface
+models is a 1-norm estimate (2-norm 1e3–8e3; sigma_min is a smooth global mode
+set by the coarse box sides, not the inclusion corner); the interface-aware
+block-Gauss-Seidel is already size-independent (22 -> 24 iterations from 11k
+to 29k unknowns; 12–13 on the fault box at every size), the count being 21
+geometric outlier eigenvalues; region-level Gauss-Seidel gives 10 (7 with two
+sweeps); the compressed build is 96–98 % Python overhead (ACA loop,
+recompression under BLAS oversubscription) with kernel work at 2–4 %; the
+flat H at eta 0.8 with per-basis storage is 1.4–2x dense at 10k unknowns and
+would be ~5 / 17 / 65 GB at 100k / 300k / 1M unknowns once fixed (combined
+storage, eta 2 with a real certificate, tol 1e-4, leaf 96, numba ACA).
+
+Work packages, in order (each a commit with the harness numbers):
+WP0 harness + `precond_summary` + convergence-rate gate; WP1 flat-H policy
+(leaf 96, tol 1e-4, eta 2 in every caller, dense-on-rank-cap, full-row/column
+certificate, single-use RHS matrix-free, combined storage); WP2 BLAS thread
+control; WP3 batched dense leaves and numba matvec; WP4 ACA in numba; WP5
+shared-subspace per-basis storage and preconditioner reuse across materials;
+WP6 preconditioning ladder (E1 ladder to 107k, E2 GCRO-DR recycling, E3
+region super-blocks, E4/E5 conditional); WP7 P1/P2 in the fast path; WP8
+far-field side-by-side (fmm3dpy eps = 0 far field vs an in-house Chebyshev
+bbFMM on the eps^2-expanded pieces); WP9 evaluation at scale.
+
+Still true until the packages land: the compressed backend is P0-only
+(`la.hop.require_order0`); `tri_nodal.py` at P0 is 5–7x slower per pair than
+`tri_kernels.py`, so order 0 routes to the old pair kernels;
+`medt_paper/topo_inclusion/mbem` is a frozen fork rendered from its cache.
 
 ## Outward-facing (need a go-ahead)
 

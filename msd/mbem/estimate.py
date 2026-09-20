@@ -20,7 +20,10 @@ from .kernels import basis as kb
 from .la.cluster import build_cluster_tree, build_partition
 from .la.hop import require_order0
 
-ASSUMED_BASIS_RANK = 40      # typical measured per-basis ACA rank
+# Per-basis ACA rank assumed for every admissible block, at
+# BLOCK_COMPRESSION_TOL: a far-field T block holds 16 at 1e-4 (42 at
+# 1e-8); a 10k-element plate self-pair averages 9-11 over its blocks.
+ASSUMED_BASIS_RANK = 16
 
 
 def total_ram_bytes() -> int | None:
@@ -37,22 +40,26 @@ def fgmres_workspace_bytes(n_unknowns: int,
     return (2 * restart + 1) * n_unknowns * 8
 
 
-def _pair_keys(system):
+def _pair_keys(system, rhs: bool = True):
     keys = {}
-    for t in list(system.terms) + list(system.rhs_terms):
+    terms = list(system.terms) + (list(system.rhs_terms) if rhs else [])
+    for t in terms:
         keys[(id(t.field_patch), id(t.source_patch), t.kernel)] = \
             (t.field_patch, t.source_patch, t.kernel)
     return keys
 
 
 def estimate_memory(system, mode: str = "direct",
-                    storage: str = "basis",
+                    storage: str = "combined",
+                    sweep: bool = False,
                     min_leaf: int = defaults.CLUSTER_MIN_LEAF,
                     eta: float = defaults.ADMISSIBILITY_ETA,
                     max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK) -> dict:
     """Predicted peak bytes for assembling ``system``.
 
-    mode: "direct" | "basis" (dense backends) | "hmat".
+    mode: "direct" | "basis" (dense backends) | "hmat". ``storage`` and
+    ``sweep`` mirror ``HBackend``'s (combined payloads; RHS pairs built
+    only for a declared material sweep, else applied matrix-free).
     Returns a dict with ``total_bytes`` plus a breakdown, and
     ``fraction_of_ram`` when the platform reports RAM.
     """
@@ -84,7 +91,7 @@ def estimate_memory(system, mode: str = "direct",
 
         dense_bytes = 0
         lowrank_bytes = 0
-        for fp, sp, kern in _pair_keys(system).values():
+        for fp, sp, kern in _pair_keys(system, rhs=sweep).values():
             B = kernel_n_basis(kern)
             mult = B if storage == "basis" else 1
             part = build_partition(_tree(fp.mesh), _tree(sp.mesh),

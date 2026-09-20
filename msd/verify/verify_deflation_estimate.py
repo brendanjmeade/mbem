@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
+from mbem import defaults                                         # noqa: E402
 from mbem.backends import AssembledH, HBackend                    # noqa: E402
 from mbem.backends.dense import (                                 # noqa: E402
     AssembledDense,
@@ -36,6 +37,8 @@ from mbem.model import generate_system                            # noqa: E402
 
 EPS = 3.0
 MAT = mb.ElasticMaterial(mu=30.0, lam=30.0)
+# projected-FGMRES solution vs the bordered dense solve, per slot
+SOL_PARITY = defaults.H_PARITY_SOLUTION * defaults.BLOCK_COMPRESSION_TOL
 
 
 def _all_neumann_model():
@@ -92,7 +95,7 @@ def check_deflation():
         refused_a = False
     except ValueError as exc:
         refused_a = "null space" in str(exc)
-    hb = HBackend(eta=0.8, tol=1e-6, jump="calibrated")
+    hb = HBackend(jump="calibrated")
     try:
         hb.assemble(system, EPS)
         refused_h = False
@@ -116,8 +119,7 @@ def check_deflation():
     finite = all(np.all(np.isfinite(v)) for v in sol_d.values())
     print(f"    bordered dense: finite={finite}, |Z^T x| = {zt:.2e}")
 
-    hasm = HBackend(eta=0.8, tol=1e-6, jump="calibrated",
-                    deflate=True).assemble(system, EPS)
+    hasm = HBackend(jump="calibrated", deflate=True).assemble(system, EPS)
     sol_h = hasm.solve(rtol=1e-9)
     rep = hasm.report
     worst_hd = max(float(np.max(np.abs(sol_h[k] - sol_d[k]))
@@ -135,7 +137,7 @@ def check_deflation():
     print(f"    calibrated+deflated vs half-jump (translation-free): "
           f"rel = {worst_ph:.2e}")
 
-    return (warned and finite and zt < 1e-8 and worst_hd < 1e-5
+    return (warned and finite and zt < 1e-8 and worst_hd < SOL_PARITY
             and rep.converged and worst_ph < 0.05)
 
 
@@ -163,7 +165,7 @@ def check_estimator():
     ok &= rel_b < 0.01
 
     est_h = estimate_memory(system, mode="hmat")
-    hasm = HBackend(eta=0.8, tol=1e-6).assemble(system, EPS)
+    hasm = HBackend().assemble(system, EPS)
     ratio = est_h["total_bytes"] / hasm.nbytes()
     print(f"    hmat: est {est_h['total_bytes']/1e6:.0f} MB vs actual "
           f"{hasm.nbytes()/1e6:.0f} MB (x{ratio:.2f})")

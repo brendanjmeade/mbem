@@ -5,8 +5,11 @@ source, kernel) pair is stored ONCE as a material-basis PairCompressed;
 materials only enter through coefficient vectors. ``rebuild_for_materials``
 is therefore nearly free (the compressed geometry is shared), and the
 preconditioner refactorizes only its small dense diagonal blocks.
-P0 patches only (``la.hop.require_order0``); higher order is the dense
-backend's.
+RHS terms (fault slip, prescribed values) are applied matrix-free by
+default -- their pair is used once per material, so compressing it would
+cost a full ACA build for one matvec -- and compressed only for a
+declared material ``sweep``. P0 patches only
+(``la.hop.require_order0``); higher order is the dense backend's.
 """
 
 from __future__ import annotations
@@ -40,16 +43,21 @@ class HBackend:
                  n_workers: int | None = None,
                  jump: str = "calibrated",
                  deflate: bool = False,
-                 storage: str = "basis",
+                 storage: str = "combined",
+                 sweep: bool = False,
                  verbose: bool = False):
         # jump / deflate: as for the dense backend; an all-Neumann model
         # with jump="calibrated" needs deflate=True (assembly refuses
         # otherwise), and solve then projects the translations out.
+        # storage="combined" (default): material-combined payloads only,
+        # 1x memory -- a T pair in per-basis storage holds six factor
+        # pairs per block; material rebuilds re-compress transiently.
         # storage="basis": geometry-only per-basis factors (B-fold
-        # memory, free material recombination -- best for sweeps).
-        # storage="combined": material-combined payloads only (1x
-        # memory -- the mode for very large models; material rebuilds
-        # re-compress).
+        # memory, free material recombination) when they fit.
+        # sweep: declare a material sweep, so the RHS pairs (fault slip,
+        # prescribed values) are compressed once and reused per material
+        # instead of applied matrix-free at every rebuild -- at 100k
+        # unknowns a fault RHS is ~2e9 kernel pairs, 70 s per material.
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
         if storage not in ("basis", "combined"):
@@ -59,18 +67,20 @@ class HBackend:
         self.jump = jump
         self.deflate = deflate
         self.storage = storage
+        self.sweep = sweep
         self.verbose = verbose
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledH":
         return AssembledH(system, eps, self.opts, self.verbose,
                           jump=self.jump, deflate=self.deflate,
-                          storage=self.storage)
+                          storage=self.storage, sweep=self.sweep)
 
 
 class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
                  jump: str = "calibrated", deflate: bool = False,
-                 storage: str = "basis", _shared=None):
+                 storage: str = "combined", sweep: bool = False,
+                 _shared=None):
         from .dense import (require_anchor_or_deflate,
                             warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
@@ -87,6 +97,7 @@ class AssembledH:
         self.jump = jump
         self.deflate = deflate
         self.storage = storage
+        self.sweep = sweep
         self.report = None
         self.materials = {r.name: r.material for r in system.model.regions}
 
@@ -97,10 +108,11 @@ class AssembledH:
             pair_keys = {(id(t.field_patch), id(t.source_patch), t.kernel):
                          (t.field_patch, t.source_patch, t.kernel)
                          for t in system.terms}
-            for rt in system.rhs_terms:
-                pair_keys[(id(rt.field_patch), id(rt.source_patch),
-                           rt.kernel)] = (rt.field_patch, rt.source_patch,
-                                          rt.kernel)
+            if sweep:                     # RHS pairs are compressed only
+                for rt in system.rhs_terms:   # for a declared sweep
+                    pair_keys[(id(rt.field_patch), id(rt.source_patch),
+                               rt.kernel)] = (rt.field_patch,
+                                              rt.source_patch, rt.kernel)
             combos = self._pair_combos()
             for key, (fp, sp, kern) in pair_keys.items():
                 pc = PairCompressed(
@@ -120,8 +132,11 @@ class AssembledH:
 
     def _pair_combos(self) -> dict:
         """{pair key: [coefficient vectors]} every solve stage touches --
-        system terms, RHS terms, and (when calibrated) the calibration
-        row-sums (t_coeffs of each region for its own (q,p) H pairs)."""
+        system terms, RHS terms (only when they are compressed: ``sweep``),
+        and (when calibrated) the calibration row-sums (t_coeffs of each
+        region for its own (q,p) H pairs): the views built at assembly
+        (all that combined storage keeps); each is certified for its own
+        material when it is combined."""
         combos: dict = {}
 
         def _add(key, c):
@@ -130,7 +145,10 @@ class AssembledH:
             if not any(np.asarray(x).tobytes() == cb for x in lst):
                 lst.append(np.asarray(c))
 
-        for t in list(self.system.terms) + list(self.system.rhs_terms):
+        terms = list(self.system.terms)
+        if self.sweep:
+            terms += list(self.system.rhs_terms)
+        for t in terms:
             key = (id(t.field_patch), id(t.source_patch), t.kernel)
             _add(key, kernel_coeffs(t.kernel, self.materials[t.region.name]))
         if self.jump == "calibrated":
@@ -200,13 +218,35 @@ class AssembledH:
                             term.kernel)]
 
     def _build_rhs(self) -> np.ndarray:
+        """Each RhsTerm's kernel applied to its KNOWN vector (fault slip,
+        prescribed u / t) at the term's material. Through the compressed
+        pair when one was built (``sweep``), else matrix-free through the
+        nodal contraction drivers at the field patch's collocation points:
+        the pair is applied once per material, so a compression that pays
+        off only over repeated matvecs is not built for it."""
+        from ..kernels import tri_nodal as tn
+
+        arrays = kb.MeshArrays()
         b = np.zeros(self.layout.n_unknowns)
         for rt in self.system.rhs_terms:
-            pair = self.pair_for(rt)
-            mat = self.materials[rt.region.name]
-            contrib = rt.scale * pair.matvec(kernel_coeffs(rt.kernel, mat),
-                                             rt.vector)
-            b[rt.row.offset:rt.row.stop] += contrib
+            coeffs = kernel_coeffs(rt.kernel, self.materials[rt.region.name])
+            pair = self._pairs.get((id(rt.field_patch), id(rt.source_patch),
+                                    rt.kernel))
+            if pair is not None:
+                contrib = pair.matvec(coeffs, rt.vector)
+            else:
+                q, p = rt.field_patch, rt.source_patch
+                xq = arrays.collocation_points(q)
+                tv, nrm = arrays.source_arrays(p.mesh)
+                dens = np.ascontiguousarray(rt.vector.reshape(-1, 3))
+                if rt.kernel == KERNEL_T:
+                    u = tn.t_disp_contract(xq, tv, nrm, self.eps_for(p), dens,
+                                           *coeffs, p.order)
+                else:
+                    u = tn.u_disp_contract(xq, tv, self.eps_for(p), dens,
+                                           *coeffs, p.order)
+                contrib = u.ravel()
+            b[rt.row.offset:rt.row.stop] += rt.scale * contrib
         add_jump_rhs(self.system, self.calib, b)
         return b
 
@@ -224,6 +264,54 @@ class AssembledH:
             if D is not None:
                 y[term.row.offset:term.row.stop] += diagonal_matvec(D, seg)
         return y
+
+    def matvec_exact_rows(self, x: np.ndarray, rows) -> np.ndarray:
+        """Exact ``(A x)[rows]`` for global row indices ``rows``, matrix-free.
+
+        Every term's kernel is contracted through the nodal drivers at the
+        selected collocation points (no compressed block is touched) and the
+        same collocation diagonal ``matvec`` applies is added, so this is the
+        reference for the compressed operator where a dense matrix no longer
+        fits (the bench harness samples 1,024 rows). Cost is
+        O(len(rows) x N_source) kernel pairs.
+        """
+        from ..kernels import tri_nodal as tn
+
+        rows = np.asarray(rows, dtype=int)
+        x = np.asarray(x, dtype=float)
+        out = np.zeros(rows.size)
+        arrays = kb.MeshArrays()
+        for term in self.system.terms:
+            sel = np.nonzero((rows >= term.row.offset)
+                             & (rows < term.row.stop))[0]
+            if sel.size == 0:
+                continue
+            local = rows[sel] - term.row.offset
+            c, comp = local // 3, local % 3
+            pts, inv = np.unique(c, return_inverse=True)
+            q, p = term.field_patch, term.source_patch
+            dens = x[term.col.offset:term.col.stop].reshape(-1, 3)
+            coeffs = kernel_coeffs(term.kernel, self.materials[term.region.name])
+            xq = np.ascontiguousarray(arrays.collocation_points(q)[pts])
+            tv, nrm = arrays.source_arrays(p.mesh)
+            if term.kernel == KERNEL_T:
+                u = tn.t_disp_contract(xq, tv, nrm, self.eps_for(p), dens,
+                                       *coeffs, p.order)
+            else:
+                u = tn.u_disp_contract(xq, tv, self.eps_for(p), dens,
+                                       *coeffs, p.order)
+            vals = term.scale * u[inv, comp]
+            D = term_diagonal(term, self.calib)
+            if D is not None:
+                # add_block_diagonal's rule, row by row.
+                shape = q.collocation_shape()
+                K = shape.shape[0]
+                s, kc = c // K, c % K
+                for k in range(K):
+                    vals += shape[kc, k] * np.einsum(
+                        "nb,nb->n", D[c, comp, :], dens[K * s + k])
+            out[sel] += vals
+        return out
 
     def to_dense(self) -> np.ndarray:
         n = self.layout.n_unknowns
@@ -275,6 +363,7 @@ class AssembledH:
         else:
             x, report = fgmres(self.matvec, self.b, M=self._precond, x0=x0,
                                rtol=rtol, restart=restart, maxiter=maxiter)
+        report.precond_summary = self._precond.summary()
         if self.verbose:
             print(f"  {report}")
         self.report = report
@@ -286,7 +375,7 @@ class AssembledH:
     def rebuild_for_materials(self, material_map: dict) -> "AssembledH":
         new = AssembledH(self.system, self.eps, self.opts, self.verbose,
                          jump=self.jump, deflate=self.deflate,
-                         storage=self.storage,
+                         storage=self.storage, sweep=self.sweep,
                          _shared=(self._pairs, self._tree_cache))
         for name, mat in material_map.items():
             if name not in new.materials:

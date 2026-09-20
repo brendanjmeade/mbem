@@ -34,12 +34,24 @@ class SolveReport:
     stagnated: bool = False
     restarts: int = 0
     residual_history: list = field(default_factory=list)
+    # ``BlockGaussSeidel.summary()`` of the preconditioner the solve used
+    # (rung per super-block, sizes, build time); None for an
+    # unpreconditioned solve. Attached by the backend, not by ``fgmres``.
+    precond_summary: dict | None = None
 
     def __str__(self):
         status = "converged" if self.converged else (
             "STAGNATED" if self.stagnated else "NOT CONVERGED")
-        return (f"FGMRES {status}: {self.iterations} iters, "
-                f"true relres {self.true_relres:.3e}")
+        s = (f"FGMRES {status}: {self.iterations} iters, "
+             f"true relres {self.true_relres:.3e}")
+        if self.precond_summary:
+            counts: dict = {}
+            for sb in self.precond_summary["super_blocks"]:
+                counts[sb["rung"]] = counts.get(sb["rung"], 0) + 1
+            rungs = ", ".join(f"{n} {r}" for r, n in counts.items())
+            s += (f"; preconditioner {rungs}, built in "
+                  f"{self.precond_summary['build_s']:.1f} s")
+        return s
 
 
 def fgmres(A, b, M=None, x0=None,

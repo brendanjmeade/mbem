@@ -98,9 +98,16 @@ verify/                   kernel correctness checks (print PASS/FAIL)
 ## Install
 
 ```
-pip install numpy scipy matplotlib numba triangle
+pip install numpy scipy matplotlib numba triangle threadpoolctl
+# plus an OpenMP runtime numba can load (conda-forge llvm-openmp, or brew libomp)
 # cutde is only needed for the on-fault-stress demos/verify (classical TDE reference)
 ```
+
+numba must resolve its OpenMP threading layer (`numba.threading_layer() ==
+"omp"`) and threadpoolctl must be importable: the compressed backend runs
+nogil kernels on a Python thread pool while parallel kernels run beside them,
+which the OpenMP layer tolerates and the default workqueue layer does not,
+and threadpoolctl is what pins BLAS to one thread inside that pool.
 
 ## Verify the kernels
 
@@ -137,8 +144,12 @@ storage), FGMRES is preconditioned by a three-rung ladder whose last rung
 evaluation is matrix-free (O(N_obs) memory; a 250k-point map over a model that
 would need a 49 GB dense operator runs in ~9 s and 0.4 GB).
 `mbem.estimate.estimate_memory` predicts the footprint of each backend/mode
-before assembling; `examples/bench_scaling.py` is the regression harness
-(`--panel N` benchmarks the large-block compression primitive alone).
+before assembling; `examples/bench_scaling.py` is the regression harness:
+`--model fault_box|topo_inclusion --scale s` mesh ladders with per-rung JSON
+records (phase times, iterations, ranks, bytes, RSS, operator error against
+the dense operator or exact matrix-free rows), `--gate REV` against the
+`bench-json:` line of a commit message, and `--panel N` for the large-block
+compression primitive alone.
 
 ## Examples
 

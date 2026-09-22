@@ -80,10 +80,26 @@ WP6 preconditioning ladder (E1 ladder to 107k, E2 GCRO-DR recycling, E3
 region super-blocks, E4/E5 conditional); WP7 P1/P2 in the fast path; WP8
 far-field engine; WP9 evaluation at scale.
 
-Done: WP0-WP5a, E2 and WP9's eigenstress near list (`ec58a3f`, `cec5606`,
-`645d676`). At 31k unknowns the build is 32 s (was: did not finish in 28 min)
-and the matvec 28 ms; preconditioner reuse across a material sweep costs +1 to
-+3 iterations and saves 2.5-5x wall per solve.
+Done: WP0-WP5a, E2, E3, E4 and WP9's eigenstress near list (`ec58a3f` ..
+`2665d2d`). The ladder now reaches **269,346 unknowns in 371 s** (operator
+297 s, preconditioner 29 s, solve 45 s, 42 iterations, 56 GB), where before
+this work 31k did not finish a build in 28 minutes. At 117k: 154 s total,
+30 GB. Preconditioner reuse across a material sweep costs +1 to +3 iterations
+and saves 2.5-5x wall per solve; a 14-material sweep at 117k runs in 815 s.
+
+Two committed decisions were reversed by later measurement, which is the
+pattern to expect here: the preconditioner rung above the dense cap was set to
+HODLR at 117k and then to block-Jacobi once 269k was affordable (its HODLR
+build grew 24x for 2.3x the unknowns and peaked at 92 GB); and the flexible
+form of Krylov recycling was implemented before being measured to deflate the
+wrong spectrum. Measure at the next rung up before trusting a policy.
+
+**Open, the current item:** compression quality degrades with size. At 269k the
+operator error is 1.39e-4 against a 1e-4 gate, entirely on the unit-translation
+test vector, i.e. in the ROW SUMS that the calibrated diagonal is built from;
+194 ACA fallbacks against 6 at 117k, 927 rank-capped and 1068 retried blocks,
+certified error 3.0e-4 against a 1e-4 block tolerance. Under investigation;
+`BENCH_OPERATOR_ERROR_MAX` is deliberately not loosened.
 
 **WP8 Trial A (fmm3dpy) is closed: rejected on speed.** The eps = 0 Kelvin
 layers are exact combinations of its Laplace and Stokes kernels (single layer =

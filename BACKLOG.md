@@ -78,8 +78,27 @@ control; WP3 batched dense leaves and numba matvec; WP4 ACA in numba; WP5
 shared-subspace per-basis storage and preconditioner reuse across materials;
 WP6 preconditioning ladder (E1 ladder to 107k, E2 GCRO-DR recycling, E3
 region super-blocks, E4/E5 conditional); WP7 P1/P2 in the fast path; WP8
-far-field side-by-side (fmm3dpy eps = 0 far field vs an in-house Chebyshev
-bbFMM on the eps^2-expanded pieces); WP9 evaluation at scale.
+far-field engine; WP9 evaluation at scale.
+
+Done: WP0-WP5a, E2 and WP9's eigenstress near list (`ec58a3f`, `cec5606`,
+`645d676`). At 31k unknowns the build is 32 s (was: did not finish in 28 min)
+and the matvec 28 ms; preconditioner reuse across a material sweep costs +1 to
++3 iterations and saves 2.5-5x wall per solve.
+
+**WP8 Trial A (fmm3dpy) is closed: rejected on speed.** The eps = 0 Kelvin
+layers are exact combinations of its Laplace and Stokes kernels (single layer =
+Stokeslet + Laplace charge; double layer = stresslet + one Laplace call with
+nd = 4 carrying the dipoles and the charge gradient; both verified to 1e-15),
+and the accuracy passes with room: an exact mollified near field to 8 h with
+the eps = 0 far field beyond it lands at 4.8e-5 relative, against a 1e-4 budget,
+already at c = 8. But the macOS wheel is a SERIAL build (no OpenMP in any of
+its shared objects; identical times at 1 and 16 threads), and one far-field
+application costs 16 s per kernel at 120k unknowns against a 0.3 s flat-H
+matvec: 100x the budget, and 55-60 s per kernel extrapolated at 422k against a
+10 s ceiling. It also exposes no tree object, so WP9's "one upward pass serving
+the solve and any target set" is unreachable through it. If an FMM is scheduled
+for the >= 1M-element rung it is Trial B, the in-house Chebyshev bbFMM; the
+kernel decomposition derived for Trial A carries over to it unchanged.
 
 Still true until the packages land: the compressed backend is P0-only
 (`la.hop.require_order0`); `tri_nodal.py` at P0 is 5–7x slower per pair than

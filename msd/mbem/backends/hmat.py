@@ -381,6 +381,7 @@ class AssembledH:
               maxiter: int = defaults.GMRES_MAXITER,
               x0: np.ndarray | str | None = None,
               precond_max_dense: int | None = None,
+              precond_above_dense: str = defaults.PRECOND_RUNG_ABOVE_DENSE,
               precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
               recycle: bool | None = None):
         """Preconditioned FGMRES; returns {slot_name: (N_patch, 3) array}
@@ -393,7 +394,9 @@ class AssembledH:
 
         ``precond_max_dense`` overrides the preconditioner ladder's
         dense-LU cap, which is otherwise the machine's own
-        (``la.preconditioner.dense_rung_max_dof``).
+        (``la.preconditioner.dense_rung_max_dof``), and
+        ``precond_above_dense`` names the rung past it ("block_jacobi" or
+        "hodlr"; ``defaults.PRECOND_RUNG_ABOVE_DENSE``).
 
         Two sequence options, for the material sweeps (the solves this
         assembly's ``rebuild_for_materials`` chain produces):
@@ -428,6 +431,7 @@ class AssembledH:
 
         if self._precond is None:
             self._precond = BlockGaussSeidel(self, max_dense=precond_max_dense,
+                                             above_dense=precond_above_dense,
                                              hodlr_max=precond_hodlr_max,
                                              verbose=self.verbose)
             self._precond_materials = dict(self.materials)
@@ -472,6 +476,12 @@ class AssembledH:
         the true residual. The whole object is kept, its off-diagonal
         Gauss-Seidel couplings included, so what is applied is exactly
         the previous materials' approximate inverse.
+
+        How many solves that keeps per build is also what decides the
+        ladder's rung above the dense cap, since the rungs trade build
+        against solve: ``defaults.PRECOND_RUNG_ABOVE_DENSE`` carries the
+        crossover, and this policy's ~3.5 solves per build is far below
+        it at every size measured.
         """
         new = AssembledH(self.system, self.eps, self.opts, self.verbose,
                          jump=self.jump, deflate=self.deflate,

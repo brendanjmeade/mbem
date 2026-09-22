@@ -24,12 +24,15 @@ The later checks cover the material sweep (view cache, preconditioner
 reuse, warm start, Krylov recycling), parallel determinism, the
 calibrated jump, combined storage, the flat view (the batched matvec and
 leaf kernel against the block loop they replaced), the block-Jacobi rung,
-and the convergence rate: FGMRES iterations on the fault-zone model at two sizes
-~2.7x apart may grow by at most ``defaults.GMRES_ITER_GROWTH_MAX`` and
-never past ``defaults.GMRES_ITER_CEILING`` (the ladder is size-independent),
-under BOTH preconditioner groupings -- which must also agree on the
-solution and on the operator their super-blocks invert.
+and the convergence rate: FGMRES iterations on the fault-zone model at two
+sizes ~2.8x apart must grow no faster than N^``GMRES_ITER_GROWTH_ALPHA``
+and never past ``GMRES_ITER_CEILING``, under both preconditioner
+groupings -- which must also agree on the solution and on the operator
+their super-blocks invert -- and on the block-Jacobi rung that carries
+every super-block past the dense cap; a deliberately non-scalable
+chunking runs alongside them and the criterion must reject it.
 """
+import math
 import pathlib
 import sys
 
@@ -452,9 +455,10 @@ def check_bj_rung():
     """The preconditioner rung ladder, all three rungs on ONE partition:
     each must converge FGMRES to the dense answer, and the two
     approximate rungs must cost a bounded number of extra iterations
-    against the exact dense-LU rung (the block-Jacobi one is the rung
-    that carries super-blocks past the HODLR build, so its penalty is
-    the one with a limit).
+    against the exact dense-LU rung (block-Jacobi is the rung that
+    carries every super-block past the dense cap, so its penalty is the
+    one with a limit; HODLR is the non-default rung and is here so that
+    it stays gated).
 
     Every rung is FORCED here by its own cap rather than chosen by size:
     the dense cap is otherwise resolved per machine
@@ -486,17 +490,22 @@ def check_bj_rung():
     hasm = HBackend(jump="half").assemble(system, EPS)
     sol_ref = AssembledDense(system, EPS, "direct", jump="half").solve()
 
-    # (max_dense, hodlr_max, bj_chunk) per arm. 1500 as the dense cap
-    # puts the top super-block on the rung under test and the same 1500
-    # as the chunk makes the block-Jacobi arm cut it the same way, so
-    # the three arms invert the same partition.
+    # (max_dense, above_dense, hodlr_max, bj_chunk) per arm. 1500 as the
+    # dense cap puts the top super-block on the rung under test and the
+    # same 1500 as the chunk makes the block-Jacobi arm cut it the same
+    # way, so the three arms invert the same partition. The HODLR arm
+    # names its rung explicitly, which is the only way it is reached:
+    # ``defaults.PRECOND_RUNG_ABOVE_DENSE`` sends a block past the dense
+    # cap to block-Jacobi, so this check is what keeps the non-default
+    # rung gated.
     results = {}
-    for name, caps in (("dense LU", (10 ** 9, 10 ** 9, 1500)),
-                       ("HODLR", (1500, 10 ** 9, 1500)),
-                       ("block-Jacobi", (1500, 1, 1500))):
+    for name, caps in (("dense LU", (10 ** 9, "block_jacobi", 0, 1500)),
+                       ("HODLR", (1500, "hodlr", 10 ** 9, 1500)),
+                       ("block-Jacobi", (1500, "block_jacobi", 0, 1500))):
         t0 = time.perf_counter()
-        M = BlockGaussSeidel(hasm, max_dense=caps[0], hodlr_max=caps[1],
-                             bj_chunk=caps[2], grouping="patch")
+        M = BlockGaussSeidel(hasm, max_dense=caps[0], above_dense=caps[1],
+                             hodlr_max=caps[2], bj_chunk=caps[3],
+                             grouping="patch")
         t_build = time.perf_counter() - t0
         rungs = sorted({sb["rung"] for sb in M.summary()["super_blocks"]})
         x, rep = fgmres(hasm.matvec, hasm.b, M=M, rtol=1e-9)
@@ -919,19 +928,39 @@ def check_certificate_retry():
     return ok and n_retry > 0 and kept_vs_exact < first_vs_exact
 
 
-def check_convergence_rate():
-    """The block-Gauss-Seidel ladder is size-independent under EITHER
-    grouping: on the fault-zone model at two sizes ~2.7x apart (eps =
-    "auto", calibrated jump, the caller settings of the other checks)
-    every solve must converge with a true residual below rtol, and
-    iterations(large) may be at most GMRES_ITER_GROWTH_MAX x
-    iterations(small) and GMRES_ITER_CEILING.
+def _growth_alpha(it_small, it_large, n_small, n_large):
+    """Exponent of iterations ~ N^alpha between two sizes."""
+    return (math.log(it_large / max(it_small, 1))
+            / math.log(n_large / n_small))
 
-    Both groupings run because the grouping (``defaults.PRECOND_GROUPING``)
-    is what sets the count -- "region" inverts each region's whole block
-    and iterates about half as often as "patch" -- and the two must reach
-    the SAME solution to the solver tolerance: a preconditioner changes
-    the path, never the answer.
+
+def check_convergence_rate():
+    """How the preconditioned iteration count grows with the problem
+    size, on the fault-zone model at two sizes ~2.8x apart (eps = "auto",
+    calibrated jump, the caller settings of the other checks). Every
+    solve must converge with a true residual below rtol, and the exponent
+    alpha of iterations ~ N^alpha must stay under
+    ``defaults.GMRES_ITER_GROWTH_ALPHA``, the count under
+    ``GMRES_ITER_CEILING``.
+
+    Four arms, because three different things set that count:
+
+    * the two GROUPINGS at the default ladder
+      (``defaults.PRECOND_GROUPING``) -- "region" inverts each region's
+      whole block and iterates about half as often as "patch" -- which
+      must reach the SAME solution to the solver tolerance, since a
+      preconditioner changes the path, never the answer. Every
+      super-block of this model fits the dense-LU rung, so these two
+      measure the OPERATOR's own size-independence (alpha ~ 0.05);
+    * the SCALING RUNG: cluster block-Jacobi forced on every super-block
+      with the chunk cut to 1000 DOFs, so that it really subdivides at
+      this model's size (see below). This is the rung the default
+      ladder uses past the dense cap and the only one whose count grows,
+      so it is the arm the exponent is really for;
+    * a SEEDED FAILURE: the same rung at a 96-DOF chunk, a
+      preconditioner that is deliberately not scalable. The check fails
+      if the criterion ACCEPTS it. Without it a growth bound proves
+      nothing -- it would pass just as happily at any value.
 
     Where the dense operator is affordable (the small size) the gate goes
     one level deeper: each super-block's diagonal AS THE LADDER EVALUATES
@@ -945,12 +974,27 @@ def check_convergence_rate():
     from mbem.la.preconditioner import BlockGaussSeidel
     from mbem.la.solver import fgmres
 
-    iters = {"patch": {}, "region": {}}
+    # Chunk sizes for the two forced block-Jacobi arms. This model's
+    # largest super-block is 384 DOFs small and 1092 large, so 1000 is
+    # what puts the rung in the regime the production ladder runs in --
+    # a chunk FIXED while the block grows -- and 96 is the degenerate
+    # near-pointwise chunking that must be rejected.
+    bj_chunk, seed_chunk = 1000, 96
+    arms = {
+        "patch": dict(grouping="patch"),
+        "region": dict(grouping="region"),
+        "patch/bj": dict(grouping="patch", max_dense=1, bj_chunk=bj_chunk),
+        "seeded fail": dict(grouping="patch", max_dense=1,
+                            bj_chunk=seed_chunk),
+    }
+    iters = {name: {} for name in arms}
+    unknowns = {}
     ok = True
     for label, refine in (("small", 1.0), ("large", 1.64)):
         model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0),
                                   refine=refine)
         system = generate_system(model)
+        unknowns[label] = system.layout.n_unknowns
         t0 = time.perf_counter()
         hasm = HBackend().assemble(system, "auto")
         t_build = time.perf_counter() - t0
@@ -958,39 +1002,51 @@ def check_convergence_rate():
         print(f"    {label:>5} ({system.layout.n_unknowns:5d} unknowns): "
               f"operator built in {t_build:.1f} s")
         sols = {}
-        for grouping in ("patch", "region"):
+        for name, kw in arms.items():
             t0 = time.perf_counter()
-            M = BlockGaussSeidel(hasm, grouping=grouping)
+            M = BlockGaussSeidel(hasm, **kw)
             t_ladder = time.perf_counter() - t0
-            if A is not None:
+            if A is not None and name in ("patch", "region"):
                 worst = max(_relmax(M.diagonal_block(k),
                                     A[np.ix_(sb.global_idx, sb.global_idx)])
                             for k, sb in enumerate(M.sbs))
-                print(f"          {grouping:>6}: super-block diagonals vs "
+                print(f"       {name:>11}: super-block diagonals vs "
                       f"the assembled operator rel = {worst:.1e}")
                 ok &= worst < OP_PARITY
             t0 = time.perf_counter()
-            sols[grouping], rep = fgmres(hasm.matvec, hasm.b, M=M)
+            sols[name], rep = fgmres(hasm.matvec, hasm.b, M=M)
             t_solve = time.perf_counter() - t0
-            iters[grouping][label] = rep.iterations
+            iters[name][label] = rep.iterations
             rungs = sorted({sb["rung"] for sb in M.summary()["super_blocks"]})
-            print(f"          {grouping:>6}: {len(M.sbs):2d} super-blocks, "
+            print(f"       {name:>11}: {len(M.sbs):2d} super-blocks, "
                   f"{rep.iterations:3d} iters, converged {rep.converged}, "
                   f"true relres {rep.true_relres:.2e}; ladder "
                   f"{t_ladder:.1f} s, solve {t_solve:.1f} s, rungs {rungs}")
+            # the seeded arm is allowed to be bad, not wrong
             ok &= rep.converged and rep.true_relres < defaults.GMRES_RTOL
         dev = _relmax(sols["region"], sols["patch"])
-        print(f"          region vs patch solution: rel = {dev:.2e}")
+        print(f"       region vs patch solution: rel = {dev:.2e}")
         ok &= dev < defaults.SOLUTION_RTOL
-    for grouping, it in iters.items():
-        growth = it["large"] / max(it["small"], 1)
-        print(f"    {grouping:>6} iteration growth large/small: {growth:.2f} "
-              f"({it['small']} -> {it['large']}; limit "
-              f"{defaults.GMRES_ITER_GROWTH_MAX}, ceiling "
-              f"{defaults.GMRES_ITER_CEILING})")
-        ok &= (growth <= defaults.GMRES_ITER_GROWTH_MAX
-               and it["large"] <= defaults.GMRES_ITER_CEILING)
-    return ok
+    limit = defaults.GMRES_ITER_GROWTH_ALPHA
+    accepted, by_growth = {}, {}
+    for name, it in iters.items():
+        alpha = _growth_alpha(it["small"], it["large"],
+                              unknowns["small"], unknowns["large"])
+        by_growth[name] = alpha <= limit
+        accepted[name] = (by_growth[name]
+                          and it["large"] <= defaults.GMRES_ITER_CEILING)
+        print(f"    {name:>11}: {it['small']} -> {it['large']} iterations "
+              f"over {unknowns['large'] / unknowns['small']:.2f}x, "
+              f"alpha = {alpha:.3f} (limit {limit}, ceiling "
+              f"{defaults.GMRES_ITER_CEILING}) -> "
+              f"{'accepted' if accepted[name] else 'REJECTED'}")
+    ok &= all(accepted[name] for name in ("patch", "region", "patch/bj"))
+    # the gate has teeth only if it rejects the seed, and it must be the
+    # GROWTH criterion that does it, not the absolute ceiling
+    print(f"    the seeded {seed_chunk}-DOF chunking is rejected: "
+          f"{not accepted['seeded fail']} (by growth alone: "
+          f"{not by_growth['seeded fail']})")
+    return ok and not by_growth["seeded fail"]
 
 
 def main():

@@ -139,8 +139,9 @@ python verify/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, p
 The solver stack scales far beyond the dense backend's ~30k-element cap:
 `HBackend(jump="calibrated", storage="combined")` assembles the operator
 block-compressed (matrix-free ACA, parallel across blocks, 1x material-combined
-storage), FGMRES is preconditioned by a three-rung ladder whose last rung
-(cluster block-Jacobi) has O(N) build cost at any patch size, and field
+storage), FGMRES is preconditioned by a block-Gauss-Seidel ladder whose rung
+past the dense-LU cap (cluster block-Jacobi) has O(N) build cost at any patch
+size (a HODLR rung is reachable explicitly, for memory over speed), and field
 evaluation is matrix-free (O(N_obs) memory; a 250k-point map over a model that
 would need a 49 GB dense operator runs in ~9 s and 0.4 GB).
 `mbem.estimate.estimate_memory` predicts the footprint of each backend/mode

@@ -29,22 +29,30 @@ Either way one forward GS sweep in block order (regions in model order,
 host first): the region graph of the models this solves is a path or a
 star, so the sweep approximates chain elimination.
 
-Diagonal solves form a three-rung ladder, ordered by what a rung COSTS
-and not by how approximate it is -- the first two reach the same
-iteration count, so between them only build, memory and apply decide:
+Diagonal solves form a two-rung ladder, ordered by what a rung COSTS and
+not by how approximate it is:
   * size <= max_dense  : exact dense assembly (fast numba kernels) + LU,
                          the cheapest rung to BUILD at every size it
                          fits (``dense_rung_max_dof``); what it spends
                          is n^2 x 8 B of stored factor and a triangular
                          solve per iteration;
-  * size <= hodlr_max  : HODLR solver at loose tolerance over the local
-                         system -- an order less memory and a cheaper
-                         apply WHERE THE BLOCK COMPRESSES, which is what
-                         carries a block past the dense rung's memory;
   * larger             : dense LU on cluster-tree chunks (block Jacobi),
-                         O(N x chunk) in build and memory at any size.
-                         Last, because it is the only rung whose
-                         iteration count grows with N.
+                         O(N x chunk) in build and memory at ANY size.
+                         It is the only rung whose iteration count grows
+                         with N, and that growth is bounded and measured
+                         (``defaults.GMRES_ITER_GROWTH_ALPHA``), not a
+                         reason to prefer a rung that does not build.
+
+``above_dense`` (``defaults.PRECOND_RUNG_ABOVE_DENSE``) names the second
+one. Setting it to ``"hodlr"`` inserts the HODLR rung -- a loose-tolerance
+HODLR solver over the local system, an order less memory than the dense
+rung and a cheaper apply WHERE THE BLOCK COMPRESSES -- between the two,
+up to ``hodlr_max`` DOFs. It is not the default because on these
+geometries such a block is the exception: weak admissibility splits a
+cluster into halves that TOUCH, the off-diagonal blocks are near field
+and enter exactly, and the build is superlinear where the dense rung's
+is not (the constant carries the ladder measurement). Choose it when
+memory, not time, is what binds.
 """
 
 from __future__ import annotations
@@ -314,13 +322,19 @@ class BlockGaussSeidel:
                  hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
                  bj_chunk: int = defaults.PRECOND_BJ_CHUNK_DOF,
                  grouping: str = defaults.PRECOND_GROUPING,
+                 above_dense: str = defaults.PRECOND_RUNG_ABOVE_DENSE,
                  verbose: bool = False):
         # None = the machine's own cap; a caller passing one FORCES the
         # rung boundary (what the gates do to exercise a lower rung).
         if max_dense is None:
             max_dense = dense_rung_max_dof()
+        if above_dense not in ("block_jacobi", "hodlr"):
+            raise ValueError(
+                f"unknown rung above the dense cap {above_dense!r} "
+                f"(expected 'block_jacobi' or 'hodlr')")
         self.max_dense = int(max_dense)
         self.bj_chunk = int(bj_chunk)
+        self.above_dense = above_dense
         self.asm = assembled
         # An all-Neumann model (``deflate``) has a SINGULAR region
         # operator -- the rigid translations the solve projects out -- and
@@ -371,7 +385,7 @@ class BlockGaussSeidel:
                 if verbose:
                     print(f"  SB {[s.name for s in sb.slots]}: dense LU "
                           f"({sb.size} DOFs)")
-            elif sb.size <= hodlr_max:
+            elif above_dense == "hodlr" and sb.size <= hodlr_max:
                 hod = HodlrSolver(ev.eval_block, ev.centroids, ev.d,
                                   tol=hodlr_tol,
                                   leaf_elems=defaults.HODLR_LEAF_ELEMS)
@@ -388,16 +402,15 @@ class BlockGaussSeidel:
                           f"({sb.size} DOFs, tol {hodlr_tol:g}); "
                           f"{hod.rank_summary()}")
             else:
-                # Third rung -- cluster BLOCK-JACOBI: dense LU on the
-                # diagonal blocks of a cluster-tree chunking (chunks of
-                # <= max_dense DOFs). Build memory and time are
-                # O(N x chunk) at ANY super-block size: this is the
-                # rung that scales to 1e5-1e6-element patches, where the
-                # HODLR build itself (root rank ~ sqrt(N), dense
-                # half-matrix fallback) becomes the wall. Costs outer
-                # iterations that GROW with N, which is why it is last;
-                # the diagonal chunks still capture the near-singular
-                # local physics.
+                # Cluster BLOCK-JACOBI: dense LU on the diagonal blocks
+                # of a cluster-tree chunking (chunks of <= bj_chunk
+                # DOFs). Build memory and time are O(N x chunk) at ANY
+                # super-block size: this is the rung that scales to
+                # 1e5-1e6-element patches, where the HODLR build itself
+                # (root rank ~ sqrt(N), dense half-matrix fallback)
+                # becomes the wall. Costs outer iterations that GROW
+                # with N; the diagonal chunks still capture the
+                # near-singular local physics.
                 chunk_units = max(32, bj_chunk // ev.d)
                 tree = build_cluster_tree(ev.centroids, chunk_units)
                 chunks: list = []
@@ -455,14 +468,15 @@ class BlockGaussSeidel:
         return out
 
     def summary(self) -> dict:
-        """{"grouping", "max_dense", "bj_chunk", "build_s": total wall,
-        "super_blocks": [{"slots", "size", "rung", "build_s", ...rung
-        detail}]} in sweep order; JSON-ready. The two caps are reported
-        because the dense one is resolved per MACHINE
+        """{"grouping", "above_dense", "max_dense", "bj_chunk", "build_s":
+        total wall, "super_blocks": [{"slots", "size", "rung", "build_s",
+        ...rung detail}]} in sweep order; JSON-ready. The policy and the
+        caps are reported because the dense one is resolved per MACHINE
         (``dense_rung_max_dof``), so a rung that moved between two runs
         is readable from the record."""
         return {
             "grouping": self.grouping,
+            "above_dense": self.above_dense,
             "max_dense": self.max_dense,
             "bj_chunk": self.bj_chunk,
             "build_s": self.build_s,

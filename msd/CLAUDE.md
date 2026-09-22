@@ -50,7 +50,7 @@ Backend.assemble -> solve -> evaluate_*`.
 | `kernels/basis.py` | material-basis recombination, `resolve_eps`/`resolve_patch_eps`, mesh arrays, Lagrange node lattice and shape functions in the kernels' node order |
 | `evaluate.py` | interior displacement/stress from a solution at each patch's order; `_double_layer_stress` pairs each `Sdd` term with its eigenstress; `DisplacementEvaluator` for repeated grids (P0 only) |
 | `geometry.py` | exact point-to-triangle distance (near-boundary warning, fault containment) |
-| `la/` | `cluster` (trees, admissibility), `aca`, `hop.PairCompressed`, `hodlr`, `solver.fgmres`, `preconditioner.BlockGaussSeidel` (dense LU / HODLR / block-Jacobi ladder) |
+| `la/` | `cluster` (trees, admissibility), `aca`, `hop.PairCompressed`, `hodlr`, `solver.fgmres`, `preconditioner.BlockGaussSeidel` (dense LU then cluster block-Jacobi; a HODLR rung by explicit policy) |
 | `selfcheck.py` | runtime guard: refuses to run if the fault sign convention is wrong (three cached stages, two Poisson ratios) |
 | `defaults.py` | every tolerance and threshold |
 | `estimate.py`, `topography.py`, `wrappers.py` | memory prediction; vertical surface warp; the `build_vertical_fault_zone_model` example |

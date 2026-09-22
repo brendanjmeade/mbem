@@ -15,13 +15,28 @@ GMRES_MAXITER = 600
 # over STAGNATION_WINDOW iterations.
 GMRES_STAGNATION_WINDOW = 100
 GMRES_STAGNATION_FACTOR = 10.0
-# The block-Gauss-Seidel ladder is size-independent: the preconditioned
-# iteration count is the number of outlier eigenvalues of A M, not a
-# function of N, so between two meshes ~2.7x apart it may grow by at most
-# this factor (verify_hbackend.py, convergence-rate check) ...
-GMRES_ITER_GROWTH_MAX = 1.25
-# ... and never past this absolute count: beyond it a ladder rung, not the
-# operator, is what changed.
+# How fast the preconditioned iteration count may grow with the problem
+# size, as the exponent alpha of iterations ~ N^alpha between two meshes
+# (verify_hbackend.py, convergence-rate check). An exponent, not a ratio,
+# because the ratio only means something at one fixed size step and the
+# ladders this is measured on step by 1.7x to 2.8x.
+#
+# On the EXACT rungs the count is the number of outlier eigenvalues of
+# A M, not a function of N: alpha = 0.05 on the gate's fault-zone pair
+# (18 -> 19 over 2.84x). The rung that carries every super-block past the
+# dense cap, cluster block-Jacobi, does grow, because its chunk is fixed
+# while the block is not: 27 / 34 / 37 / 42 iterations at 31k / 68k /
+# 117k / 269k unknowns on topo_inclusion, i.e. alpha 0.29 / 0.15 / 0.15
+# per step and 0.20 end to end over 8.7x, and 0.315 (18 -> 25) on the
+# gate's own pair with the chunk cut to 1000 DOFs so that the rung
+# actually subdivides there. 0.4 is that worst measurement plus the two
+# iterations of drift BENCH_ITER_SLACK allows elsewhere (18 -> 27 is
+# alpha 0.389); it is not slack for a preconditioner that does not
+# scale -- the same check seeds one, a 96-DOF chunking, and requires
+# this criterion to REJECT it (21 -> 41, alpha 0.641).
+GMRES_ITER_GROWTH_ALPHA = 0.4
+# ... and never past this absolute count on the gate's models: beyond it a
+# ladder rung, not the operator, is what changed.
 GMRES_ITER_CEILING = 40
 # What shares a diagonal super-block of that ladder
 # (la/preconditioner.group_slots): "patch" (one per patch, an interface's
@@ -40,10 +55,11 @@ GMRES_ITER_CEILING = 40
 # still fit the dense-LU rung (~1e4 unknowns, where it costs ~1 s and
 # halves the count) or for a fixed iteration budget (an expensive
 # matvec). Its rung must be direct-type either way: with the block-Jacobi
-# rung forced on the region block the count goes to 29 / 37, worse than
-# "patch". The merged block's HODLR rank is NOT what stops it -- 690 at
-# 29.7k and 1310 at 83k against 606 and 840 for the largest interface
-# block, inside the 2x the work plan allowed.
+# rung on the region block the count goes to 29 / 37, worse than "patch",
+# so past the dense cap it also needs PRECOND_RUNG_ABOVE_DENSE = "hodlr"
+# and the build that costs. The merged block's HODLR rank is NOT what
+# stops it -- 690 at 29.7k and 1310 at 83k against 606 and 840 for the
+# largest interface block, inside the 2x the work plan allowed.
 PRECOND_GROUPING = "patch"
 
 # --- Material sweeps: preconditioner reuse and Krylov recycling --------
@@ -284,25 +300,64 @@ MAX_DENSE_PRECOND_DOF = 30_000
 # la/preconditioner.dense_rung_max_dof resolves the two into the cap the
 # ladder uses.
 PRECOND_DENSE_RAM_FRACTION = 0.06
-# Rung 2 cap: above this many DOFs in one super-block the HODLR build
-# itself becomes the memory/time wall (its root off-diagonal rank grows
-# ~sqrt(N) and a block that is not low rank materializes a dense
-# half-matrix), so the ladder switches to the cluster BLOCK-JACOBI rung.
+# Which rung takes a super-block that is PAST the dense cap. The value
+# is the rung's own name, as la/preconditioner reports it.
+#
+# "block_jacobi" (the default) because HODLR does not scale on these
+# geometries. Measured on topo_inclusion, one operator per size and each
+# policy solved off it (iterations, preconditioner build):
+#   unknowns   dense cap then HODLR     dense cap then block-Jacobi
+#    31,098    23 iters,    4.0 s       27 iters,   2.9 s
+#    67,962    24 iters,  292.7 s       34 iters,   7.8 s
+#   117,120    25 iters,  127.0 s       37 iters,  10.1 s
+#   269,346    27 iters, 3131.9 s       42 iters,  28.4 s
+# -- a 24x build for 2.3x the unknowns on the last step (and 91.9 GB of
+# peak RSS, at the benchmark gate's own 0.7 x RAM limit) against 2.8x for
+# block-Jacobi. The 10-20 iterations HODLR saves are seconds of FGMRES;
+# its build is tens of minutes. The reason is geometric and is the same
+# one HODLR_LEAF_ELEMS below records: weak admissibility splits a cluster
+# into two halves that TOUCH, so the off-diagonal blocks are near field,
+# exceed the ACA rank cap and enter EXACTLY, and the factorization
+# degenerates into a dense one with worse constants -- which is why the
+# build grows superlinearly while its rank stays as predicted.
+#
+# "hodlr" stays reachable as an explicit choice (this constant, or the
+# ``above_dense`` argument of BlockGaussSeidel / the ``precond_above_dense``
+# argument of AssembledH.solve) because where a block DOES compress it is
+# an order less memory than the dense rung -- 0.12 GB against 2.23 GB on
+# a 15.8k-DOF block -- and a cheaper apply with it. It is the rung for a
+# machine that is memory-bound rather than time-bound, and for a fixed
+# iteration budget (an expensive matvec).
+#
+# What decides between them on WALL time is how many solves one ladder
+# build has to serve, since block-Jacobi buys build and spends solve:
+# the crossover is k = (build_hodlr - build_bj) / (solve_bj - solve_hodlr),
+# 9-13 solves per build at 117k unknowns (build 127-170 s against 35;
+# solve 17.8 s at 25 iterations against 28.0 at 37) and ~120 at 269k,
+# where the HODLR build is 3132 s against 29. A material sweep under the
+# PRECOND_REUSE_MAX_STEP policy delivers 3.5 (14 solves, 4 builds), so
+# block-Jacobi wins it at both sizes measured: at 117k the 14-step sweep
+# is 815 s against 1219 reusing the ladder and 1196 against 2954
+# rebuilding it every solve. Note also that the HODLR build is not even
+# stable across a sweep's materials on one geometry -- 118 to 277 s for
+# the same blocks -- while the block-Jacobi build holds 35 s.
+PRECOND_RUNG_ABOVE_DENSE = "block_jacobi"
+# Cap on the HODLR rung WHERE IT IS CHOSEN: above this many DOFs in one
+# super-block its build is the wall outright (its root off-diagonal rank
+# grows ~sqrt(N) and a block that is not low rank materializes a dense
+# half-matrix), so even an explicit "hodlr" policy hands such a block to
+# the block-Jacobi rung.
 PRECOND_HODLR_MAX_DOF = 150_000
-# Rung 3: dense LU on cluster-tree chunks of at most this many DOFs, so
-# its build is O(N x chunk) and its memory chunk x 8 B per DOF (72 KB/DOF
-# at 9000) at ANY super-block size. It is the last rung because it is the
-# only one whose iteration count grows with N: on the topo ladder it
-# costs +4 iterations at 31k unknowns, +10 at 68k (24 -> 34) and +12 at
-# 117k (25 -> 37), where the dense and HODLR rungs hold 23 / 24 / 25 --
-# the growth GMRES_ITER_GROWTH_MAX exists to forbid. Its wall time is
-# the best of the three (24 s of ladder plus solve at 117k against 144),
-# and it is still the LAST rung, because a preconditioner that needs
-# more iterations at every refinement is the one thing this ladder is
-# for. It is a separate number from
-# MAX_DENSE_PRECOND_DOF (which it used to follow) because the two bound
-# different things -- memory per DOF against memory per block -- and the
-# measurement moved them an order apart.
+# The rung past the dense cap (see PRECOND_RUNG_ABOVE_DENSE): dense LU on
+# cluster-tree chunks of at most this many DOFs, so its build is
+# O(N x chunk) and its memory chunk x 8 B per DOF (72 KB/DOF at 9000) at
+# ANY super-block size. It is the only rung whose iteration count grows
+# with N -- on the topo ladder +4 iterations at 31k unknowns, +10 at 68k
+# and +12 at 117k against the exact rungs' 23 / 24 / 25 -- and that growth
+# is bounded, not forbidden: it is what GMRES_ITER_GROWTH_ALPHA measures.
+# It is a separate number from MAX_DENSE_PRECOND_DOF (which it used to
+# follow) because the two bound different things -- memory per DOF against
+# memory per block -- and the measurement moved them an order apart.
 PRECOND_BJ_CHUNK_DOF = 9000
 
 # --- HODLR ladder rung ------------------------------------------------
@@ -337,7 +392,6 @@ HODLR_PRECOND_TOL = 1e-2
 # share a full-width seam: at 23.8k DOF one quarter-size off-diagonal
 # block is still exact (rank 5955) and the build is still 255 s against
 # the dense LU's 14.7 s. Such a block belongs on rung 1.
-HODLR_LEAF_ELEMS = 384
 HODLR_LEAF_ELEMS = 384
 
 # --- Mollification ----------------------------------------------------

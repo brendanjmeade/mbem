@@ -28,7 +28,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
-from .aca import BasisLR, BlockEvalCache, compress_block
+from .aca import BlockEvalCache, SharedLR, compress_block
 from .cluster import build_cluster_tree
 
 
@@ -130,8 +130,8 @@ class HodlrSolver:
         cache = BlockEvalCache(stack_fn, rows, cols, d=self.d)
         res = compress_block(cache, 1, tol=self.tol, rng=self.rng)
         self.n_fallback += 1 if res.fallback else 0
-        if isinstance(res.payload, BasisLR):
-            return res.payload.U[0], res.payload.V[0]
+        if isinstance(res.payload, SharedLR):
+            return res.payload.factors(0)
         self.n_exact += 1
         M = res.payload[0]
         n1, n2 = M.shape

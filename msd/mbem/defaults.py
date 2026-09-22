@@ -23,6 +23,28 @@ GMRES_ITER_GROWTH_MAX = 1.25
 # ... and never past this absolute count: beyond it a ladder rung, not the
 # operator, is what changed.
 GMRES_ITER_CEILING = 40
+# What shares a diagonal super-block of that ladder
+# (la/preconditioner.group_slots): "patch" (one per patch, an interface's
+# (u,t) pair together) or "region" (one per region, each interface owned
+# by its inclusion, so the block is a closed single-region surface).
+# "region" buys ITERATIONS and spends LADDER BUILD, measured on the
+# inclusion ladder (10.9k / 29.7k / 83k unknowns, rtol 1e-8): 22 / 24 / 25
+# iterations over a 0.5 / 9 / 408 s build with "patch" against 9 / 10 / 11
+# over 1.3 / 273 / 4925 s with "region". The count is material-insensitive
+# (9-10 at both mu_host/10 and mu_host/100), but the region block holds
+# 72-76 % of the unknowns, so past MAX_DENSE_PRECOND_DOF only the HODLR
+# rung can solve it and that build is superlinear (a 63k-DOF block is
+# 4473 s and 3.8 GB). Iterations are not the currency there: the 14 the
+# grouping saves at 83k are 3 s of FGMRES against 4500 s of extra build.
+# So the default is "patch"; "region" is for a model whose region blocks
+# still fit the dense-LU rung (~1e4 unknowns, where it costs ~1 s and
+# halves the count) or for a fixed iteration budget (an expensive
+# matvec). Its rung must be direct-type either way: with the block-Jacobi
+# rung forced on the region block the count goes to 29 / 37, worse than
+# "patch". The merged block's HODLR rank is NOT what stops it -- 690 at
+# 29.7k and 1310 at 83k against 606 and 840 for the largest interface
+# block, inside the 2x the work plan allowed.
+PRECOND_GROUPING = "patch"
 
 # --- Material sweeps: preconditioner reuse and Krylov recycling --------
 # A sweep solves one geometry at many materials. The ladder's diagonal
@@ -97,12 +119,14 @@ ADMISSIBILITY_ETA = 2.0
 # dense: at small sizes the epsilon-rank is a large fraction of the
 # block and cross approximation cannot be certified by sampling.
 ACA_MIN_BLOCK = 64
-# Cap on admissible block side (elements). Bounds the exact stack a
-# block materializes when its ACA hits the rank cap or fails its
-# certificate: one T stack is B x (3 n)^2 x 8 bytes -- 0.45 GB at 1024,
-# 1.8 GB at 2048, 7 GB at 4096 -- and ACA_FALLBACK_CONCURRENCY of them
-# may be live at once. Larger values compress the far field slightly
-# better; raise only for smooth, well-separated geometry.
+# Cap on admissible block side (elements). Bounds what a block costs
+# when it is applied EXACTLY (rank-capped, or still uncertified after the
+# retry): one dense material block is (3 n)^2 x 8 bytes, 75 MB at 1024
+# and 1.2 GB at 4096, and its kernel re-evaluation is per material. The
+# cap is not free: splitting an admissible pair of side s into (s/1024)^2
+# blocks multiplies its ACA's row/column evaluations by s/1024, which is
+# 17 % of the whole ACA line budget at 117k unknowns and grows with size.
+# Raise it only for smooth, well-separated geometry.
 MAX_ADMISSIBLE_BLOCK = 1024
 # ACA must converge within this fraction of full element rank, else the
 # block is not low rank at this tolerance and is stored as its exact
@@ -120,6 +144,34 @@ ACA_MAX_RANK_FRACTION = 1.0 / 3.0
 # half the tolerance and the recompression may add the other half.
 ACA_CERTIFY_LINES = 3
 ACA_CERTIFY_FACTOR = 3.0
+# A failed certificate says the sampled stop fired early, not that the
+# block has no low-rank form, so the ACA is RE-RUN once at the tolerance
+# divided by this before the block is applied exactly. Measured on the
+# 21 failures among the 324 admissible blocks of side >= 200 of the 31k
+# topo model: the errors are marginal (3e-4 to 1.1e-3 against the 3e-4
+# limit), a retry at 10x certifies 19 of the 21 at 1.4x the rank and
+# 0.02-0.4 s, and a retry at 100x certifies fewer (3 hit the rank cap)
+# at 1.9x the rank. The retry fires on ~2 % of blocks, so its cost is in
+# the noise; what it replaces is not (see ACA_SVD_FALLBACK_MIN_SIDE).
+ACA_RETRY_TOL_FACTOR = 10.0
+# The B factor pairs of a block are folded into ONE shared subspace
+# (aca.shared_subspace) whose truncation reproduces every basis to this
+# fraction of the block tolerance. It is spent out of the block's error
+# budget, so it must be small against it, and it buys both the material
+# recombination (a k x k sum and SVD instead of a QR of the (3n, sum_b
+# k_b) factors: 134x on 1024-element T blocks) and the stored far field
+# (the joint rank is a fraction of the summed per-basis rank, the bases
+# of one kernel spanning nearly the same row/column spaces). Measured on
+# 1024-element far-field T blocks, joint/summed rank at 1 / 0.3 / 0.1 /
+# 0.03 x the tolerance: 0.29 / 0.37 / 0.41 / 0.46, with the combined
+# per-material rank (15.8) and the certified block error (8.4e-5)
+# unchanged at every setting. 0.1 costs 1.4x the rank of the loosest
+# setting and leaves the truncation an order below the tolerance: the
+# combination it must survive can cancel (mixed-sign T coefficients),
+# and sum_b |c_b| ||A_b|| / ||sum_b c_b A_b|| is what the error is
+# multiplied by -- measured 1.5 over those blocks, so 0.1 holds to a
+# cancellation factor of 10.
+ACA_JOINT_TOL_FACTOR = 0.1
 # rcond of the ACA pivot block's pseudo-inverse (aca._pinv3, mirrored in
 # aca_numba): a singular value below this fraction of the leading one is
 # treated as zero, and a 3x3 pivot block with |det| <= rcond x ||P||_F^3
@@ -136,15 +188,16 @@ ACA_PINV_RCOND = 1e-12
 # Rebuild-vs-fresh, combined-vs-basis and determinism stay bitwise.
 H_PARITY_OPERATOR = 50
 H_PARITY_SOLUTION = 10
-# A block whose certificate fails is re-done from its exact stack:
-# stored dense below this many elements on its shorter side (an SVD of
-# a stack the ACA already found not low rank buys little on 6 x 768^2
-# x 8 B = 28 MB), SVD-truncated at the block tolerance above it.
+# A block that fails its certificate TWICE and whose caller needs a
+# payload (the HODLR rung) is re-done from its exact stack: kept dense
+# below this many elements on its shorter side, SVD-truncated above it.
+# The OPERATOR path never comes here -- it applies such a block from the
+# kernels instead. The reason is cost: the SVD is B x O(m n min(m, n))
+# at one BLAS thread, 13 s on a 404-element T block, and at 31k unknowns
+# three such blocks were 39 of the 76 CPU-seconds of all block
+# compression; at 117k, where admissible blocks reach 756 elements, the
+# same 3 % failure rate over 3,173 large blocks made assembly unfinishable.
 ACA_SVD_FALLBACK_MIN_SIDE = 256
-# Max CONCURRENT exact-stack materializations during parallel block
-# compression -- each is a full (B, 3nr, 3nc) basis stack (0.45 GB at
-# MAX_ADMISSIBLE_BLOCK = 1024 for the T kernel).
-ACA_FALLBACK_CONCURRENCY = 2
 # Two implementations of the same seeded ACA -- aca._aca_python and the
 # nogil kernel of aca_numba -- pivot identically (same lines from the
 # same seed, same arithmetic order where it decides a pivot), but their

@@ -288,24 +288,29 @@ class _HopPhases:
 def operator_stats(hasm) -> tuple[dict, dict, int]:
     """(bytes, ranks, fallbacks) of an AssembledH from its pairs: near =
     the dense blocks and lowrank = the factors of every cached material
-    view (both per material, never per basis); bases = per-basis factors
-    still held (storage="basis"). Index and pointer arrays (~1 % of a
-    view) are not counted."""
+    view (both per material, never per basis); bases = the shared
+    subspaces still held (storage="basis"), whose rank against the
+    summed per-basis ranks they replace is ``joint_over_summed``. Index
+    and pointer arrays (~1 % of a view) are not counted."""
     near = lowrank = bases = 0
+    joint = summed = 0
     ranks: list = []
-    n_lowrank = n_dense = fallbacks = capped = 0
+    n_lowrank = n_dense = fallbacks = capped = retried = 0
     certified = 0.0
     for pair in hasm._pairs.values():
         n_lowrank += pair.n_lowrank
         n_dense += pair.n_dense
         fallbacks += pair.n_fallback
         capped += getattr(pair, "n_capped", 0)
+        retried += getattr(pair, "n_retry", 0)
         certified = max(certified, getattr(pair, "max_verified_err", 0.0))
         if pair.blocks is not None:
             for _, _, payload in pair.blocks:
                 if payload is not None:
                     bases += payload.nbytes()
-                    ranks.extend(payload.ranks)
+                    ranks.append(payload.rank)
+                    joint += payload.rank
+                    summed += sum(payload.basis_ranks)
         for view in pair._views.values():
             near += view.dense_nbytes()
             lowrank += view.lowrank_nbytes()
@@ -318,7 +323,10 @@ def operator_stats(hasm) -> tuple[dict, dict, int]:
     r = {"mean": float(np.mean(ranks)) if ranks else 0.0,
          "max": int(max(ranks)) if ranks else 0,
          "n_lowrank": n_lowrank, "n_dense": n_dense, "n_capped": capped,
-         "certified_error": certified}
+         "n_retried": retried, "certified_error": certified,
+         # storage="basis" only: the shared subspace's rank against the
+         # summed per-basis ranks it replaces (aca.shared_subspace).
+         "joint_over_summed": joint / summed if summed else 0.0}
     return b, r, fallbacks
 
 

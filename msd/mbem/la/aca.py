@@ -1,15 +1,23 @@
 """Block ACA compression of material-basis matrix stacks.
 
-Each admissible block stores the basis matrices SEPARATELY in low rank:
+Each admissible block is compressed basis by basis,
 
     A_b ~ U_b @ V_b.T          b = 1..B   (B = 3 for U-kernel, 6 for T)
 
-Per-basis storage beats compressing the stacked matrix because the basis
-matrices do not share row/column spaces (a stacked factorization pays up
-to a Bx rank penalty — measured, not hypothetical). The per-material
-combined block sum_b c_b U_b V_b^T is re-truncated once per material by
-QR+SVD and cached by the operator layer, so matvec rank stays at the
-combination's own epsilon-rank.
+— a stacked factorization pays up to a Bx rank penalty, because the
+basis matrices do not share row/column spaces exactly — and the B factor
+pairs are then folded ONCE into a SHARED SUBSPACE (``shared_subspace``):
+
+    A_b = Q_u @ cores[b] @ Q_v.T       Q_u, Q_v orthonormal
+
+so a material's block is ``Q_u (sum_b c_b cores[b]) Q_v.T``, a k x k sum
+and a k x k SVD instead of a QR+SVD of the (3n, sum_b k_b) factors. The
+per-material recombination stops being the operator's dominant build
+cost (measured 134x on 1024-element T blocks) and the far field shrinks
+with it: the joint rank is 0.41x the summed per-basis rank on those
+blocks and 0.52x over the 2,037 stored blocks of a 31k-unknown model,
+since the bases of one kernel span nearly the same row/column spaces. The material's own epsilon-rank is unchanged — the
+k x k SVD still truncates the combination — so the matvec is untouched.
 
 Pivoting is 3x3 ELEMENT-block (scalar ACA on interleaved xyz DOFs is
 what plateaued in the legacy code, hmatrix.py:493). Kernel evaluations
@@ -24,20 +32,29 @@ numba kernel of :mod:`.aca_numba` instead, which is why a block's
 Python-side cost is now its policy and nothing else.
 
 Every block is CERTIFIED before it is accepted, on ``ACA_CERTIFY_LINES``
-full random rows and as many full random columns evaluated exactly:
-per basis here, at build, and per MATERIAL when the operator layer
-combines the factors (``certify_combined``), because a per-basis
-tolerance does not bound a combination whose coefficients have mixed
-signs (the T coefficients do); the combined check covers every material
-actually applied, declared at build or not. A block whose ACA hits the
+full random rows and as many full random columns evaluated exactly: per
+basis here, at build, on the ACA's factors; and per MATERIAL when the
+operator layer combines the cores (``certify_combined``), because a
+per-basis tolerance does not bound a combination whose coefficients have
+mixed signs (the T coefficients do). The per-material check is the
+binding one -- it covers every material actually applied, declared at
+build or not, and it certifies the block AS APPLIED, the recombined
+``U @ V.T`` the matvec runs, with the fold inside it. What the fold adds
+between the two is bounded by construction, not by sampling: its
+truncation discards a tail of norm ``ACA_JOINT_TOL_FACTOR`` x tol from
+each basis's normalized core. A block whose ACA hits the
 rank cap is not low rank at this tolerance and is applied exactly, like a
-near-field leaf; a block that fails its per-basis certificate is applied
-exactly when small and SVD-truncated from the exact stack when large
-(``ACA_SVD_FALLBACK_MIN_SIDE``), so correctness never depends on the
-ACA's own stopping rule. What "exactly" costs is the caller's choice:
-the operator path (``exact_payload=False``) keeps only the block's
-indices and re-evaluates it per material with the near-field leaves,
-while the HODLR rung takes the stack.
+near-field leaf. A FAILED CERTIFICATE is a stopping-rule failure, not a
+verdict on the block: the ACA stops on a small random sample, and the
+certificate lines are what catch a sample that fired early, so the block
+is RE-RUN once at ``ACA_RETRY_TOL_FACTOR`` times the tolerance (the
+lines never enter the ACA, so the retry must beat the same certificate)
+and only a second failure is applied exactly, so correctness never
+depends on the ACA's own stopping rule. What "exactly" costs is the
+caller's choice: the operator path (``exact_payload=False``) keeps only
+the block's indices and re-evaluates it per material with the near-field
+leaves, while the HODLR rung takes the stack, SVD-truncated above
+``ACA_SVD_FALLBACK_MIN_SIDE``.
 """
 
 from __future__ import annotations
@@ -49,40 +66,117 @@ import numpy as np
 from .. import defaults
 
 
+# Factorization counters, in the two sizes that matter: "subspace" is a
+# BLOCK-SIZED pass (the ACA's recompressions and the joint QR/SVD of the
+# (d n, sum_b k_b) factors, O(d n k^2)), "core" a k x k SVD of one
+# material's combined core. A material view must add ONLY core ones --
+# that is what the shared subspace buys, and what verify_hbackend
+# asserts on the second material of a sweep. Incremented without a lock:
+# the build count is approximate under the block pool, while the
+# per-material delta a gate reads is taken over a serial loop.
+FACTORIZATIONS = {"subspace": 0, "core": 0}
+
+
 @dataclass
-class BasisLR:
-    """Per-basis low-rank factors: A_b ~ U[b] @ V[b].T (ragged ranks),
-    with the block-local element rows and columns (``cert_rows``,
-    ``cert_cols``) every material combination of them is certified on."""
-    U: list          # B arrays (3nr, k_b)
-    V: list          # B arrays (3nc, k_b)
+class PendingLR:
+    """A block's per-basis factors, not yet folded into a subspace --
+    what ``compress_block(fold=False)`` returns so the caller can choose
+    the thread the fold runs on (``hop`` runs it on the main thread: the
+    fold is dense numpy algebra, and a pool of it contends on OpenBLAS's
+    buffer lock, measured 0.6x of one thread)."""
+    U: list
+    V: list
+    cert_rows: np.ndarray
+    cert_cols: np.ndarray
+
+    def fold(self, tol: float):
+        """This block's ``SharedLR``."""
+        FACTORIZATIONS["subspace"] += 1
+        ranks = tuple(u.shape[1] for u in self.U)
+        if len(self.U) == 1:   # nothing to share: the basis IS the subspace
+            Qu, Qv, cores = self.U[0], self.V[0], None
+        else:
+            Qu, Qv, cores = shared_subspace(
+                self.U, self.V, defaults.ACA_JOINT_TOL_FACTOR * tol)
+        return SharedLR(Qu=Qu, Qv=Qv, cores=cores, basis_ranks=ranks,
+                        cert_rows=self.cert_rows, cert_cols=self.cert_cols)
+
+
+@dataclass
+class SharedLR:
+    """One block's bases in a SHARED subspace: ``A_b = Qu @ cores[b] @
+    Qv.T`` with ``Qu`` (d nr, ku) and ``Qv`` (d nc, kv) orthonormal, plus
+    the block-local element rows and columns (``cert_rows``,
+    ``cert_cols``) every material combination is certified on.
+
+    ``cores is None`` is the SINGLE-basis form (the HODLR rung's coupled
+    blocks): one basis has nothing to share, so ``Qu``/``Qv`` are the
+    ACA's own factors and no joint QR is paid for nothing.
+    ``basis_ranks`` are the ACA's per-basis ranks, kept for the rank
+    statistics and the implementation-parity gate.
+    """
+    Qu: np.ndarray
+    Qv: np.ndarray
+    cores: np.ndarray | None
+    basis_ranks: tuple
     cert_rows: np.ndarray
     cert_cols: np.ndarray
 
     @property
-    def ranks(self) -> list:
-        return [u.shape[1] for u in self.U]
+    def rank(self) -> int:
+        """Columns of the shared column basis (``Qv`` may differ by a
+        few); the stored rank, against ``sum(basis_ranks)`` before."""
+        return int(self.Qu.shape[1])
+
+    def combine(self, c: np.ndarray, tol: float):
+        """Factors ``(U, V)`` of the material block ``sum_b c_b A_b``,
+        truncated at ``tol`` to the COMBINATION's own epsilon-rank: the
+        cores are summed (B k^2) and that k x k sum is what the SVD
+        truncates, so no factor of the block's own size is ever
+        re-factorized for a material."""
+        if self.cores is None:
+            return float(c[0]) * self.Qu, self.Qv
+        C = np.tensordot(np.asarray(c, dtype=float), self.cores, axes=1)
+        FACTORIZATIONS["core"] += 1
+        u, s, vt = np.linalg.svd(C, full_matrices=False)
+        keep = _svd_keep(s, tol)
+        return self.Qu @ (u[:, :keep] * s[:keep]), self.Qv @ vt[:keep, :].T
+
+    def factors(self, b: int):
+        """Low-rank factors ``(A, B)`` of basis ``b`` alone, ``A @ B.T``."""
+        if self.cores is None:
+            return self.Qu, self.Qv
+        return self.Qu @ self.cores[b], self.Qv
+
+    def basis_matrix(self, b: int) -> np.ndarray:
+        """Basis ``b`` as stored, dense -- for gates and diagnostics."""
+        A, B = self.factors(b)
+        return A @ B.T
 
     def nbytes(self) -> int:
-        return sum(u.nbytes + v.nbytes for u, v in zip(self.U, self.V))
+        return int(self.Qu.nbytes + self.Qv.nbytes
+                   + (0 if self.cores is None else self.cores.nbytes))
 
 
 @dataclass
 class BlockResult:
     """Outcome of ``compress_block`` for one admissible block.
 
-    ``payload`` is a ``BasisLR``, the exact ``(B, d nr, d nc)`` stack, or
+    ``payload`` is a ``SharedLR``, the exact ``(B, d nr, d nc)`` stack, or
     ``None`` when the caller asked for no exact payload
     (``exact_payload=False``): the block is not low rank at this
     tolerance and the caller re-evaluates it from the kernels.
-    ``capped``: the ACA hit ``ACA_MAX_RANK_FRACTION``. ``fallback``: the
-    per-basis certificate failed and the block was re-done from its exact
-    stack. ``max_err`` is the largest certified relative Frobenius error
-    over the bases (0 when exact).
+    ``capped``: the ACA hit ``ACA_MAX_RANK_FRACTION``. ``retried``: the
+    first certificate failed and the ACA was re-run at a tighter
+    tolerance. ``fallback``: it failed again, and the block is applied
+    exactly (or SVD-truncated from its exact stack). ``max_err`` is the
+    largest certified relative Frobenius error over the bases (0 when
+    exact).
     """
     payload: object
     capped: bool = False
     fallback: bool = False
+    retried: bool = False
     max_err: float = 0.0
 
 
@@ -321,6 +415,89 @@ def _svd_keep(s: np.ndarray, tol: float) -> int:
     return max(1, min(keep, s.size))
 
 
+def _unit_gram(cores: list, axis: int) -> np.ndarray:
+    """Gram matrix of the cores normalized to unit Frobenius norm,
+    summed over the bases: ``axis=0`` gives ``sum_b C C^T`` (the column
+    side), ``axis=1`` ``sum_b C^T C``.
+
+    Normalizing is what makes the truncation PER BASIS -- the discarded
+    eigenvalue sum is then each basis's squared relative error, and a raw
+    stack would be free to discard a small-norm basis whose material
+    coefficient is large. The Gram rather than the stack itself because
+    it is the same spectrum k x k instead of k x Bk: measured 1.9 ms
+    against 32 ms on a 78-column fold, 81 ms against 1.0 s on a
+    378-column one.
+    """
+    out = None
+    for c in cores:
+        n = float(np.linalg.norm(c))
+        if n == 0.0:
+            continue
+        m = np.ascontiguousarray(c) * (1.0 / n)
+        g = m @ m.T if axis == 0 else m.T @ m
+        out = g if out is None else out + g
+    if out is None:
+        k = cores[0].shape[axis]
+        return np.zeros((k, k))
+    return out
+
+
+def _principal(G: np.ndarray, delta: float) -> np.ndarray:
+    """Leading eigenvectors of a symmetric PSD Gram matrix, dropping as
+    many as have eigenvalues summing to at most ``delta^2`` -- the
+    tail-norm rule on the singular values of the matrix ``G`` is the
+    Gram of."""
+    w, Z = np.linalg.eigh(G)                      # ascending
+    acc = np.cumsum(np.maximum(w, 0.0))
+    drop = int(np.searchsorted(acc, delta * delta, side="right"))
+    keep = max(1, w.size - drop)
+    return np.ascontiguousarray(Z[:, ::-1][:, :keep])
+
+
+def shared_subspace(Us: list, Vs: list, delta: float):
+    """Fold the B factor pairs into one column and one row basis:
+    ``(Qu, Qv, cores)`` with ``U_b V_b^T = Qu cores[b] Qv^T``.
+
+    Thin QR of the concatenated factors gives the exact joint spans; the
+    cores are then truncated, once per side, so that EVERY basis is
+    reproduced to ``delta`` relative Frobenius error (``_unit_gram``,
+    ``_principal``). The B cores that remain are k x k, so the
+    material recombination that used to re-factorize (3n, sum_b k_b)
+    factors becomes a k x k sum plus a k x k SVD.
+
+    ``delta`` is spent out of the block's error budget, not on top of it:
+    ``ACA_JOINT_TOL_FACTOR`` x the block tolerance.
+
+    ``np.linalg.qr`` specifically, and in numpy rather than in the nogil
+    kernel: the QR of a rank-deficient tall factor is where this
+    machine's LAPACK misbehaves, and only numpy's wrapper survives it.
+    numba's returns an R that is read after free
+    (``aca_numba._thin_qr``); scipy's ``qr(mode="economic")`` is 3-25x
+    faster than numpy's on the same shapes and silently corrupts a few
+    blocks per model (measured: 2-6 of the 45 stored blocks of the
+    refined fault zone, nondeterministically, which is what the
+    stored-block scan of ``verify_hbackend`` catches). What numpy's
+    slower QR buys is that scan coming back clean, so it stays.
+
+    It is paid ONCE per block at build -- ``hop`` folds on the main
+    thread, chunk by chunk behind the block pool, a pool of numpy LAPACK
+    being 0.6x of one thread on OpenBLAS's buffer lock -- and no
+    material after the first pays it again.
+    """
+    ks = [u.shape[1] for u in Us]
+    Qu, Ru = np.linalg.qr(np.hstack(Us))
+    Qv, Rv = np.linalg.qr(np.hstack(Vs))
+    cores, off = [], 0
+    for k in ks:
+        cores.append(np.ascontiguousarray(Ru[:, off:off + k])
+                     @ np.ascontiguousarray(Rv[:, off:off + k].T))
+        off += k
+    Wu = _principal(_unit_gram(cores, 0), delta)
+    cores = [Wu.T @ c for c in cores]
+    Wv = _principal(_unit_gram(cores, 1), delta)
+    return Qu @ Wu, Qv @ Wv, np.array([c @ Wv for c in cores])
+
+
 def _rel_err(approx: np.ndarray, exact: np.ndarray) -> float:
     denom = float(np.linalg.norm(exact))
     if denom == 0.0:
@@ -332,21 +509,22 @@ def _dof_sel(elems: np.ndarray, d: int) -> np.ndarray:
     return (d * elems[:, None] + np.arange(d)[None, :]).ravel()
 
 
-def _exact_stack(cache: BlockEvalCache, fallback_gate) -> np.ndarray:
+def _exact_stack(cache: BlockEvalCache) -> np.ndarray:
     """The block's exact basis stack, with the pivot caches released
-    first and the materialization bounded by ``fallback_gate``."""
+    first. Only a caller that asked for an exact payload reaches it: the
+    operator path re-evaluates such a block from the kernels instead."""
     cache.clear()
-    if fallback_gate is None:
-        return cache.dense()
-    with fallback_gate:
-        return cache.dense()
+    return cache.dense()
 
 
 def svd_from_stack(dense: np.ndarray, tol: float):
     """Per-basis SVD truncation of an exact block stack ``(B, m, n)`` at
-    ``tol``: ``([U_b], [V_b], max relative tail norm)``. The fallback for
-    a block whose ACA factors failed their certificate and which is too
-    large to keep exact."""
+    ``tol``: ``([U_b], [V_b], max relative tail norm)``. The last resort
+    of a caller that needs a PAYLOAD (the HODLR rung) for a block whose
+    retried ACA still failed its certificate and which is too large to
+    keep exact. It costs B x O(m n min(m, n)) at one BLAS thread -- 13 s
+    on a 404-element T block -- so the operator path does not use it: it
+    applies such a block exactly from the kernels instead."""
     Us: list = []
     Vs: list = []
     err = 0.0
@@ -423,35 +601,43 @@ def _aca_python(cache: BlockEvalCache, n_basis: int, tol: float, srows,
 
 def compress_block(cache: BlockEvalCache, n_basis: int,
                    tol: float = defaults.BLOCK_COMPRESSION_TOL,
-                   rng=None, fallback_gate=None,
-                   exact_payload: bool = True) -> BlockResult:
-    """Compress all basis matrices of one admissible block: the ACA and
-    certificate stage (``cache.aca_fn``, else ``_aca_python``) plus the
-    policy that turns its outcome into a payload.
+                   rng=None, exact_payload: bool = True,
+                   fold: bool = True) -> BlockResult:
+    """Compress all basis matrices of one admissible block: the ACA,
+    shared-subspace and certificate stage (``cache.aca_fn``, else
+    ``_aca_python``) plus the policy that turns its outcome into a
+    payload.
 
     Per-basis ACA with a shared kernel-evaluation cache, stopped on one
-    random sample and CERTIFIED per basis on an independent draw of
-    ``ACA_CERTIFY_LINES`` full rows and columns (the same rows and
-    columns then certify each material combination at view time). The
+    random sample, folded into one shared subspace
+    (``shared_subspace``) and CERTIFIED per basis AS STORED on an
+    independent draw of ``ACA_CERTIFY_LINES`` full rows and columns (the
+    same rows and columns then certify each material combination at view
+    time, where the block is certified as APPLIED). The
     lines are drawn here, from ``rng`` alone, so the factors are
     deterministic for a given seed and identical across implementations
     of the ACA.
 
     Outcomes (``BlockResult``): certified factors; the exact block when
     any basis hits the rank cap (not low rank at this tolerance); on a
-    certificate error above ``ACA_CERTIFY_FACTOR * tol``, the exact block
-    when its shorter side is below ``ACA_SVD_FALLBACK_MIN_SIDE`` elements,
-    else its per-basis SVD truncation at ``tol``.
+    certificate error above ``ACA_CERTIFY_FACTOR * tol``, one RETRY of
+    the same ACA at ``tol / ACA_RETRY_TOL_FACTOR`` -- a failed
+    certificate means the sampled stop fired early, and the retry buys
+    the missing pivots for a few per cent of the block's kernel work --
+    and, if that fails too, the exact block.
+
+    ``fold=False`` stops one step short of a ``SharedLR`` and returns
+    the block's per-basis factors as a ``PendingLR``: the shared
+    subspace is dense numpy algebra, so a caller compressing blocks on a
+    thread pool folds them itself, off the pool.
 
     ``exact_payload=False`` (the operator path) returns ``payload=None``
-    instead of an exact stack: the caller re-evaluates such a block from
+    for every exact outcome: the caller re-evaluates such a block from
     the kernels with the near-field leaves (``la.flatview.dense_leaves``),
-    so no (B, 3nr, 3nc) stack is materialized at all. The HODLR rung
-    keeps the default -- it has no leaf kernel behind it.
-
-    ``fallback_gate`` (a semaphore-like context manager) bounds how many
-    exact stacks may be materialized CONCURRENTLY: one T stack is
-    B x (3 n)^2 x 8 bytes, 0.45 GB at n = MAX_ADMISSIBLE_BLOCK = 1024.
+    so no (B, 3nr, 3nc) stack is materialized at all, and no size-dependent
+    SVD fallback is reachable. The HODLR rung keeps the default -- it has
+    no leaf kernel behind it -- and SVD-truncates a stack whose shorter
+    side reaches ``ACA_SVD_FALLBACK_MIN_SIDE``.
     """
     rng = np.random.default_rng(0) if rng is None else rng
     n_rows = len(cache.rows)
@@ -461,28 +647,36 @@ def compress_block(cache: BlockEvalCache, n_basis: int,
                               * defaults.ACA_MAX_RANK_FRACTION)),
                    n_rows, n_cols)
 
-    if cache.aca_fn is None:
-        Us, Vs, err, capped = _aca_python(cache, n_basis, tol, srows, scols,
-                                          cert_rows, cert_cols, max_rank)
-    else:
-        Us, Vs, err, capped = cache.aca_fn(tol, srows, scols, cert_rows,
-                                           cert_cols, max_rank)
+    def _aca(at_tol):
+        if cache.aca_fn is None:
+            return _aca_python(cache, n_basis, at_tol, srows, scols,
+                               cert_rows, cert_cols, max_rank)
+        return cache.aca_fn(at_tol, srows, scols, cert_rows, cert_cols,
+                            max_rank)
+
+    def _payload(Us, Vs):
+        """The block's B factor pairs, folded into one shared subspace
+        unless the caller asked to fold them itself (``fold=False``)."""
+        pending = PendingLR(U=Us, V=Vs, cert_rows=cert_rows,
+                            cert_cols=cert_cols)
+        return pending if not fold else pending.fold(tol)
+
+    limit = defaults.ACA_CERTIFY_FACTOR * tol
+    Us, Vs, err, capped = _aca(tol)
+    retried = not capped and err > limit
+    if retried:
+        Us, Vs, err, capped = _aca(tol / defaults.ACA_RETRY_TOL_FACTOR)
     cache.clear()
     if capped:
-        return BlockResult(
-            _exact_stack(cache, fallback_gate) if exact_payload else None,
-            capped=True)
-    if err <= defaults.ACA_CERTIFY_FACTOR * tol:
-        return BlockResult(BasisLR(U=Us, V=Vs, cert_rows=cert_rows,
-                                   cert_cols=cert_cols), max_err=err)
-
-    small = min(n_rows, n_cols) < defaults.ACA_SVD_FALLBACK_MIN_SIDE
-    if small and not exact_payload:
-        return BlockResult(None, fallback=True)
-    dense = _exact_stack(cache, fallback_gate)
-    if small:
-        return BlockResult(dense, fallback=True)
+        return BlockResult(_exact_stack(cache) if exact_payload else None,
+                           capped=True, retried=retried)
+    if err <= limit:
+        return BlockResult(_payload(Us, Vs), retried=retried, max_err=err)
+    if not exact_payload:
+        return BlockResult(None, fallback=True, retried=True)
+    dense = _exact_stack(cache)
+    if min(n_rows, n_cols) < defaults.ACA_SVD_FALLBACK_MIN_SIDE:
+        return BlockResult(dense, fallback=True, retried=True)
     Us, Vs, err = svd_from_stack(dense, tol)
-    return BlockResult(BasisLR(U=Us, V=Vs, cert_rows=cert_rows,
-                               cert_cols=cert_cols),
-                       fallback=True, max_err=err)
+    return BlockResult(_payload(Us, Vs), fallback=True, retried=True,
+                       max_err=err)

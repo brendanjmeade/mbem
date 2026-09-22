@@ -16,12 +16,13 @@ factors depend only on the block, the tolerance and the seed: they are
 the factors ``compress_block``'s Python branch produces, which is what
 ``verify_hbackend`` checks block by block.
 
-Products, factorizations and norms go through the same BLAS/LAPACK calls
-as that branch (``np.dot``, ``np.linalg.qr`` / ``svd``, and
-``sqrt(dot(x, x))`` for a Frobenius norm, which is what ``np.linalg.norm``
-does) instead of hand-written loops: the same summation order is what
-makes the two paths agree to round-off rather than to the block
-tolerance.
+Products and norms go through the same BLAS calls as that branch
+(``np.dot``, and ``sqrt(dot(x, x))`` for a Frobenius norm, which is what
+``np.linalg.norm`` does) instead of hand-written loops: the same
+summation order is what makes the two paths agree to round-off rather
+than to the block tolerance -- with one exception, ``np.linalg.qr``,
+whose triangular factor numba returns as a read-after-free view and
+which is therefore recomputed here (see ``_thin_qr``).
 
 Own module, so ``cache=True`` here is invalidated by an edit to this file
 rather than by one to the kernels it calls.
@@ -169,10 +170,40 @@ def _svd_keep(s, tol):
 
 
 @njit(nogil=True, cache=True)
+def _thin_qr(X):
+    """Thin QR of a (m, k) factor: ``(Q, R)`` with ``Q`` orthonormal and
+    ``Q R = X``, through LAPACK's Householder factorization.
+
+    ``R`` is RECOMPUTED as ``Q^T X`` instead of taken from
+    ``np.linalg.qr``, which returns it as a transposed view of a
+    temporary its liveness guard does not cover (numba
+    ``np/linalg.py``: the guard lists ``tau`` and ``q``, not the array
+    behind ``r``). That view is read-after-free: measured garbage of
+    order 1e198 in 2 of 12 calls on a (546, 375) factor, silently and
+    nondeterministically, while ``Q`` from the same call is orthonormal
+    to 2e-15 every time. One extra (m, k) product buys back the exact
+    triangular factor -- and a Gram-matrix basis, which needs no R at
+    all, is not an alternative here: it squares the conditioning of an
+    ACA factor, whose columns span orders of magnitude, and cost four
+    times as many blocks of the 10.9k inclusion model their certificate.
+    """
+    Q, _r_unsafe = np.linalg.qr(X)
+    return Q, np.dot(np.ascontiguousarray(Q.T), X)
+
+
+@njit(nogil=True, cache=True)
 def _recompress(U, V, tol):
-    """``aca.recompress``: thin QR of both factors, SVD of the core."""
-    Qu, Ru = np.linalg.qr(U)
-    Qv, Rv = np.linalg.qr(V)
+    """``aca.recompress``: thin QR of both factors, SVD of the core.
+
+    Stays INSIDE this kernel. A pool of these over the operator's
+    per-material recombinations is 10-15x faster than the serial numpy
+    loop -- and leaves numba's own prange kernels segfaulting on the
+    next call, on this machine's OpenMP-threaded OpenBLAS, at any BLAS
+    thread count. LAPACK from several Python threads is what the whole
+    block ACA already does through the same kernel; at recombination
+    sizes it is not survivable."""
+    Qu, Ru = _thin_qr(U)
+    Qv, Rv = _thin_qr(V)
     u, s, vt = np.linalg.svd(np.dot(Ru, np.ascontiguousarray(Rv.T)), 0)
     keep = _svd_keep(s, tol)
     return (np.dot(Qu, np.ascontiguousarray(u[:, :keep] * s[:keep])),
@@ -200,7 +231,9 @@ def aca_block(x_field, tri_verts, normals, eps, tol, srows, scols,
     ``U_flat`` and ``(3 nc, ranks[b])`` in ``V_flat``; ``err`` is the
     largest certified relative Frobenius error over the bases and
     ``capped`` says a basis exhausted the budget (the block is not low
-    rank at this tolerance and nothing was returned).
+    rank at this tolerance and nothing was returned). The shared
+    subspace the operator folds these into is built in ``aca``, on
+    numpy's LAPACK: see ``aca.shared_subspace``.
     """
     n_rows = x_field.shape[0]
     n_cols = tri_verts.shape[0]

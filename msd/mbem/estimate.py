@@ -24,6 +24,12 @@ from .la.hop import require_order0
 # BLOCK_COMPRESSION_TOL: a far-field T block holds 16 at 1e-4 (42 at
 # 1e-8); a 10k-element plate self-pair averages 9-11 over its blocks.
 ASSUMED_BASIS_RANK = 16
+# What storage="basis" holds on top of the material view: one shared
+# subspace per block (la/aca.shared_subspace), whose rank is this
+# fraction of the B per-basis ranks it replaces -- 0.41 measured on
+# 1024-element far-field T blocks, 0.59 on U blocks of the same pair, so
+# the geometry-only payload is ~2.5x one T view rather than 6x.
+ASSUMED_JOINT_FRACTION = 0.41
 
 
 def total_ram_bytes() -> int | None:
@@ -93,14 +99,20 @@ def estimate_memory(system, mode: str = "direct",
         lowrank_bytes = 0
         for fp, sp, kern in _pair_keys(system, rhs=sweep).values():
             B = kernel_n_basis(kern)
-            mult = B if storage == "basis" else 1
             part = build_partition(_tree(fp.mesh), _tree(sp.mesh),
                                    eta=eta, max_admissible=max_admissible)
+            # The near field is per material in BOTH storage modes (it is
+            # re-evaluated from the kernels, never stored per basis).
             for rows, cols in part.dense:
-                dense_bytes += mult * (3 * len(rows)) * (3 * len(cols)) * 8
+                dense_bytes += (3 * len(rows)) * (3 * len(cols)) * 8
             for rows, cols in part.admissible:
                 k = min(ASSUMED_BASIS_RANK, len(rows), len(cols))
-                lowrank_bytes += mult * 3 * (len(rows) + len(cols)) * k * 8
+                lowrank_bytes += 3 * (len(rows) + len(cols)) * k * 8
+                if storage == "basis":      # + the block's shared subspace
+                    kj = min(int(ASSUMED_JOINT_FRACTION * B * k) + 1,
+                             3 * len(rows), 3 * len(cols))
+                    lowrank_bytes += (3 * (len(rows) + len(cols)) * kj
+                                      + B * kj * kj) * 8
         out["dense_leaf_bytes"] = dense_bytes
         out["lowrank_bytes"] = lowrank_bytes
         out["storage"] = storage

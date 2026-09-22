@@ -26,7 +26,9 @@ calibrated jump, combined storage, the flat view (the batched matvec and
 leaf kernel against the block loop they replaced), the block-Jacobi rung,
 and the convergence rate: FGMRES iterations on the fault-zone model at two sizes
 ~2.7x apart may grow by at most ``defaults.GMRES_ITER_GROWTH_MAX`` and
-never past ``defaults.GMRES_ITER_CEILING`` (the ladder is size-independent).
+never past ``defaults.GMRES_ITER_CEILING`` (the ladder is size-independent),
+under BOTH preconditioner groupings -- which must also agree on the
+solution and on the operator their super-blocks invert.
 """
 import pathlib
 import sys
@@ -389,10 +391,18 @@ def check_calibrated():
 
 
 def check_combined_storage():
-    """storage='combined' (roadmap C2): 1x memory instead of B-fold
-    per-basis storage. Same seeds + identical combine path => the
+    """storage='combined' (roadmap C2): 1x memory, against the
+    geometry-only payload storage='basis' keeps so that a new material
+    never re-compresses. Same seeds + identical combine path => the
     combined views must equal the basis-mode views BITWISE; a material
-    rebuild (transient re-compression) must reproduce basis mode."""
+    rebuild (transient re-compression) must reproduce basis mode.
+
+    The payload is bounded on BOTH sides. Below: dropping it must
+    actually save memory. Above: it is one shared subspace per block, not
+    B factor pairs -- measured 2.4x one material view of this pair, where
+    the same payload unfolded (``ACA_JOINT_TOL_FACTOR`` at 0, joint rank
+    = the summed per-basis rank) is 6.4x. A regression that undid the
+    fold would land above the upper bound."""
     field = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), 0.0,
                                    16, 16, normal_up=True)   # 512 tris
     source = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), -240.0,
@@ -409,8 +419,9 @@ def check_combined_storage():
                           max_admissible=512, storage="combined",
                           combine_for=[ca])
     ratio = basis.nbytes() / max(comb.nbytes(), 1)
-    print(f"    memory: basis {basis.nbytes()/1e6:.1f} MB vs combined "
-          f"{comb.nbytes()/1e6:.1f} MB ({ratio:.1f}x)")
+    print(f"    memory: basis {basis.nbytes()/1e6:.2f} MB (shared subspace, "
+          f"no view) vs combined {comb.nbytes()/1e6:.2f} MB (one view): "
+          f"{ratio:.1f}x")
 
     same_a = np.array_equal(comb.to_dense(ca), basis.to_dense(ca))
     print(f"    combined vs basis view (built material): bitwise {same_a}")
@@ -433,7 +444,7 @@ def check_combined_storage():
     print(f"    combined+calibrated end-to-end vs dense: rel = {worst:.2e} "
           f"(converged {rep.converged})")
 
-    return (ratio > 2.5 and same_a and err_b == 0.0
+    return (1.5 < ratio < 4.0 and same_a and err_b == 0.0
             and still_dropped and worst < SOL_PARITY and rep.converged)
 
 
@@ -441,7 +452,11 @@ def check_bj_rung():
     """Cluster block-Jacobi preconditioner rung (roadmap C3): for
     super-blocks too large for the HODLR build, the third rung must
     still converge FGMRES to the dense answer with a bounded iteration
-    penalty (its build is O(N x chunk) at any size)."""
+    penalty (its build is O(N x chunk) at any size).
+
+    Grouping is pinned to "patch" whatever the default is: this is a
+    check on the RUNG, and the fault box is one region, whose "region"
+    super-block would be the entire matrix (one block, no sweep)."""
     import time
 
     from mbem.la.preconditioner import BlockGaussSeidel
@@ -468,7 +483,8 @@ def check_bj_rung():
     results = {}
     for name, hodlr_max in (("HODLR", 10 ** 9), ("block-Jacobi", 1)):
         t0 = time.perf_counter()
-        M = BlockGaussSeidel(hasm, max_dense=1500, hodlr_max=hodlr_max)
+        M = BlockGaussSeidel(hasm, max_dense=1500, hodlr_max=hodlr_max,
+                             grouping="patch")
         t_build = time.perf_counter() - t0
         x, rep = fgmres(hasm.matvec, hasm.b, M=M, rtol=1e-9)
         sol = {s.name: x[s.offset:s.stop].reshape(-1, 3)
@@ -604,12 +620,12 @@ def _aca_impl_parity(pairs, label, max_blocks=24):
                 continue
             n_lr += 1
             rank_gap = max(rank_gap, max(abs(a - b) for a, b in
-                                         zip(py.payload.ranks,
-                                             nb.payload.ranks)))
+                                         zip(py.payload.basis_ranks,
+                                             nb.payload.basis_ranks)))
             exact = ev.stack_serial(rows, cols)
             for b in range(ev.n_basis):
-                A = py.payload.U[b] @ py.payload.V[b].T
-                C = nb.payload.U[b] @ nb.payload.V[b].T
+                A = py.payload.basis_matrix(b)
+                C = nb.payload.basis_matrix(b)
                 scale = max(float(np.max(np.abs(exact[b]))), 1e-300)
                 worst_impl = max(worst_impl,
                                  float(np.max(np.abs(A - C))) / scale)
@@ -676,15 +692,245 @@ def check_aca_numba():
     return ok and total_lr > 0
 
 
+def check_shared_subspace():
+    """The B factor pairs of a block are folded ONCE, at build, into one
+    shared subspace (``aca.shared_subspace``: ``A_b = Qu cores[b]
+    Qv^T``), so a material enters through a k x k core sum instead of a
+    QR+SVD of the block's own (3n, sum_b k_b) factors.
+
+    Two things must hold, and neither of them is a timing:
+
+    * the shared-subspace view IS the per-basis recombination. The
+      reference is the pre-fold path itself -- ``aca.aca_single`` per
+      basis from the block's own seed, then the QR+SVD re-truncation of
+      the concatenated factors -- run on the SAME factors the fold gets,
+      so what is compared is the fold alone: the recombined block must
+      agree within the operator tolerance, at the same rank (+-1), for
+      three materials, and stay that close to the exact block.
+    * a material after the first pays no BLOCK-SIZED factorization.
+      ``aca.FACTORIZATIONS`` counts those apart from the k x k core
+      SVDs, and a second and a third material must add ZERO of the first
+      and exactly one core SVD per low-rank block.
+
+    And, over EVERY block a real model stores, the stored form must
+    reproduce the exact block. The certificate checks three rows and
+    three columns of each basis inside the compression kernel; this
+    checks the whole block, outside it, on the model whose blocks carry
+    the largest ranks (the refined fault zone) -- which is what catches a
+    factorization that returns garbage rather than an error (numba's
+    ``np.linalg.qr`` does exactly that on a rank-deficient tall factor;
+    ``aca_numba._gram_qr``).
+    """
+    from mbem.la.aca import (FACTORIZATIONS, BlockEvalCache, SharedLR,
+                             aca_single, draw_lines, recompress,
+                             shared_subspace)
+
+    field = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), 0.0,
+                                   16, 16, normal_up=True)   # 512 tris
+    source = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), -240.0,
+                                    16, 16, normal_up=True)
+    eps_arr = kb.as_eps_array(EPS, source.n_triangles)
+    pair = PairCompressed(field, source, KERNEL_T, eps_arr,
+                          max_admissible=256)
+    ev = pair.eval
+    cs = [np.asarray(kb.t_coeffs(mu, lam))
+          for mu, lam in ((30.0, 30.0), (3.0, 6.0), (80.0, 20.0))]
+    delta = defaults.ACA_JOINT_TOL_FACTOR * pair.tol
+
+    worst = worst_exact = 0.0
+    rank_gap = 0
+    joint = summed = n_blocks = 0
+    for i, (rows, cols) in enumerate(pair._part.admissible):
+        if pair.blocks[i][2] is None or n_blocks >= 6:
+            continue
+        cache = BlockEvalCache(ev.stack_serial, rows, cols)
+        srows, scols, cert_rows, cert_cols = draw_lines(
+            np.random.default_rng((12345, i)), len(rows), len(cols))
+        max_rank = min(max(8, int(min(len(rows), len(cols))
+                                  * defaults.ACA_MAX_RANK_FRACTION)),
+                       len(rows), len(cols))
+        stop_exact = cache.stack_fn(cache.rows[srows], cache.cols[scols])
+        uvs = [aca_single(cache, b, len(rows), len(cols), pair.tol, srows,
+                          scols, stop_exact[b], max_rank)
+               for b in range(ev.n_basis)]
+        if any(uv is None for uv in uvs):
+            continue
+        n_blocks += 1
+        Us = [uv[0] for uv in uvs]
+        Vs = [uv[1] for uv in uvs]
+        Qu, Qv, cores = shared_subspace(Us, Vs, delta)
+        shared = SharedLR(Qu, Qv, cores, tuple(u.shape[1] for u in Us),
+                          cert_rows, cert_cols)
+        joint += shared.rank
+        summed += sum(shared.basis_ranks)
+        exact = ev.stack_serial(rows, cols)
+        for c in cs:
+            U0, V0 = recompress(
+                np.hstack([c[b] * Us[b] for b in range(ev.n_basis)]),
+                np.hstack(Vs), pair.tol)
+            U1, V1 = shared.combine(c, pair.tol)
+            ref = np.tensordot(c, exact, axes=1)
+            scale = max(float(np.max(np.abs(ref))), 1e-300)
+            A0, A1 = U0 @ V0.T, U1 @ V1.T
+            worst = max(worst, float(np.max(np.abs(A1 - A0))) / scale)
+            worst_exact = max(worst_exact,
+                              float(np.max(np.abs(A1 - ref))) / scale)
+            rank_gap = max(rank_gap, abs(U1.shape[1] - U0.shape[1]))
+    print(f"    {n_blocks} blocks: shared-subspace view vs the per-basis "
+          f"recombination {worst:.1e} (limit {TOL:.1e}), vs the exact block "
+          f"{worst_exact:.1e}, rank difference {rank_gap}")
+    print(f"    joint rank {joint / max(n_blocks, 1):.1f} vs summed "
+          f"{summed / max(n_blocks, 1):.1f} per block "
+          f"({joint / max(summed, 1):.2f}x)")
+    ok = (n_blocks > 0 and worst < TOL and rank_gap <= 1
+          and worst_exact < defaults.H_PARITY_OPERATOR * TOL)
+
+    n_lr = sum(1 for _, _, p in pair.blocks if p is not None)
+    pair._view(cs[0])
+    before = dict(FACTORIZATIONS)
+    for c in cs[1:]:
+        pair._view(c)
+    d_sub = FACTORIZATIONS["subspace"] - before["subspace"]
+    d_core = FACTORIZATIONS["core"] - before["core"]
+    print(f"    materials 2-3 over {n_lr} low-rank blocks: {d_sub} "
+          f"block-sized factorizations, {d_core} k x k core SVDs")
+    ok &= d_sub == 0 and d_core == 2 * n_lr
+
+    # -- every stored block of a real model, against the exact block ---
+    hasm = HBackend(storage="basis").assemble(
+        generate_system(_build_zone_model(
+            mb.ElasticMaterial(mu=10.0, lam=10.0), refine=1.64)), "auto")
+    n_stored = 0
+    worst_stored = 0.0
+    max_rank = 0
+    for p in hasm._pairs.values():
+        ev = p.eval
+        for rows, cols, payload in p.blocks:
+            if payload is None:
+                continue
+            n_stored += 1
+            max_rank = max(max_rank, max(payload.basis_ranks))
+            block = ev.stack_serial(rows, cols)
+            for b in range(ev.n_basis):
+                scale = max(float(np.max(np.abs(block[b]))), 1e-300)
+                worst_stored = max(worst_stored, float(np.max(np.abs(
+                    payload.basis_matrix(b) - block[b]))) / scale)
+    limit = defaults.H_PARITY_OPERATOR * TOL
+    print(f"    {n_stored} stored blocks of the refined fault zone (largest "
+          f"basis rank {max_rank}): worst entry vs the exact block "
+          f"{worst_stored:.1e} (limit {limit:.1e})")
+    return ok and n_stored > 0 and worst_stored < limit
+
+
+def check_certificate_retry():
+    """A failed certificate is a failure of the ACA's STOPPING RULE, not
+    a verdict on the block, so ``aca.compress_block`` re-runs the ACA
+    once at ``ACA_RETRY_TOL_FACTOR`` times the tolerance and only a
+    second failure is applied exactly.
+
+    Over every admissible block of the 10.9k inclusion model, from the
+    build's own seeds, this gates three things:
+
+    * the retry FIRES here, and each block it fires on really did fail
+      its certificate on the first pass (the same lines, deterministic);
+    * what is kept is certified: a retried block that comes back as
+      factors is inside ``ACA_CERTIFY_FACTOR`` x tol, and its product is
+      closer to the exact block than the first pass's was;
+    * the operator path (``exact_payload=False``) never returns a
+      STACK -- only certified factors or "apply this block exactly" --
+      so the per-basis SVD of an exact block, B x O((3 n)^3) at one BLAS
+      thread, is unreachable there whatever the block's size.
+    """
+    sys.path.insert(0, str(ROOT / "examples"))
+    from assess_fig06_inclusion import build as build_inclusion
+    from assess_fig06_inclusion import build_model as inclusion_model
+    from mbem.la.aca import (BlockEvalCache, SharedLR, compress_block,
+                             draw_lines)
+
+    limit = defaults.ACA_CERTIFY_FACTOR * TOL
+    meshes, fault, _n_hat, s_hat = build_inclusion()
+    inc = HBackend(jump="half", storage="basis").assemble(
+        generate_system(inclusion_model(
+            meshes, fault, s_hat,
+            mat_inc=mb.ElasticMaterial(mu=3.0, lam=3.0))), "auto")
+
+    n_blocks = n_retry = n_exact = n_kept = 0
+    worst_first = worst_kept = 0.0
+    first_vs_exact = kept_vs_exact = 0.0
+    ok = True
+    for pair in inc._pairs.values():
+        ev = pair.eval
+        for i, (rows, cols) in enumerate(pair._part.admissible):
+            n_blocks += 1
+            res = compress_block(
+                BlockEvalCache(ev.stack_serial, rows, cols,
+                               aca_fn=ev.aca_fn(rows, cols)),
+                ev.n_basis, tol=TOL, rng=np.random.default_rng((12345, i)),
+                exact_payload=False)
+            ok &= res.payload is None or isinstance(res.payload, SharedLR)
+            n_exact += res.payload is None
+            if not res.retried:
+                continue
+            n_retry += 1
+            # The first pass the retry replaced: the same lines from the
+            # same seed, at the plain tolerance.
+            lines = draw_lines(np.random.default_rng((12345, i)),
+                               len(rows), len(cols))
+            max_rank = min(max(8, int(min(len(rows), len(cols))
+                                      * defaults.ACA_MAX_RANK_FRACTION)),
+                           len(rows), len(cols))
+            Us, Vs, err0, capped0 = ev.aca_fn(rows, cols)(TOL, *lines,
+                                                          max_rank)
+            ok &= capped0 or err0 > limit        # it really did fail
+            worst_first = max(worst_first, err0)
+            if not isinstance(res.payload, SharedLR) or capped0:
+                continue
+            n_kept += 1
+            worst_kept = max(worst_kept, res.max_err)
+            ok &= res.max_err <= limit
+            exact = ev.stack_serial(rows, cols)
+            for b in range(ev.n_basis):
+                scale = max(float(np.max(np.abs(exact[b]))), 1e-300)
+                first_vs_exact = max(first_vs_exact, float(np.max(np.abs(
+                    Us[b] @ Vs[b].T - exact[b]))) / scale)
+                kept_vs_exact = max(kept_vs_exact, float(np.max(np.abs(
+                    res.payload.basis_matrix(b) - exact[b]))) / scale)
+    print(f"    {n_blocks} admissible blocks: {n_retry} retried "
+          f"({n_kept} kept as factors), {n_exact} applied exactly, "
+          f"0 stacks materialized")
+    print(f"    retried blocks: first pass certified {worst_first:.1e} "
+          f"(limit {limit:.1e}), retry {worst_kept:.1e}; vs the exact "
+          f"block {first_vs_exact:.1e} -> {kept_vs_exact:.1e}")
+    return ok and n_retry > 0 and kept_vs_exact < first_vs_exact
+
+
 def check_convergence_rate():
-    """The block-Gauss-Seidel ladder is size-independent: on the fault-zone
-    model at two sizes ~2.7x apart (eps = "auto", calibrated jump, the
-    caller settings of the other checks) both solves must converge with a
-    true residual below rtol, and iterations(large) may be at most
-    GMRES_ITER_GROWTH_MAX x iterations(small) and GMRES_ITER_CEILING."""
+    """The block-Gauss-Seidel ladder is size-independent under EITHER
+    grouping: on the fault-zone model at two sizes ~2.7x apart (eps =
+    "auto", calibrated jump, the caller settings of the other checks)
+    every solve must converge with a true residual below rtol, and
+    iterations(large) may be at most GMRES_ITER_GROWTH_MAX x
+    iterations(small) and GMRES_ITER_CEILING.
+
+    Both groupings run because the grouping (``defaults.PRECOND_GROUPING``)
+    is what sets the count -- "region" inverts each region's whole block
+    and iterates about half as often as "patch" -- and the two must reach
+    the SAME solution to the solver tolerance: a preconditioner changes
+    the path, never the answer.
+
+    Where the dense operator is affordable (the small size) the gate goes
+    one level deeper: each super-block's diagonal AS THE LADDER EVALUATES
+    IT, permuted back to the slot-concatenated layout, must reproduce the
+    assembled operator's own sub-block -- exactly where that sub-block is
+    near field, and to the compression tolerance where it is not. It is
+    what keeps a grouping from inverting a different operator than the one
+    FGMRES applies."""
     import time
 
-    iters = {}
+    from mbem.la.preconditioner import BlockGaussSeidel
+    from mbem.la.solver import fgmres
+
+    iters = {"patch": {}, "region": {}}
     ok = True
     for label, refine in (("small", 1.0), ("large", 1.64)):
         model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0),
@@ -693,23 +939,43 @@ def check_convergence_rate():
         t0 = time.perf_counter()
         hasm = HBackend().assemble(system, "auto")
         t_build = time.perf_counter() - t0
-        t0 = time.perf_counter()
-        hasm.solve()
-        t_solve = time.perf_counter() - t0
-        rep = hasm.report
-        iters[label] = rep.iterations
-        rungs = sorted({sb["rung"] for sb in rep.precond_summary["super_blocks"]})
+        A = hasm.to_dense() if label == "small" else None
         print(f"    {label:>5} ({system.layout.n_unknowns:5d} unknowns): "
-              f"{rep.iterations:3d} iters, converged {rep.converged}, "
-              f"true relres {rep.true_relres:.2e}; build {t_build:.1f} s, "
-              f"solve {t_solve:.1f} s, rungs {rungs}")
-        ok &= rep.converged and rep.true_relres < defaults.GMRES_RTOL
-    growth = iters["large"] / max(iters["small"], 1)
-    print(f"    iteration growth large/small: {growth:.2f} "
-          f"(limit {defaults.GMRES_ITER_GROWTH_MAX}); ceiling "
-          f"{defaults.GMRES_ITER_CEILING}")
-    return (ok and growth <= defaults.GMRES_ITER_GROWTH_MAX
-            and iters["large"] <= defaults.GMRES_ITER_CEILING)
+              f"operator built in {t_build:.1f} s")
+        sols = {}
+        for grouping in ("patch", "region"):
+            t0 = time.perf_counter()
+            M = BlockGaussSeidel(hasm, grouping=grouping)
+            t_ladder = time.perf_counter() - t0
+            if A is not None:
+                worst = max(_relmax(M.diagonal_block(k),
+                                    A[np.ix_(sb.global_idx, sb.global_idx)])
+                            for k, sb in enumerate(M.sbs))
+                print(f"          {grouping:>6}: super-block diagonals vs "
+                      f"the assembled operator rel = {worst:.1e}")
+                ok &= worst < OP_PARITY
+            t0 = time.perf_counter()
+            sols[grouping], rep = fgmres(hasm.matvec, hasm.b, M=M)
+            t_solve = time.perf_counter() - t0
+            iters[grouping][label] = rep.iterations
+            rungs = sorted({sb["rung"] for sb in M.summary()["super_blocks"]})
+            print(f"          {grouping:>6}: {len(M.sbs):2d} super-blocks, "
+                  f"{rep.iterations:3d} iters, converged {rep.converged}, "
+                  f"true relres {rep.true_relres:.2e}; ladder "
+                  f"{t_ladder:.1f} s, solve {t_solve:.1f} s, rungs {rungs}")
+            ok &= rep.converged and rep.true_relres < defaults.GMRES_RTOL
+        dev = _relmax(sols["region"], sols["patch"])
+        print(f"          region vs patch solution: rel = {dev:.2e}")
+        ok &= dev < defaults.SOLUTION_RTOL
+    for grouping, it in iters.items():
+        growth = it["large"] / max(it["small"], 1)
+        print(f"    {grouping:>6} iteration growth large/small: {growth:.2f} "
+              f"({it['small']} -> {it['large']}; limit "
+              f"{defaults.GMRES_ITER_GROWTH_MAX}, ceiling "
+              f"{defaults.GMRES_ITER_CEILING})")
+        ok &= (growth <= defaults.GMRES_ITER_GROWTH_MAX
+               and it["large"] <= defaults.GMRES_ITER_CEILING)
+    return ok
 
 
 def main():
@@ -724,8 +990,13 @@ def main():
         ("combined storage (1x memory) parity", check_combined_storage),
         ("flat view vs the block loop", check_flat_view),
         ("numba ACA vs the Python reference", check_aca_numba),
+        ("shared subspace: fold parity and no per-material factorization",
+         check_shared_subspace),
+        ("certificate retry, and no exact stack in the operator path",
+         check_certificate_retry),
         ("cluster block-Jacobi preconditioner rung", check_bj_rung),
-        ("convergence rate across sizes", check_convergence_rate),
+        ("convergence rate and grouping across sizes",
+         check_convergence_rate),
     ]
     results = []
     for name, fn in checks:

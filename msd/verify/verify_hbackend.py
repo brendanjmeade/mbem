@@ -449,10 +449,18 @@ def check_combined_storage():
 
 
 def check_bj_rung():
-    """Cluster block-Jacobi preconditioner rung (roadmap C3): for
-    super-blocks too large for the HODLR build, the third rung must
-    still converge FGMRES to the dense answer with a bounded iteration
-    penalty (its build is O(N x chunk) at any size).
+    """The preconditioner rung ladder, all three rungs on ONE partition:
+    each must converge FGMRES to the dense answer, and the two
+    approximate rungs must cost a bounded number of extra iterations
+    against the exact dense-LU rung (the block-Jacobi one is the rung
+    that carries super-blocks past the HODLR build, so its penalty is
+    the one with a limit).
+
+    Every rung is FORCED here by its own cap rather than chosen by size:
+    the dense cap is otherwise resolved per machine
+    (``preconditioner.dense_rung_max_dof``, tens of thousands of DOFs),
+    which would put this model's every super-block on rung 1 and leave
+    the other two untested.
 
     Grouping is pinned to "patch" whatever the default is: this is a
     check on the RUNG, and the fault box is one region, whose "region"
@@ -478,14 +486,19 @@ def check_bj_rung():
     hasm = HBackend(jump="half").assemble(system, EPS)
     sol_ref = AssembledDense(system, EPS, "direct", jump="half").solve()
 
-    # max_dense=1500 forces the top super-block OFF the dense-LU rung so
-    # the HODLR and block-Jacobi rungs are genuinely exercised/compared.
+    # (max_dense, hodlr_max, bj_chunk) per arm. 1500 as the dense cap
+    # puts the top super-block on the rung under test and the same 1500
+    # as the chunk makes the block-Jacobi arm cut it the same way, so
+    # the three arms invert the same partition.
     results = {}
-    for name, hodlr_max in (("HODLR", 10 ** 9), ("block-Jacobi", 1)):
+    for name, caps in (("dense LU", (10 ** 9, 10 ** 9, 1500)),
+                       ("HODLR", (1500, 10 ** 9, 1500)),
+                       ("block-Jacobi", (1500, 1, 1500))):
         t0 = time.perf_counter()
-        M = BlockGaussSeidel(hasm, max_dense=1500, hodlr_max=hodlr_max,
-                             grouping="patch")
+        M = BlockGaussSeidel(hasm, max_dense=caps[0], hodlr_max=caps[1],
+                             bj_chunk=caps[2], grouping="patch")
         t_build = time.perf_counter() - t0
+        rungs = sorted({sb["rung"] for sb in M.summary()["super_blocks"]})
         x, rep = fgmres(hasm.matvec, hasm.b, M=M, rtol=1e-9)
         sol = {s.name: x[s.offset:s.stop].reshape(-1, 3)
                for s in system.layout.slots}
@@ -495,12 +508,14 @@ def check_bj_rung():
         results[name] = rep.iterations
         print(f"    {name:>12}: build {t_build:5.1f} s, "
               f"{rep.iterations:3d} iters, converged {rep.converged}, "
-              f"vs dense rel = {worst:.2e}")
+              f"vs dense rel = {worst:.2e}, rungs {rungs}")
         if not (rep.converged and worst < SOL_PARITY):
             return False
-    penalty = results["block-Jacobi"] / max(results["HODLR"], 1)
-    print(f"    iteration penalty BJ/HODLR: {penalty:.1f}x")
-    return penalty < 4.0
+    exact = max(results["dense LU"], 1)
+    for name in ("HODLR", "block-Jacobi"):
+        print(f"    iteration penalty {name} / dense LU: "
+              f"{results[name] / exact:.1f}x")
+    return results["block-Jacobi"] <= 4.0 * exact
 
 
 def _flat_view_parity(hasm, label, with_dense: bool):
@@ -994,7 +1009,8 @@ def main():
          check_shared_subspace),
         ("certificate retry, and no exact stack in the operator path",
          check_certificate_retry),
-        ("cluster block-Jacobi preconditioner rung", check_bj_rung),
+        ("preconditioner rung ladder: dense LU / HODLR / block-Jacobi",
+         check_bj_rung),
         ("convergence rate and grouping across sizes",
          check_convergence_rate),
     ]

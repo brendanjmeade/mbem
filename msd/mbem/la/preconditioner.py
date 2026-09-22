@@ -29,11 +29,22 @@ Either way one forward GS sweep in block order (regions in model order,
 host first): the region graph of the models this solves is a path or a
 star, so the sweep approximates chain elimination.
 
-Diagonal solves form a three-rung ladder:
-  * size <= max_dense  : exact dense assembly (fast numba kernels) + LU;
+Diagonal solves form a three-rung ladder, ordered by what a rung COSTS
+and not by how approximate it is -- the first two reach the same
+iteration count, so between them only build, memory and apply decide:
+  * size <= max_dense  : exact dense assembly (fast numba kernels) + LU,
+                         the cheapest rung to BUILD at every size it
+                         fits (``dense_rung_max_dof``); what it spends
+                         is n^2 x 8 B of stored factor and a triangular
+                         solve per iteration;
   * size <= hodlr_max  : HODLR solver at loose tolerance over the local
-                         system, scalable in memory and build time;
-  * larger             : dense LU on cluster-tree chunks (block Jacobi).
+                         system -- an order less memory and a cheaper
+                         apply WHERE THE BLOCK COMPRESSES, which is what
+                         carries a block past the dense rung's memory;
+  * larger             : dense LU on cluster-tree chunks (block Jacobi),
+                         O(N x chunk) in build and memory at any size.
+                         Last, because it is the only rung whose
+                         iteration count grows with N.
 """
 
 from __future__ import annotations
@@ -89,6 +100,22 @@ def group_slots(model, layout, grouping: str) -> list:
         return groups
     raise ValueError(f"unknown preconditioner grouping {grouping!r} "
                      f"(expected 'patch' or 'region')")
+
+
+def dense_rung_max_dof(
+        max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
+        ram_fraction: float = defaults.PRECOND_DENSE_RAM_FRACTION) -> int:
+    """Largest super-block the dense-LU rung takes on THIS machine: the
+    DOF cap, lowered where one block's stored factorization (n^2 x 8 B)
+    would exceed ``ram_fraction`` of physical RAM. The ladder holds every
+    block's factorization at once and the build peaks at ~2.1x one of
+    them, so the cap is a per-block share, not the whole budget."""
+    from ..estimate import total_ram_bytes    # ..estimate imports la.*
+
+    ram = total_ram_bytes()
+    if ram is None:
+        return max_dense
+    return min(max_dense, int(np.sqrt(ram_fraction * ram / 8.0)))
 
 
 def _run_start(sel: np.ndarray):
@@ -282,11 +309,18 @@ class BlockGaussSeidel:
     re-running."""
 
     def __init__(self, assembled,
-                 max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
+                 max_dense: int | None = None,
                  hodlr_tol: float = defaults.HODLR_PRECOND_TOL,
                  hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
+                 bj_chunk: int = defaults.PRECOND_BJ_CHUNK_DOF,
                  grouping: str = defaults.PRECOND_GROUPING,
                  verbose: bool = False):
+        # None = the machine's own cap; a caller passing one FORCES the
+        # rung boundary (what the gates do to exercise a lower rung).
+        if max_dense is None:
+            max_dense = dense_rung_max_dof()
+        self.max_dense = int(max_dense)
+        self.bj_chunk = int(bj_chunk)
         self.asm = assembled
         # An all-Neumann model (``deflate``) has a SINGULAR region
         # operator -- the rigid translations the solve projects out -- and
@@ -323,6 +357,10 @@ class BlockGaussSeidel:
                 all_units = np.arange(ev.n_units)
                 D_inter = ev.eval_block(all_units, all_units)
                 lu = lu_factor(D_inter)
+                # released before the NEXT block is evaluated: at the
+                # cap this matrix is several GB and lu_factor already
+                # holds its own copy of it.
+                del D_inter
                 perm = ev.concat_perm
 
                 def solve_fn(r, lu=lu, perm=perm):
@@ -356,10 +394,11 @@ class BlockGaussSeidel:
                 # O(N x chunk) at ANY super-block size: this is the
                 # rung that scales to 1e5-1e6-element patches, where the
                 # HODLR build itself (root rank ~ sqrt(N), dense
-                # half-matrix fallback) becomes the wall. Costs a few
-                # more outer iterations than HODLR; the diagonal chunks
-                # still capture the near-singular local physics.
-                chunk_units = max(32, max_dense // ev.d)
+                # half-matrix fallback) becomes the wall. Costs outer
+                # iterations that GROW with N, which is why it is last;
+                # the diagonal chunks still capture the near-singular
+                # local physics.
+                chunk_units = max(32, bj_chunk // ev.d)
                 tree = build_cluster_tree(ev.centroids, chunk_units)
                 chunks: list = []
 
@@ -416,11 +455,16 @@ class BlockGaussSeidel:
         return out
 
     def summary(self) -> dict:
-        """{"grouping", "build_s": total wall, "super_blocks": [{"slots",
-        "size", "rung", "build_s", ...rung detail}]} in sweep order;
-        JSON-ready."""
+        """{"grouping", "max_dense", "bj_chunk", "build_s": total wall,
+        "super_blocks": [{"slots", "size", "rung", "build_s", ...rung
+        detail}]} in sweep order; JSON-ready. The two caps are reported
+        because the dense one is resolved per MACHINE
+        (``dense_rung_max_dof``), so a rung that moved between two runs
+        is readable from the record."""
         return {
             "grouping": self.grouping,
+            "max_dense": self.max_dense,
+            "bj_chunk": self.bj_chunk,
             "build_s": self.build_s,
             "super_blocks": [
                 {"slots": [s.name for s in sb.slots], "size": sb.size,

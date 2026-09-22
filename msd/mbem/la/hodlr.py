@@ -28,6 +28,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
+from .. import defaults
 from .aca import BlockEvalCache, SharedLR, compress_block
 from .cluster import build_cluster_tree
 
@@ -75,7 +76,8 @@ class HodlrSolver:
     """
 
     def __init__(self, eval_block, centroids: np.ndarray, d: int,
-                 tol: float = 1e-2, leaf_elems: int = 96,
+                 tol: float = defaults.HODLR_PRECOND_TOL,
+                 leaf_elems: int = defaults.HODLR_LEAF_ELEMS,
                  rng=None):
         self.eval_block = eval_block
         self.d = d

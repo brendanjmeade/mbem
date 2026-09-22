@@ -380,7 +380,7 @@ class AssembledH:
               restart: int = defaults.GMRES_RESTART,
               maxiter: int = defaults.GMRES_MAXITER,
               x0: np.ndarray | str | None = None,
-              precond_max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
+              precond_max_dense: int | None = None,
               precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
               recycle: bool | None = None):
         """Preconditioned FGMRES; returns {slot_name: (N_patch, 3) array}
@@ -390,6 +390,10 @@ class AssembledH:
         of the iteration (all-Neumann + calibrated models): solves
         P A P y = P b with P = I - Z Z^T and returns the zero-mean-
         translation representative P y.
+
+        ``precond_max_dense`` overrides the preconditioner ladder's
+        dense-LU cap, which is otherwise the machine's own
+        (``la.preconditioner.dense_rung_max_dof``).
 
         Two sequence options, for the material sweeps (the solves this
         assembly's ``rebuild_for_materials`` chain produces):

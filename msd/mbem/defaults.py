@@ -252,19 +252,93 @@ FLATVIEW_PARALLEL_MIN_WORK = 1_000_000
 # stays bitwise is the flat matvec across thread counts.
 FLATVIEW_PARITY = 1e-12
 
-# --- Dense fallbacks --------------------------------------------------
-MAX_DENSE_PRECOND_DOF = 9000  # exact dense LU below this, per block
-# HODLR preconditioner rung cap: above this many DOFs in one super-block
-# the HODLR build itself becomes the memory/time wall (its root
-# off-diagonal rank grows ~sqrt(N) and its fallback materializes a dense
-# half-matrix), so the ladder switches to the cluster BLOCK-JACOBI rung
-# (dense LU on cluster-tree chunks of <= MAX_DENSE_PRECOND_DOF each; a
-# few more FGMRES iterations, O(N x chunk) build memory at any N).
+# --- Preconditioner rung ladder ---------------------------------------
+# Rung 1, the exact dense LU of a super-block, while it is under this
+# many DOFs. The cap is a MEMORY decision: there is no build-time
+# crossover below it. At the same iteration count the dense rung builds
+# faster than the HODLR rung on every super-block measured from 4.9k to
+# 36k DOF but one (the 117k rung's blocks: 21.9 s against 83.4 on the
+# 27.9k topography patch, 7.0 against 130.2 on the 18.1k inclusion top,
+# 43.1 against 69.4 on the 36.3k interface, and 31.1 against 27.2 on the
+# 32.0k interface, the one block HODLR wins). The reason is geometric:
+# weak admissibility splits a patch into halves that TOUCH, so the
+# off-diagonal blocks are near field, exceed the ACA rank cap and enter
+# EXACTLY -- and an exact block at the second level makes the HODLR
+# build a dense one with worse constants (a 23.8k-DOF topography patch:
+# 262 s and 8.9 GB against the dense LU's 14.7 s and 5.2 GB).
+# What the dense rung spends is n^2 x 8 B of stored factor (~2.1x it at
+# the build's own peak) and one triangular solve per FGMRES iteration,
+# memory bound at ~19 GB/s and 2-10x dearer than a HODLR apply. That
+# apply is what makes an UNCAPPED dense rung no faster: at 117k
+# unknowns, capped at 30k it is a 127 s ladder and a 590 ms apply, and
+# uncapped a 103 s ladder and a 1.32 s apply -- 144 s against 139 s of
+# total solve, for 14.2 GB of stored factors against 27.3 GB (30.4 GB
+# peak RSS against 51.0). 4 % of wall is what the cap costs and half the
+# memory is what it buys.
+MAX_DENSE_PRECOND_DOF = 30_000
+# ... and never a block whose stored factorization would take more than
+# this share of physical RAM. The ladder holds every block's factor at
+# once, so what a machine can afford per block is a share of it: 6 % is
+# 8.2 GB of the 128 GB here (32.1k DOF, so the DOF cap above binds
+# first) and 1 GB on a 16 GB laptop (11.0k DOF).
+# la/preconditioner.dense_rung_max_dof resolves the two into the cap the
+# ladder uses.
+PRECOND_DENSE_RAM_FRACTION = 0.06
+# Rung 2 cap: above this many DOFs in one super-block the HODLR build
+# itself becomes the memory/time wall (its root off-diagonal rank grows
+# ~sqrt(N) and a block that is not low rank materializes a dense
+# half-matrix), so the ladder switches to the cluster BLOCK-JACOBI rung.
 PRECOND_HODLR_MAX_DOF = 150_000
+# Rung 3: dense LU on cluster-tree chunks of at most this many DOFs, so
+# its build is O(N x chunk) and its memory chunk x 8 B per DOF (72 KB/DOF
+# at 9000) at ANY super-block size. It is the last rung because it is the
+# only one whose iteration count grows with N: on the topo ladder it
+# costs +4 iterations at 31k unknowns, +10 at 68k (24 -> 34) and +12 at
+# 117k (25 -> 37), where the dense and HODLR rungs hold 23 / 24 / 25 --
+# the growth GMRES_ITER_GROWTH_MAX exists to forbid. Its wall time is
+# the best of the three (24 s of ladder plus solve at 117k against 144),
+# and it is still the LAST rung, because a preconditioner that needs
+# more iterations at every refinement is the one thing this ladder is
+# for. It is a separate number from
+# MAX_DENSE_PRECOND_DOF (which it used to follow) because the two bound
+# different things -- memory per DOF against memory per block -- and the
+# measurement moved them an order apart.
+PRECOND_BJ_CHUNK_DOF = 9000
 
 # --- HODLR ladder rung ------------------------------------------------
-HODLR_PRECOND_TOL = 1e-2      # loose tol when used as a preconditioner
-HODLR_LEAF_ELEMS = 96         # dense leaf size (elements)
+# Loose tolerance of the rung's approximate inverse. It cannot move the
+# ANSWER (a preconditioner changes the path and FGMRES stops on the true
+# residual), only the trade between its build and the iteration count:
+# 1e-1 builds the 117k rung's HODLR blocks in 80 s instead of 127 and
+# costs one iteration (26 against 25; 23 either way at 31k unknowns).
+# 1e-2 keeps the count, which is the invariant this ladder is built
+# around, and pays for it in a rung that now carries 2 of 6 blocks.
+HODLR_PRECOND_TOL = 1e-2
+# Dense leaf size (elements). Weak admissibility makes a HODLR node's two
+# off-diagonal blocks the interaction of two cluster halves that TOUCH,
+# and the deeper the tree the larger that seam is as a FRACTION of the
+# block, so deep blocks are near field, exceed the ACA rank cap and
+# enter EXACTLY -- which turns a level of the factorization dense, with
+# worse constants. Fewer, larger leaves cut the depth and with it those
+# blocks: 96 -> 384 takes the exact off-diagonal count from 30 of 62 to
+# 0 of 14 on an 8.3k-DOF topography patch, from 48 of 62 to 6 of 14 on
+# the inclusion top and from 156 of 254 to 14 of 62 at 23.8k DOF, at a
+# third of the rank, and builds the whole HODLR ladder of the
+# 31k-unknown model in 21.3 s instead of 25.8 at the same 23 iterations
+# (the 117k rung's HODLR blocks: 310 s instead of 344). What it costs is
+# the leaf LUs -- leaf x d x 8 B per DOF, 9-18 KB/DOF here -- and a
+# ~1.5x dearer apply, tens of milliseconds against a build of tens of
+# seconds on the blocks this rung now serves.
+# Measured and NOT taken: splitting a cluster at its bounding-box
+# MIDPOINT instead of at the principal-axis median is worse at either
+# leaf size (70 of 86 off-diagonal blocks exact and rank 1359 on that
+# same 8.3k-DOF patch, against 30 of 62 and 1032).
+# What NO leaf size or split fixes is a wide flat patch whose halves
+# share a full-width seam: at 23.8k DOF one quarter-size off-diagonal
+# block is still exact (rank 5955) and the build is still 255 s against
+# the dense LU's 14.7 s. Such a block belongs on rung 1.
+HODLR_LEAF_ELEMS = 384
+HODLR_LEAF_ELEMS = 384
 
 # --- Mollification ----------------------------------------------------
 # eps="auto": per-element eps_j = EPS_OVER_H * h_j (h_j = mean edge).

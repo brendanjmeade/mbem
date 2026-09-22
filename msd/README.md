@@ -127,7 +127,7 @@ python verify/verify_boundary_eigenstress.py       # boundary double layers subt
 python verify/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space and manufactured solutions (end to end)
 python verify/verify_disp_contract.py              # matrix-free displacement evaluation == dense matrices == legacy oracle
 python verify/verify_dense_backend.py              # dense assembly invariants (calibration cache bit-identity, rebuilds)
-python verify/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, BJ rung)
+python verify/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, rung ladder)
 python verify/verify_eps_auto.py                   # eps="auto" (0.1 h): kernel order-2 convergence, solved-BVP accuracy vs Kelvin, half-jump guard
 python verify/verify_deflation_estimate.py         # all-Neumann rigid-body deflation; memory estimator
 python verify/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path

@@ -14,6 +14,8 @@ declared material ``sweep``. P0 patches only
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from .. import defaults
@@ -21,10 +23,50 @@ from ..kernels import KERNEL_T, kernel_coeffs
 from ..kernels import basis as kb
 from ..la.hop import PairCompressed, require_order0
 from ..la.preconditioner import BlockGaussSeidel
-from ..la.solver import fgmres
+from ..la.solver import RecycleSpace, fgmres
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, calibrated_diagonal,
                                diagonal_matvec, term_diagonal)
+
+
+def material_step(old: dict, new: dict) -> float:
+    """max |log(new/old)| over the moduli of the regions that changed.
+
+    The one measure of "how far" a material sweep has moved, in the units
+    the reuse policies are stated in (``defaults.PRECOND_REUSE_MAX_STEP``):
+    scale-free, symmetric in the direction of the step, and infinite when
+    a modulus changes sign or a region appears, which no reuse survives.
+    """
+    step = 0.0
+    for name, mat in new.items():
+        prev = old.get(name)
+        if prev is None:
+            return math.inf
+        for a, b in ((mat.mu, prev.mu), (mat.lam, prev.lam)):
+            if a == b:
+                continue
+            if a <= 0.0 or b <= 0.0:
+                return math.inf
+            step = max(step, abs(math.log(a / b)))
+    return step
+
+
+class _Lineage:
+    """Cross-solve state shared by every ``AssembledH`` that one chain of
+    ``rebuild_for_materials`` produces from a single assembly.
+
+    Its members are tied to the unknown LAYOUT, not to the materials, so
+    they survive a material change: the last solution vector (what
+    ``solve(x0="previous")`` warm-starts from) and the GCRO-DR recycle
+    space with the materials it was last harvested at. One chain is one
+    assembly and so one layout, which is the invariant the length checks
+    at the two use sites back up.
+    """
+
+    def __init__(self):
+        self.x = None
+        self.recycle: RecycleSpace | None = None
+        self.recycle_materials: dict | None = None
 
 
 class HBackend:
@@ -80,7 +122,7 @@ class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
                  jump: str = "calibrated", deflate: bool = False,
                  storage: str = "combined", sweep: bool = False,
-                 _shared=None):
+                 _shared=None, _lineage=None):
         from .dense import (require_anchor_or_deflate,
                             warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
@@ -129,6 +171,10 @@ class AssembledH:
 
         self._refresh_material_state()
         self._precond = None
+        # The materials the preconditioner was BUILT at -- what
+        # rebuild_for_materials measures a reuse step against.
+        self._precond_materials: dict | None = None
+        self._lineage = _Lineage() if _lineage is None else _lineage
 
     def _pair_combos(self) -> dict:
         """{pair key: [coefficient vectors]} every solve stage touches --
@@ -333,9 +379,10 @@ class AssembledH:
     def solve(self, rtol: float = defaults.GMRES_RTOL,
               restart: int = defaults.GMRES_RESTART,
               maxiter: int = defaults.GMRES_MAXITER,
-              x0: np.ndarray | None = None,
+              x0: np.ndarray | str | None = None,
               precond_max_dense: int = defaults.MAX_DENSE_PRECOND_DOF,
-              precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF):
+              precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
+              recycle: bool | None = None):
         """Preconditioned FGMRES; returns {slot_name: (N_patch, 3) array}
         and leaves ``self.report`` (the ``SolveReport``).
 
@@ -343,11 +390,43 @@ class AssembledH:
         of the iteration (all-Neumann + calibrated models): solves
         P A P y = P b with P = I - Z Z^T and returns the zero-mean-
         translation representative P y.
+
+        Two sequence options, for the material sweeps (the solves this
+        assembly's ``rebuild_for_materials`` chain produces):
+        ``x0="previous"`` warm-starts from the last solution of the
+        chain, and ``recycle`` (default ``defaults.GCRO_RECYCLE_DEFAULT``)
+        carries a GCRO-DR subspace through it. Recycling costs k matvecs
+        per solve before the first iteration, so it buys iterations, not
+        necessarily wall time. The recycle space is dropped when the
+        materials move further than ``defaults.PRECOND_REUSE_MAX_STEP``
+        from the ones it was harvested at.
         """
+        lineage = self._lineage
+        if isinstance(x0, str):
+            if x0 != "previous":
+                raise ValueError(f"x0 must be an array, None or 'previous'"
+                                 f" (got {x0!r})")
+            x0 = lineage.x if (lineage.x is not None
+                               and lineage.x.size == self.layout.n_unknowns) \
+                else None
+        rs = None
+        if defaults.GCRO_RECYCLE_DEFAULT if recycle is None else recycle:
+            # Harvested at materials too far from these? The outliers it
+            # approximates have moved; start the space over.
+            if lineage.recycle is None:
+                lineage.recycle = RecycleSpace()
+            elif lineage.recycle_materials is not None and material_step(
+                    lineage.recycle_materials,
+                    self.materials) > defaults.PRECOND_REUSE_MAX_STEP:
+                lineage.recycle.reset()
+            rs = lineage.recycle
+            lineage.recycle_materials = dict(self.materials)
+
         if self._precond is None:
             self._precond = BlockGaussSeidel(self, max_dense=precond_max_dense,
                                              hodlr_max=precond_hodlr_max,
                                              verbose=self.verbose)
+            self._precond_materials = dict(self.materials)
         if self.deflate:
             from .dense import translation_basis
             Z = translation_basis(self.layout)
@@ -358,25 +437,43 @@ class AssembledH:
             A_mv = lambda v: proj(self.matvec(proj(v)))       # noqa: E731
             M_mv = lambda r: proj(self._precond(proj(r)))     # noqa: E731
             x, report = fgmres(A_mv, proj(self.b), M=M_mv, x0=x0,
-                               rtol=rtol, restart=restart, maxiter=maxiter)
+                               rtol=rtol, restart=restart, maxiter=maxiter,
+                               recycle=rs)
             x = proj(x)
         else:
             x, report = fgmres(self.matvec, self.b, M=self._precond, x0=x0,
-                               rtol=rtol, restart=restart, maxiter=maxiter)
+                               rtol=rtol, restart=restart, maxiter=maxiter,
+                               recycle=rs)
         report.precond_summary = self._precond.summary()
         if self.verbose:
             print(f"  {report}")
         self.report = report
+        self._lineage.x = x
         return {s.name: x[s.offset:s.stop].reshape(-1, 3)
                 for s in self.layout.slots}
 
     # -- viscoelastic hook --------------------------------------------
 
     def rebuild_for_materials(self, material_map: dict) -> "AssembledH":
+        """The same compressed geometry at new materials, sharing this
+        assembly's pairs and its solve lineage (warm start, recycle
+        space).
+
+        The block-Gauss-Seidel ladder is carried over as well while the
+        step from the materials it was BUILT at stays within
+        ``defaults.PRECOND_REUSE_MAX_STEP``: it is the expensive part of
+        a rebuild (dense LU / HODLR per super-block) and it is only a
+        preconditioner, so a stale one costs iterations, never accuracy
+        -- the solve still applies the new operator and still confirms
+        the true residual. The whole object is kept, its off-diagonal
+        Gauss-Seidel couplings included, so what is applied is exactly
+        the previous materials' approximate inverse.
+        """
         new = AssembledH(self.system, self.eps, self.opts, self.verbose,
                          jump=self.jump, deflate=self.deflate,
                          storage=self.storage, sweep=self.sweep,
-                         _shared=(self._pairs, self._tree_cache))
+                         _shared=(self._pairs, self._tree_cache),
+                         _lineage=self._lineage)
         for name, mat in material_map.items():
             if name not in new.materials:
                 raise KeyError(f"unknown region '{name}'")
@@ -384,6 +481,11 @@ class AssembledH:
         # calibration + RHS are material-dependent: recompute AFTER the
         # material override (cheap: constant-field matvecs).
         new._refresh_material_state()
+        if self._precond is not None and material_step(
+                self._precond_materials, new.materials) \
+                <= defaults.PRECOND_REUSE_MAX_STEP:
+            new._precond = self._precond
+            new._precond_materials = self._precond_materials
         return new
 
     # -- stats -------------------------------------------------------

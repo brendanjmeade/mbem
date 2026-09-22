@@ -70,7 +70,6 @@ from mbem.backends.dense import AssembledDense, translation_basis # noqa: E402
 from mbem.estimate import total_ram_bytes                         # noqa: E402
 from mbem.kernels import KERNEL_T                                 # noqa: E402
 from mbem.la import hop                                           # noqa: E402
-from mbem.la.aca import BasisLR                                   # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 
 MODELS = ("fault_box", "topo_inclusion")
@@ -223,9 +222,9 @@ def build_meshes(model: str, scale: float, cache_dir: pathlib.Path,
 class _HopPhases:
     """Wall time of PairCompressed's stages, accumulated by wrapping hop's
     stage functions while active: partition = cluster trees + block
-    partition; dense_leaves = the prange stack evaluations of the dense
-    leaves (main thread); aca = ``_compress_all`` minus those; views =
-    ``_view`` minus any transient re-compression inside it. Restores the
+    partition; dense_leaves = the batched leaf kernel, once per material
+    view; aca = ``_compress_all``; views = ``_view`` minus the leaves and
+    minus any transient re-compression inside it. Restores the
     originals on exit; a stage function that no longer exists is skipped."""
 
     def __init__(self):
@@ -269,7 +268,7 @@ class _HopPhases:
 
         self._wrap(hop, "build_cluster_tree", timed("partition"))
         self._wrap(hop, "build_partition", timed("partition"))
-        self._wrap(hop._BasisEval, "stack", timed("dense_leaves"))
+        self._wrap(hop.PairCompressed, "_dense_leaves", timed("dense_leaves"))
         self._wrap(hop.PairCompressed, "_compress_all",
                    minus_nested("aca", ("dense_leaves",)))
         self._wrap(hop.PairCompressed, "_view",
@@ -288,8 +287,10 @@ class _HopPhases:
 
 def operator_stats(hasm) -> tuple[dict, dict, int]:
     """(bytes, ranks, fallbacks) of an AssembledH from its pairs: near =
-    dense leaves and lowrank = factors of every cached material view;
-    bases = per-basis payloads still held (storage="basis")."""
+    the dense blocks and lowrank = the factors of every cached material
+    view (both per material, never per basis); bases = per-basis factors
+    still held (storage="basis"). Index and pointer arrays (~1 % of a
+    view) are not counted."""
     near = lowrank = bases = 0
     ranks: list = []
     n_lowrank = n_dense = fallbacks = capped = 0
@@ -302,19 +303,14 @@ def operator_stats(hasm) -> tuple[dict, dict, int]:
         certified = max(certified, getattr(pair, "max_verified_err", 0.0))
         if pair.blocks is not None:
             for _, _, payload in pair.blocks:
-                if isinstance(payload, BasisLR):
+                if payload is not None:
                     bases += payload.nbytes()
                     ranks.extend(payload.ranks)
-                else:
-                    bases += payload.nbytes
         for view in pair._views.values():
-            for _, _, A, V in view:
-                if V is None:
-                    near += A.nbytes
-                else:
-                    lowrank += A.nbytes + V.nbytes
-                    if pair.blocks is None:
-                        ranks.append(A.shape[1])
+            near += view.dense_nbytes()
+            lowrank += view.lowrank_nbytes()
+            if pair.blocks is None:
+                ranks.extend(int(k) for k in view.ranks)
     n = hasm.layout.n_unknowns
     total = near + lowrank + bases
     b = {"near": near, "lowrank": lowrank, "bases": bases, "total": total,

@@ -24,6 +24,53 @@ GMRES_ITER_GROWTH_MAX = 1.25
 # operator, is what changed.
 GMRES_ITER_CEILING = 40
 
+# --- Material sweeps: preconditioner reuse and Krylov recycling --------
+# A sweep solves one geometry at many materials. The ladder's diagonal
+# factorizations are the expensive part of a rebuild and they are STALE,
+# not wrong, at a nearby material, so ``rebuild_for_materials`` keeps the
+# preconditioner while every changed region's moduli stay within this
+# log-step of the ones it was BUILT from (drift is measured against the
+# build, not against the previous step, so a slow sweep still rebuilds).
+# What a stale ladder costs at a 2x step, measured with the warm start
+# on: +1 iteration on the 10.9k inclusion model, +2 on the 31k topo
+# model, +3 on the 2.6k fault-zone model (+5 there without the warm
+# start). What it saves is the whole ladder build, which is most of a
+# solve's wall time at scale: 2.5x per solve at 10.9k (3.4 -> 1.4 s),
+# 5x at 31k (18-26 -> 3.2-4.2 s).
+PRECOND_REUSE_MAX_STEP = 0.6931471805599453   # = log 2
+# What a kept ladder plus a warm start (x0 = the previous solution) may
+# cost in iterations against a fresh build at the same material
+# (measured +1 / +2 / +3 on the three models above; the warm start
+# itself saves 2-4).
+PRECOND_REUSE_ITER_SLACK = 4
+# GCRO-DR recycled subspace dimension k (la/solver.RecycleSpace). The
+# preconditioned operator has ~21 outlier eigenvalues, geometric and
+# material-insensitive, and they are what harmonic-Ritz recycling
+# harvests; 30 covers them with margin at 3 k n floats while a solve
+# runs (30 x 900k x 8 B = 220 MB per array at 1M unknowns), k n stored
+# between solves. Note what a recycled solve spends before its first
+# iteration: k preconditioner applications and k matvecs re-deriving
+# U = M Y and C = A U. At 20-24 baseline iterations that is more than
+# the iterations it saves, so recycling buys iteration COUNT, not wall
+# time, on these models.
+GCRO_RECYCLE_DIM = 30
+# Recycling is therefore opt-in per solve (``solve(recycle=True)``), not
+# the default: a single solve gains nothing from it (measured: the same
+# iterations and the same solution to 6e-15, plus the harvest) and pays
+# the setup on every solve after it.
+GCRO_RECYCLE_DEFAULT = False
+# Ceiling on solves 2..N of the material sweep verify_hbackend runs
+# (the 2.6k fault-zone model), where recycling measures 15 against 20
+# fresh and 19-23 reused: 18 is that with margin for an operator change.
+# It is NOT a universal count -- recycled sweeps measure 13-17 on the
+# 10.9k inclusion model (22 fresh) and 15-22 on the 31k topo model (23-24
+# fresh), the spread being the ladder's staleness at the solve, and the
+# 12 of the work plan is reached only with a ladder rebuilt every solve
+# (12-15 at 10.9k). The model-independent statement is the relative one
+# the same check gates: recycling must never cost iterations against the
+# same sweep without it.
+GCRO_SWEEP_ITER_MAX = 18
+
 # --- Conditioning ------------------------------------------------------
 # Warn when a dense solve's 1-norm condition estimate exceeds this.
 # cond * machine-eps ~ residual amplification: 1e10 * 2e-16 = 2e-6 is
@@ -73,6 +120,11 @@ ACA_MAX_RANK_FRACTION = 1.0 / 3.0
 # half the tolerance and the recompression may add the other half.
 ACA_CERTIFY_LINES = 3
 ACA_CERTIFY_FACTOR = 3.0
+# rcond of the ACA pivot block's pseudo-inverse (aca._pinv3, mirrored in
+# aca_numba): a singular value below this fraction of the leading one is
+# treated as zero, and a 3x3 pivot block with |det| <= rcond x ||P||_F^3
+# falls back from the closed form to that SVD.
+ACA_PINV_RCOND = 1e-12
 # H-vs-dense parity gates (verify_hbackend, verify_deflation_estimate,
 # demo_hmatrix), as multiples of BLOCK_COMPRESSION_TOL: operator and RHS
 # ENTRIES within H_PARITY_OPERATOR x tol (each block is certified at
@@ -93,13 +145,19 @@ ACA_SVD_FALLBACK_MIN_SIDE = 256
 # compression -- each is a full (B, 3nr, 3nc) basis stack (0.45 GB at
 # MAX_ADMISSIBLE_BLOCK = 1024 for the T kernel).
 ACA_FALLBACK_CONCURRENCY = 2
-# Only admissible blocks at least this many elements per (shorter) side
-# are compressed on the thread pool. Below it, per-eval kernel work is
-# so small that block ACA is Python-overhead(GIL)-bound and threads only
-# add contention (measured: 232 blocks of 72x72 ran 0.6x under threads);
-# small blocks are compressed inline instead. Thread parallelism is for
-# the LARGE blocks that dominate at 1e5-1e6 elements.
-ACA_PARALLEL_MIN_SIDE = 192
+# Two implementations of the same seeded ACA -- aca._aca_python and the
+# nogil kernel of aca_numba -- pivot identically (same lines from the
+# same seed, same arithmetic order where it decides a pivot), but their
+# recompressions call different LAPACK builds (numpy's and scipy's), so
+# where the truncated singular values are nearly tied they discard a
+# different tail: one tolerance's worth, and a rank that differs by at
+# most one. Their factors are therefore compared -- with each against
+# the exact block -- at this multiple of BLOCK_COMPRESSION_TOL
+# (verify_hbackend; measured 1.1 x over the gate's blocks, and 1.3e-14
+# where the truncation is not degenerate), never bitwise. Each
+# implementation IS bitwise repeatable on its own, which is what the
+# determinism check covers.
+ACA_IMPL_PARITY = 4.0
 # Per-material recombined views cached per PairCompressed (LRU), bounded
 # by count and by bytes. The count must exceed the number of DISTINCT
 # coefficient vectors one solve applies to a pair (preconditioner
@@ -113,6 +171,33 @@ ACA_PARALLEL_MIN_SIDE = 192
 HOP_VIEW_CACHE_MAX = 16
 HOP_VIEW_CACHE_MAX_BYTES = 2_000_000_000
 HOP_VIEW_CACHE_MIN_KEEP = 2
+# The flat view's matvec (la/flatview.py) cuts the output DOFs into this
+# many contiguous equal-work row chunks. Each chunk OWNS its rows, so the
+# result is bitwise identical at every thread count, and the cut is fixed
+# by the view rather than by the thread count. It is an upper bound --
+# 16 chunks per core here, enough that the ragged per-row work of a block
+# partition balances without the chunk CSR growing; the work floor below
+# sets the count actually used.
+FLATVIEW_ROW_CHUNKS = 256
+# ... but never more chunks than this much work each: a chunk re-gathers
+# the x entries of every dense block it touches, so an over-cut view pays
+# the gather many times over (a 0.85 M-multiply-add pair lost 2.5x to 256
+# chunks). 50 k multiply-adds is ~15 us of work, well above a thread's
+# share of one fork/join.
+FLATVIEW_MIN_CHUNK_WORK = 50_000
+# Below this many multiply-adds a view's matvec runs in ONE thread: an
+# OpenMP fork/join costs 0.1-0.3 ms here, and a small pair pays it on
+# every term of every iteration (the fault box at 1.1k unknowns: 2.7 ms
+# of launches, 0.3 ms once its nine terms went serial). 1e6 is a few
+# tenths of a millisecond of work, an order above the launch.
+FLATVIEW_PARALLEL_MIN_WORK = 1_000_000
+# Flat view vs the block loop it replaced (verify_hbackend): the two sum
+# the same terms in a different order -- numba loops against BLAS dot,
+# the leaf kernel's in-loop coefficient combination against tensordot --
+# so the gate is round-off, not bitwise (measured 6e-16 over the
+# fault-zone views and 2e-15 over the 10.9k inclusion model's); what
+# stays bitwise is the flat matvec across thread counts.
+FLATVIEW_PARITY = 1e-12
 
 # --- Dense fallbacks --------------------------------------------------
 MAX_DENSE_PRECOND_DOF = 9000  # exact dense LU below this, per block

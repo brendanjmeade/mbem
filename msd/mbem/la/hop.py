@@ -2,24 +2,31 @@
 
 A ``PairCompressed`` represents ALL basis matrices of one
 (field mesh, source mesh, kernel) pair in block-compressed form:
-admissible blocks as per-basis low-rank factors (see :mod:`.aca`) or,
-when not low rank at the tolerance, as exact dense stacks; near-field
-leaf blocks as exact dense basis stacks. A material enters only through
-its coefficient vector: the per-material view combines the factors
-(with one QR+SVD re-truncation per low-rank block), certifies every
+admissible blocks as per-basis low-rank factors (see :mod:`.aca`) or, when
+not low rank at the tolerance, as their indices alone. A material enters
+only through its coefficient vector: the per-material view combines the
+factors (one QR+SVD re-truncation per low-rank block), certifies every
 recombined block on its exact rows and columns (a block that fails is
-applied exactly in that view), and is cached, so the SAME object serves
-every region material. Coefficients are real (both backends allocate
-real accumulators).
+applied exactly in that view), evaluates every exact block -- those and
+the partition's near-field leaves -- from the kernels in one parallel
+pass, and lays the result out as a :class:`.flatview.FlatView` whose
+single numba kernel applies the whole pair. Views are cached, so the SAME
+object serves every region material. Coefficients are real (both backends
+allocate real accumulators).
+
+The NEAR FIELD is never stored per basis: it is part of the view, at 1x
+instead of Bx, and a second material re-evaluates it from the kernels
+(kernel work only) instead of recombining B stacks.
 
 Threads: block compression and view recombination run with BLAS pinned
 to one thread (``threadpoolctl``): the per-block work is many small
 QR/SVD calls whose multi-threaded BLAS only oversubscribes the machine.
-Kernel work runs on a Python thread pool in the serial nogil variant
-(it scales; the parallel prange kernels are called from the main thread
-only), while the BLAS calls themselves stay serial -- OpenBLAS
-serializes concurrent callers on its buffer lock, and a pool of
-recompressions is slower than one thread (measured).
+Every block's ACA runs on a Python thread pool as one nogil numba kernel
+(``aca_numba``), and the leaf kernel and the flat matvec are prange
+kernels called from the main thread only (rule 8), while the BLAS calls
+themselves stay serial -- OpenBLAS serializes concurrent callers on its
+buffer lock, and a pool of recompressions is slower than one thread
+(measured).
 """
 
 from __future__ import annotations
@@ -36,9 +43,11 @@ from .. import defaults
 from ..kernels import KERNEL_T, kernel_n_basis
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
-from .aca import (BasisLR, BlockEvalCache, certify_combined, compress_block,
+from .aca import (BlockEvalCache, certify_combined, compress_block,
                   recompress)
+from .aca_numba import KERNEL_FLAG, block_factors
 from .cluster import build_cluster_tree, build_partition
+from .flatview import FlatView, dense_leaves
 
 
 def _dof_idx(elems: np.ndarray) -> np.ndarray:
@@ -72,7 +81,10 @@ class _BasisEval:
         self.n_basis = kernel_n_basis(kernel)      # raises on a bad tag
 
     def stack(self, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
-        """(B, 3*len(rows), 3*len(cols)) exact basis sub-stack."""
+        """(B, 3*len(rows), 3*len(cols)) exact basis sub-stack (prange
+        kernels, main thread). The operator path combines a block's
+        coefficients inside the leaf kernel instead and never builds a
+        basis stack; this is the gate's reference (``view_reference``)."""
         xf = self.x_field[rows]
         tv = self.tri_verts[cols]
         ee = self.eps[cols]
@@ -91,6 +103,23 @@ class _BasisEval:
             return tk.t_basis_matrices_serial(xf, tv, self.normals[cols], ee)
         return tk.u_basis_matrices_serial(xf, tv, ee)
 
+    def aca_fn(self, rows: np.ndarray, cols: np.ndarray):
+        """This block's ACA + certificate stage as ONE nogil numba kernel
+        over its own geometry (``aca_numba.block_factors``) -- what
+        ``aca.compress_block`` runs in place of its Python loop, and why
+        every block, not only the large ones, belongs on the pool."""
+        xf = np.ascontiguousarray(self.x_field[rows])
+        tv = np.ascontiguousarray(self.tri_verts[cols])
+        nm = np.ascontiguousarray(self.normals[cols])
+        ee = np.ascontiguousarray(self.eps[cols])
+        flag = KERNEL_FLAG[self.kernel]
+
+        def run(tol, srows, scols, cert_rows, cert_cols, max_rank):
+            return block_factors(xf, tv, nm, ee, flag, tol, srows, scols,
+                                 cert_rows, cert_cols, max_rank)
+
+        return run
+
 
 class PairCompressed:
     def __init__(self, field_mesh, source_mesh, kernel: str, eps_arr,
@@ -104,8 +133,10 @@ class PairCompressed:
                  storage: str = "basis",
                  combine_for=None):
         """``storage="basis"`` (default) keeps the GEOMETRY-ONLY per-basis
-        factors/stacks: any material recombines for free, at B-fold
-        storage (B = 3 for U, 6 for T). ``storage="combined"`` builds the
+        factors of the admissible blocks: any material recombines without
+        re-compressing, at B-fold storage of the FAR field (B = 3 for U,
+        6 for T; the near field is per material either way, never per
+        basis). ``storage="combined"`` builds the
         views of the coefficient vectors in ``combine_for`` and then
         DROPS the per-basis payloads -- 1x storage, the memory mode for
         large models; a material NOT in ``combine_for`` (e.g. a later
@@ -155,7 +186,7 @@ class PairCompressed:
         # Per-material views: LRU-bounded by count and bytes (``_evict``).
         # Unbounded caching leaked one full recombined operator PER
         # MATERIAL across a material sweep.
-        self._views: OrderedDict[bytes, list] = OrderedDict()
+        self._views: OrderedDict[bytes, FlatView] = OrderedDict()
         self._view_nbytes: dict[bytes, int] = {}
 
         if storage == "combined":
@@ -164,48 +195,48 @@ class PairCompressed:
             self.blocks = None       # drop the B-fold basis payloads
 
     def _compress_all(self) -> list:
-        """Compress every partition block; returns the basis-form block
-        list [(row_dofs, col_dofs, BasisLR | ndarray)] and records the
+        """Compress every ADMISSIBLE block; returns the basis-form block
+        list [(rows, cols, BasisLR | None)] (element indices; ``None`` =
+        not low rank at this tolerance, applied exactly) and records the
         rank-cap, fallback and certified-error statistics.
 
-        Compression is parallel ACROSS blocks for LARGE blocks only
-        (Python threads; their kernel work runs in serial nogil numba,
-        so threads scale and cannot trip the workqueue threading
-        layer). Small blocks are Python-overhead(GIL)-bound -- threads
-        only add contention (measured 0.6x) -- so they compress inline.
-        Each block draws from its OWN rng seeded by (12345, block
-        index): factors are deterministic and independent of both
-        scheduling order and the size routing.
+        The near field is not touched here and holds no per-basis stack:
+        dense leaves, and the admissible blocks applied exactly, are
+        evaluated per material into the flat view (``_dense_leaves``).
+
+        EVERY block compresses on the Python thread pool: its ACA,
+        certificate and recompression are one nogil numba kernel
+        (``aca_numba``), so the threads scale (no GIL between pivots) and
+        cannot trip numba's threading layer, and a small block is no
+        longer Python-overhead-bound. BLAS stays at one thread inside the
+        pool. Each block draws from its OWN rng seeded by (12345, block
+        index): factors are deterministic and independent of scheduling
+        order.
         """
         part = self._part
         tol = self.tol
         n_workers = self._n_workers
         fallback_gate = _threading.Semaphore(
             defaults.ACA_FALLBACK_CONCURRENCY)
-        min_side = defaults.ACA_PARALLEL_MIN_SIDE
 
         def _compress(i, rows, cols):
-            cache = BlockEvalCache(self.eval.stack_serial, rows, cols)
+            cache = BlockEvalCache(self.eval.stack_serial, rows, cols,
+                                   aca_fn=self.eval.aca_fn(rows, cols))
             rng = np.random.default_rng((12345, i))
             return compress_block(cache, self.n_basis, tol=tol, rng=rng,
-                                  fallback_gate=fallback_gate)
+                                  fallback_gate=fallback_gate,
+                                  exact_payload=False)
 
         results: dict = {}
-        big = [(i, rows, cols)
-               for i, (rows, cols) in enumerate(part.admissible)
-               if min(len(rows), len(cols)) >= min_side]
         with threadpool_limits(limits=1):
-            if n_workers > 1 and len(big) > 1:
+            if n_workers > 1 and len(part.admissible) > 1:
                 with ThreadPoolExecutor(max_workers=n_workers) as ex:
                     futs = {ex.submit(_compress, i, rows, cols): i
-                            for i, rows, cols in big}
+                            for i, (rows, cols) in enumerate(part.admissible)}
                     for f, i in futs.items():
                         results[i] = f.result()
             else:
-                for i, rows, cols in big:
-                    results[i] = _compress(i, rows, cols)
-            for i, (rows, cols) in enumerate(part.admissible):
-                if i not in results:
+                for i, (rows, cols) in enumerate(part.admissible):
                     results[i] = _compress(i, rows, cols)
 
         blocks = []
@@ -216,22 +247,20 @@ class PairCompressed:
             self.n_fallback += 1 if res.fallback else 0
             self.n_capped += 1 if res.capped else 0
             self.max_verified_err = max(self.max_verified_err, res.max_err)
-            blocks.append((_dof_idx(rows), _dof_idx(cols), res.payload))
-        for rows, cols in part.dense:
-            stack = self.eval.stack(rows, cols)      # prange kernels
-            blocks.append((_dof_idx(rows), _dof_idx(cols), stack))
+            blocks.append((rows, cols, res.payload))
         return blocks
 
     # -- material views -----------------------------------------------
 
-    def _combine(self, blocks: list, c: np.ndarray):
-        """The per-material view of ``blocks`` for coefficients ``c``:
-        ([(rdofs, cdofs, A, V)], max certified error, blocks applied
-        exactly), A @ V.T for a recombined low-rank block, (A, None) for
-        a dense one. Each recombined block is certified on its exact
-        rows and columns (``aca.certify_combined``); above
-        ``ACA_CERTIFY_FACTOR`` x tol the view holds the exact combined
-        block instead.
+    def _recombine(self, blocks: list, c: np.ndarray):
+        """Material recombination of the ADMISSIBLE blocks for
+        coefficients ``c``: ([(rows, cols, U, V)] low rank,
+        [(rows, cols)] applied exactly, max certified error, certificate
+        failures). Each recombined block is certified on its exact rows
+        and columns (``aca.certify_combined``); above
+        ``ACA_CERTIFY_FACTOR`` x tol it joins the exact list, where the
+        blocks the build already found not low rank (payload ``None``)
+        start.
 
         The recompressions run SERIALLY at one BLAS thread: that is the
         whole gain (1.1 ms per block against 8-10 ms under BLAS
@@ -248,31 +277,24 @@ class PairCompressed:
         ev = self.eval
         chunk_max = 8 * n_basis * (3 * defaults.MAX_ADMISSIBLE_BLOCK) ** 2
 
-        def _elems(rdofs, cdofs):
-            return rdofs[0::3] // 3, cdofs[0::3] // 3
-
         def _cert(blk):
-            rdofs, cdofs, payload = blk
-            er, ec = _elems(rdofs, cdofs)
-            return (ev.stack_serial(er[payload.cert_rows], ec),
-                    ev.stack_serial(er, ec[payload.cert_cols]))
+            rows, cols, payload = blk
+            return (ev.stack_serial(rows[payload.cert_rows], cols),
+                    ev.stack_serial(rows, cols[payload.cert_cols]))
 
         def _cert_bytes(blk):
-            rdofs, cdofs, payload = blk
-            return 8 * n_basis * 3 * len(payload.cert_rows) * (len(rdofs)
-                                                               + len(cdofs))
+            rows, cols, payload = blk
+            return 8 * n_basis * 9 * len(payload.cert_rows) * (len(rows)
+                                                               + len(cols))
 
-        view: list = [None] * len(blocks)
+        low: dict = {}
+        exact = [i for i, blk in enumerate(blocks) if blk[2] is None]
         err = 0.0
         n_exact = 0
-        lr = [i for i, blk in enumerate(blocks) if isinstance(blk[2], BasisLR)]
+        lr = [i for i, blk in enumerate(blocks) if blk[2] is not None]
         pool = (ThreadPoolExecutor(max_workers=self._n_workers)
                 if self._n_workers > 1 and len(lr) > 1 else None)
         with threadpool_limits(limits=1):
-            for i, (rdofs, cdofs, payload) in enumerate(blocks):
-                if not isinstance(payload, BasisLR):
-                    view[i] = (rdofs, cdofs,
-                               np.tensordot(c, payload, axes=1), None)
             try:
                 start = 0
                 while start < len(lr):
@@ -288,7 +310,7 @@ class PairCompressed:
                     stacks = (list(pool.map(_cert, chunk)) if pool
                               else [_cert(blk) for blk in chunk])
                     for i, (rows_exact, cols_exact) in zip(idx, stacks):
-                        rdofs, cdofs, payload = blocks[i]
+                        rows, cols, payload = blocks[i]
                         U_cat = np.hstack([c[b] * payload.U[b]
                                            for b in range(n_basis)])
                         V_cat = np.hstack(payload.V)
@@ -297,18 +319,65 @@ class PairCompressed:
                                              payload.cert_rows,
                                              payload.cert_cols)
                         if e <= limit:
-                            view[i] = (rdofs, cdofs, U, V)
+                            low[i] = (rows, cols, U, V)
                             err = max(err, e)       # error as APPLIED
                         else:
-                            er, ec = _elems(rdofs, cdofs)
-                            view[i] = (rdofs, cdofs, np.tensordot(
-                                c, ev.stack(er, ec), axes=1), None)
+                            exact.append(i)
                             n_exact += 1
                     start = stop
             finally:
                 if pool is not None:
                     pool.shutdown()
-        return view, err, n_exact
+        # Partition order on both lists: the view's block order, and with
+        # it the accumulation order of its matvec, is a function of the
+        # partition alone -- not of the chunking or the thread count.
+        lr_blocks = [low[i] for i in sorted(low)]
+        exact_blocks = [(blocks[i][0], blocks[i][1]) for i in sorted(exact)]
+        return lr_blocks, exact_blocks, err, n_exact
+
+    def _dense_leaves(self, blocks: list, c: np.ndarray):
+        """``(D_flat, d_ptr)``: every block of ``blocks`` (element index
+        arrays) evaluated from the kernels for coefficients ``c`` in one
+        parallel pass (``flatview.dense_leaves``, main thread).
+
+        This is what the near field costs per material -- its kernel work
+        and nothing else (measured 0.16 s for the 1,148 leaves of a
+        10k-element T self-pair, ~12 s at 1M unknowns) -- instead of B
+        stored basis stacks recombined per material."""
+        ev = self.eval
+        return dense_leaves(ev.kernel, ev.x_field, ev.tri_verts, ev.normals,
+                            ev.eps, blocks, c)
+
+    def _combine(self, blocks: list, c: np.ndarray):
+        """The per-material ``FlatView`` of ``blocks`` for coefficients
+        ``c``, with the max certified error and the number of admissible
+        blocks applied exactly."""
+        lr_blocks, exact_blocks, err, n_exact = self._recombine(blocks, c)
+        dense_blocks = exact_blocks + list(self._part.dense)
+        D_flat, d_ptr = self._dense_leaves(dense_blocks, c)
+        return (FlatView(self.shape, lr_blocks, dense_blocks, D_flat, d_ptr),
+                err, n_exact)
+
+    def view_reference(self, coeffs: np.ndarray) -> list:
+        """The pre-flat form of a material view, block by block:
+        ``[(rdofs, cdofs, A, V)]`` -- ``A @ V.T`` low rank, ``(A, None)``
+        exact -- in the flat view's own block order, with every exact
+        block combined from its per-basis stack in numpy instead of by
+        the batched leaf kernel.
+
+        The reference the flat view is gated against
+        (``verify_hbackend``); it needs the per-basis payloads, so it is
+        for storage="basis" pairs, and no solve path calls it."""
+        c = np.asarray(coeffs, dtype=float)
+        blocks = self.blocks if self.blocks is not None else self._compress_all()
+        lr_blocks, exact_blocks, _, _ = self._recombine(blocks, c)
+        view = [(_dof_idx(rows), _dof_idx(cols), U, V)
+                for rows, cols, U, V in lr_blocks]
+        for rows, cols in exact_blocks + list(self._part.dense):
+            view.append((_dof_idx(rows), _dof_idx(cols),
+                         np.tensordot(c, self.eval.stack(rows, cols), axes=1),
+                         None))
+        return view
 
     def _evict(self) -> None:
         """LRU bound on the view cache by count (``HOP_VIEW_CACHE_MAX``)
@@ -322,7 +391,7 @@ class PairCompressed:
             key, _ = self._views.popitem(last=False)
             total -= self._view_nbytes.pop(key)
 
-    def _view(self, coeffs: np.ndarray) -> list:
+    def _view(self, coeffs: np.ndarray) -> FlatView:
         c = np.asarray(coeffs, dtype=float)
         key = c.tobytes()
         view = self._views.get(key)
@@ -339,9 +408,7 @@ class PairCompressed:
         self.max_verified_err = max(self.max_verified_err, err)
         self.n_view_fallback = max(self.n_view_fallback, n_exact)
         self._views[key] = view
-        self._view_nbytes[key] = sum(
-            A.nbytes + (V.nbytes if V is not None else 0)
-            for _, _, A, V in view)
+        self._view_nbytes[key] = view.nbytes()
         self._evict()
         return view
 
@@ -368,32 +435,24 @@ class PairCompressed:
     # -- operations -----------------------------------------------------
 
     def matvec(self, coeffs: np.ndarray, x: np.ndarray) -> np.ndarray:
-        y = np.zeros(self.shape[0])
-        for rdofs, cdofs, A, V in self._view(coeffs):
-            if V is None:
-                y[rdofs] += A @ x[cdofs]
-            else:
-                y[rdofs] += A @ (V.T @ x[cdofs])
-        return y
+        """The material view applied to ``x`` by ONE kernel over every
+        block (``FlatView.matvec``). Main thread only (rule 8)."""
+        return self._view(coeffs).matvec(x)
 
     def to_dense(self, coeffs: np.ndarray) -> np.ndarray:
-        M = np.zeros(self.shape)
-        for rdofs, cdofs, A, V in self._view(coeffs):
-            if V is None:
-                M[np.ix_(rdofs, cdofs)] += A
-            else:
-                M[np.ix_(rdofs, cdofs)] += A @ V.T
-        return M
+        return self._view(coeffs).to_dense()
 
     # -- stats ------------------------------------------------------
 
     def nbytes(self) -> int:
-        if self.blocks is None:            # storage="combined"
-            return sum(self._view_nbytes.values())
-        total = 0
-        for _, _, payload in self.blocks:
-            total += payload.nbytes() if isinstance(payload, BasisLR) \
-                else payload.nbytes
+        """Resident bytes: every cached material view (its recombined
+        factors AND its near field -- the near field is per material,
+        never per basis) plus, in storage="basis", the per-basis
+        factors."""
+        total = sum(self._view_nbytes.values())
+        if self.blocks is not None:
+            total += sum(p.nbytes() for _, _, p in self.blocks
+                         if p is not None)
         return total
 
     def dense_equivalent_bytes(self) -> int:
@@ -415,12 +474,13 @@ class PairCompressed:
                f"up to {self.n_view_fallback} exact per view; max certified "
                f"err {self.max_verified_err:.1e}")
         if not combined:
-            ranks = [r for _, _, p in self.blocks if isinstance(p, BasisLR)
+            ranks = [r for _, _, p in self.blocks if p is not None
                      for r in p.ranks]
             adm += f", avg basis rank {np.mean(ranks) if ranks else 0:.1f}"
         adm += ")"
         dense_mb = self.dense_equivalent_bytes() / 1e6
-        tail = (f"{self.n_dense} dense leaf, {self.nbytes()/1e6:.1f} MB vs "
+        tail = (f"{self.n_dense} dense leaf (per view), "
+                f"{self.nbytes()/1e6:.1f} MB held vs "
                 + (f"{dense_mb:.1f} MB dense" if combined
                    else f"{self.n_basis} x {dense_mb:.1f} MB dense-basis"))
         return f"{head}: {adm}, {tail}"

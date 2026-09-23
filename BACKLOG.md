@@ -117,6 +117,39 @@ rung is also 10 % faster and 10 GB lighter. `BENCH_OPERATOR_ERROR_MAX` stays
 exact kernels (`H_PARITY_CALIBRATION`) -- the one part of the operator an
 entrywise parity does not bound.
 
+**Next: the shared-subspace fold, not the kernel.** Measured at 261k unknowns,
+the ACA phase (208 s of a 245 s assembly) is **68.9 % the serial QR/SVD fold**
+that WP5 added, 20.3 % the rest of the compression pool, and only **10.8 %
+kernel evaluation**. So a free kernel would buy 1.12x. The fold's own cost is
+corroborated from the other direction: WP5 reported it adding ~54 s at 117k,
+and this decomposition finds 50.8 s there; three independent estimates of the
+kernel's share (at 1, 6 and 12 quadrature points) agree to 1 %. WP5 already
+named the fix and skipped it for budget: the per-basis factors leave
+`_recompress` with orthogonal columns, so the one big `(3n, sum K)` QR can
+become block Gram-Schmidt (GEMMs plus B small QRs), or be deferred until a
+second material is actually asked for. Worth ~2.8x on the ACA phase, against
+quadrature's 1.09x. Note the constraint that boxed WP5 in: pooling the fold is
+9x SLOWER (OpenBLAS serializes on its buffer lock), scipy's economic QR is
+3-25x faster but silently corrupts 2-6 blocks per model, and numba's QR
+returned freed memory (fixed in c480c75) -- so the fix has to avoid LAPACK
+contention rather than parallelize around it.
+
+**Point sources for the far field: measured, works, does not pay yet (1.06x).**
+A 6-point symmetric rule is 5.8x cheaper than the exact triangle integration on
+the T kernel at the ACA's own row/column granularity (inside numba; a
+Python-level comparison misleadingly shows 1.2-1.9x), and it is accurate
+enough: at 261k, 99.1 % of far-field element pairs sit where 6 points meet
+1e-4, 0.5 % need 12, 0.3 % must stay exact. Work-weighted, the median
+far-field pair sits at r/h = 37 and only 3.2 % of the work is closer than 8.
+End to end it buys 1.06x on total wall, because of the fold above. Revisit
+after the fold: it is then worth 1.35x of what remains, and it is the P2M stage
+an FMM needs anyway. The gated prototype (~460 lines, verified against the
+closed form at two Poisson ratios) is in the session scratchpad, not the tree.
+One trap recorded: an admissible block can have a source element LARGER than
+its own separation on a graded mesh (min gap/h_src 0.73 at 261k), because
+admissibility tests `min(diam) < eta dist` and never sees h_src -- so a rule
+order must be chosen per block from its own gap/max(h_src), not globally.
+
 **WP8 Trial A (fmm3dpy) is closed: rejected on speed.** The eps = 0 Kelvin
 layers are exact combinations of its Laplace and Stokes kernels (single layer =
 Stokeslet + Laplace charge; double layer = stresslet + one Laplace call with

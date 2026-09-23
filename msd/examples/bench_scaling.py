@@ -98,6 +98,38 @@ def peak_rss_gb() -> float:
     return ru / 1e9 if sys.platform == "darwin" else ru * 1e3 / 1e9
 
 
+LOAD_POLL_S = 5.0        # how often wait_for_load re-reads os.getloadavg
+
+
+def wait_for_load(tag: str) -> float:
+    """The 1-minute load average, after waiting for it to fall back under
+    ``BENCH_LOAD_MAX`` (at most ``BENCH_LOAD_WAIT_S``).
+
+    A gated ladder runs its rungs back to back, and a rung's own 16
+    threads leave the average well above the limit for a minute or two
+    afterwards, so the limit is a thing to WAIT for, not to refuse on:
+    only a load that outlasts the wait belongs to another process.
+    Returns the last reading, which the caller compares with the limit.
+    """
+    t0 = time.perf_counter()
+    load = os.getloadavg()[0]
+    waited = False
+    while load > defaults.BENCH_LOAD_MAX:
+        if time.perf_counter() - t0 > defaults.BENCH_LOAD_WAIT_S:
+            break
+        if not waited:
+            print(f"  waiting for load {load:.2f} to fall under "
+                  f"{defaults.BENCH_LOAD_MAX:g} before {tag} "
+                  f"(up to {defaults.BENCH_LOAD_WAIT_S:.0f} s)", flush=True)
+            waited = True
+        time.sleep(LOAD_POLL_S)
+        load = os.getloadavg()[0]
+    if waited:
+        print(f"  load {load:.2f} after {time.perf_counter() - t0:.0f} s",
+              flush=True)
+    return load
+
+
 def git_hash() -> str:
     try:
         h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
@@ -747,12 +779,15 @@ def main():
     print(table_header(), flush=True)
     for scale in scales:
         for backend in args.backend:
-            load = os.getloadavg()[0]
-            if args.gate and load > defaults.BENCH_LOAD_MAX:
-                print(f"FAIL: bench gate refused: load average {load:.2f} > "
-                      f"{defaults.BENCH_LOAD_MAX:g} before {args.model} "
-                      f"x{scale:g} {backend}")
-                sys.exit(1)
+            tag = f"{args.model} x{scale:g} {backend}"
+            if args.gate:
+                load = wait_for_load(tag)
+                if load > defaults.BENCH_LOAD_MAX:
+                    print(f"FAIL: bench gate refused: load average "
+                          f"{load:.2f} > {defaults.BENCH_LOAD_MAX:g} before "
+                          f"{tag}, after waiting "
+                          f"{defaults.BENCH_LOAD_WAIT_S:.0f} s")
+                    sys.exit(1)
             rec = run_child(args, args.model, scale, backend)
             records.append(rec)
             print(table_row(rec), flush=True)

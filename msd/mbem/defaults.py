@@ -204,6 +204,19 @@ ACA_PINV_RCOND = 1e-12
 # Rebuild-vs-fresh, combined-vs-basis and determinism stay bitwise.
 H_PARITY_OPERATOR = 50
 H_PARITY_SOLUTION = 10
+# The calibrated diagonal is built from the COMPRESSED row sums, so the
+# block tolerance enters the operator's free term directly: |C_h -
+# C_exact| is bounded by this multiple of tol x COLLOCATION_JUMP
+# (verify_hbackend, calibration check). Nothing else bounds it -- an
+# entrywise parity is relative and per block, while a row sum adds every
+# block of a row and is compared with a free term of 0.5. Measured 0.059
+# of tol x the free term on the gate's own refined fault-zone model, so
+# 0.25 is that with a 4x margin, and the seeded arm it must reject -- the
+# same model at a 100x looser tolerance -- lands 64x the limit. It is a
+# gate on that model, not a universal bound: the topo_inclusion ladder
+# measures 0.3-0.7 of tol x the free term at 31k-261k unknowns, growing
+# with the number of admissible blocks a row crosses.
+H_PARITY_CALIBRATION = 0.25
 # A block that fails its certificate TWICE and whose caller needs a
 # payload (the HODLR rung) is re-done from its exact stack: kept dense
 # below this many elements on its shorter side, SVD-truncated above it.
@@ -457,6 +470,20 @@ NODAL_SMALL_U_OVER_RHO = 0.5
 # rather than return inaccurate columns (height = 2 area / L).
 NODAL_MIN_HEIGHT_OVER_L = 1e-3
 
+# --- Mesh validity, model/core.py ----------------------------------------
+# A patch element is refused below this height over its longest edge
+# (height = 2 area / L): it has no frame for the kernels (they return a
+# zero block below 2 area = 1e-30 km^2), no h for eps="auto", and a
+# collocation point on top of its neighbour's, which collapses its
+# cluster's bounding box and makes the compressed backend admit a block
+# whose elements touch. The floor only has to separate "collapsed" from
+# "thin": every mesh in this tree measures 0.29-0.50 (quality-30 graded
+# surfaces and structured panels alike), while a PSLG failure -- a
+# refinement ring landing a vertex on a fault trace -- produced elements
+# at 4e-13. 1e-6 is six orders below anything meshed here and seven above
+# what it must reject, so a genuinely thin structured panel still passes.
+MIN_TRIANGLE_HEIGHT_OVER_L = 1e-6
+
 # --- Higher-order (P1/P2) collocation, model/core.py ---------------------
 # Collocation pull-in per element order, lam_c = (1 - t) lam_node + t / 3 (the
 # basis does not move). A P1/P2 node sits ON the element boundary, shared with
@@ -490,6 +517,14 @@ BENCH_ITER_SLACK = 2               # FGMRES iterations may exceed the baseline b
 # A gate run is refused above this 1-minute load average: another process
 # on the machine invalidates every timing.
 BENCH_LOAD_MAX = 2.0
+# ... but a LADDER's own previous rung is not another process: 16 busy
+# threads leave the 1-minute average at 7-11, and that average is an
+# exponential moving average with a 60 s time constant, so it needs about
+# 60 s x ln(11 / 2) ~ 100 s of idle to come back under the limit. The gate
+# therefore WAITS for the decay before each rung instead of refusing, up
+# to this many seconds (3x that estimate); past it the load is somebody
+# else's and the run is refused.
+BENCH_LOAD_WAIT_S = 300.0
 # Dense reference (operator + LU solution) up to this many unknowns
 # (A + LU = 58 GB at 60k); beyond it the operator error is measured on
 # BENCH_EXACT_ROWS matrix-free rows (AssembledH.matvec_exact_rows).

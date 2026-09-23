@@ -81,8 +81,8 @@ region super-blocks, E4/E5 conditional); WP7 P1/P2 in the fast path; WP8
 far-field engine; WP9 evaluation at scale.
 
 Done: WP0-WP5a, E2, E3, E4 and WP9's eigenstress near list (`ec58a3f` ..
-`2665d2d`). The ladder now reaches **269,346 unknowns in 371 s** (operator
-297 s, preconditioner 29 s, solve 45 s, 42 iterations, 56 GB), where before
+`2665d2d`). The ladder now reaches **260,598 unknowns in 329 s** (operator
+264 s, preconditioner 26 s, solve 39 s, 42 iterations, 46 GB), where before
 this work 31k did not finish a build in 28 minutes. At 117k: 154 s total,
 30 GB. Preconditioner reuse across a material sweep costs +1 to +3 iterations
 and saves 2.5-5x wall per solve; a 14-material sweep at 117k runs in 815 s.
@@ -94,12 +94,28 @@ build grew 24x for 2.3x the unknowns and peaked at 92 GB); and the flexible
 form of Krylov recycling was implemented before being measured to deflate the
 wrong spectrum. Measure at the next rung up before trusting a policy.
 
-**Open, the current item:** compression quality degrades with size. At 269k the
-operator error is 1.39e-4 against a 1e-4 gate, entirely on the unit-translation
-test vector, i.e. in the ROW SUMS that the calibrated diagonal is built from;
-194 ACA fallbacks against 6 at 117k, 927 rank-capped and 1068 retried blocks,
-certified error 3.0e-4 against a 1e-4 block tolerance. Under investigation;
-`BENCH_OPERATOR_ERROR_MAX` is deliberately not loosened.
+**Closed: that "compression quality degrades with size" was a MESH failure.**
+The 269k rung's 1.39e-4 operator error, all of it on the unit-translation
+vector, came from 1,808 zero-area triangles -- 8 % of `host_top` -- piled on
+one point of the fault trace. At that mesh scale the topography refinement
+ring's vertex count is a multiple of four, so a ring vertex lands exactly on
+the axis-aligned trace; Triangle splits the segment there and collapses. The
+route from a collapsed element to a compression error is short: its cluster's
+bounding box shrinks to a point, `min(diam) < eta dist` then admits a block
+whose elements TOUCH, and such a block's row sums are O(1), so a RELATIVE
+1e-4 block tolerance leaves an ABSOLUTE 1e-4 in the calibrated diagonal the
+row sums build. Fixed at both ends -- `inclusion_mesh` rotates a refinement
+ring off the other constrained segments (`RING_SEGMENT_CLEARANCE`), and
+`Patch` refuses a mesh with a collapsed element
+(`MIN_TRIANGLE_HEIGHT_OVER_L`) so the class cannot return silently. After the
+fix the compressed operator does not degrade with size at all: operator error
+4.2e-5 / 2.8e-5 / 1.6e-5 at 31k / 117k / 261k unknowns, ACA fallbacks 194 ->
+32, rank-capped 927 -> 294, retried 1068 -> 684, and the calibration's own
+error |C_h - C_exact| 4.9e-5 -> 1.6e-5 (3.6e-5 at 31k, 2.9e-5 at 117k). The
+rung is also 10 % faster and 10 GB lighter. `BENCH_OPERATOR_ERROR_MAX` stays
+1e-4, and `verify_hbackend` now gates the calibration row sums against the
+exact kernels (`H_PARITY_CALIBRATION`) -- the one part of the operator an
+entrywise parity does not bound.
 
 **WP8 Trial A (fmm3dpy) is closed: rejected on speed.** The eps = 0 Kelvin
 layers are exact combinations of its Laplace and Stokes kernels (single layer =

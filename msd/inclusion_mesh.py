@@ -32,17 +32,71 @@ from local_box_mesh_eq import (
 from mollified_bem import TriMesh
 
 
-def _circle_boundary(center_xy, R, target_edge):
+def _circle_boundary(center_xy, R, target_edge, phase=0.0):
     """N evenly spaced points on a circle of radius R.
+
+    ``phase`` rotates the whole ring (radians); the ring's angular origin
+    is arbitrary, and ``_annulus_top`` uses it to keep ring vertices off
+    the other constrained curves of the PSLG.
 
     Returns (N, 2) array of points and the integer N.
     """
     cx, cy = center_xy
     circumference = 2.0 * np.pi * R
     N = max(int(round(circumference / target_edge)), 12)
-    theta = np.linspace(0.0, 2.0 * np.pi, N, endpoint=False)
+    theta = np.linspace(0.0, 2.0 * np.pi, N, endpoint=False) + float(phase)
     pts = np.column_stack([cx + R * np.cos(theta), cy + R * np.sin(theta)])
     return pts, N
+
+
+# A refine ring's vertices must clear every constrained segment already in
+# the PSLG by this fraction of the ring's own edge. A vertex ON another
+# segment makes Triangle split that segment at the vertex, and the split
+# collapses: a ring whose vertex count is a multiple of four puts one
+# vertex exactly on an axis-aligned fault trace and the triangulation comes
+# back with ~8 % of its elements at zero area, piled on that one point. A
+# ring's angular origin is free, so `_annulus_top` rotates it instead. The
+# natural clearance is 0.25-0.50 of the ring edge at every ring size that
+# does NOT hit a segment exactly, so 0.1 separates the two cases with an
+# order to spare and leaves every non-degenerate ring where it was.
+RING_SEGMENT_CLEARANCE = 0.1
+# Fractions of one angular step tried, in order, until the clearance holds
+# (0 first, so a ring that already clears is untouched).
+_RING_PHASE_STEPS = (0.0, 0.5, 0.25, 0.75, 0.125, 0.375, 0.625, 0.875)
+
+
+def _min_dist_to_segments(pts, verts, seg):
+    """(M,) distance from each of ``pts`` to the nearest of the segments
+    ``seg`` (index pairs into ``verts``), all in the plane."""
+    a = verts[seg[:, 0]]
+    b = verts[seg[:, 1]]
+    ab = b - a
+    denom = np.einsum("sd,sd->s", ab, ab)
+    denom = np.where(denom > 0.0, denom, 1.0)
+    ap = pts[:, None, :] - a[None, :, :]
+    t = np.clip(np.einsum("psd,sd->ps", ap, ab) / denom, 0.0, 1.0)
+    d = ap - t[:, :, None] * ab[None, :, :]
+    return np.sqrt(np.einsum("psd,psd->ps", d, d)).min(axis=1)
+
+
+def _ring_points(center_xy, R, ring_edge, verts, seg):
+    """A refine ring's points, rotated so that every vertex clears the
+    constrained segments ``seg`` of the PSLG built so far by
+    ``RING_SEGMENT_CLEARANCE`` of the ring edge (see that constant)."""
+    pts, n = _circle_boundary(center_xy, R, ring_edge)
+    if seg is None or len(seg) == 0:
+        return pts, n
+    need = RING_SEGMENT_CLEARANCE * (2.0 * np.pi * R / n)
+    best = None
+    for frac in _RING_PHASE_STEPS:
+        pts, n = _circle_boundary(center_xy, R, ring_edge,
+                                  phase=frac * 2.0 * np.pi / n)
+        clear = float(_min_dist_to_segments(pts, verts, seg).min())
+        if clear >= need:
+            return pts, n
+        if best is None or clear > best[0]:
+            best = (clear, pts, n)
+    return best[1], best[2]
 
 
 def _rectangle_boundary(x_range, y_range, target_edge):
@@ -110,7 +164,10 @@ def _annulus_top(rect_outer, circle_inner_pts, hole_center, target_edge,
     plus a Triangle `regions` row, locally capping triangle areas inside
     the disk (used e.g. to resolve a topographic bump). With both a
     numeric global area cap and regional caps, Triangle applies the
-    smaller per triangle.
+    smaller per triangle. A ring is rotated to keep its vertices off the
+    segments already placed (`RING_SEGMENT_CLEARANCE`): Triangle handles
+    a transversal crossing of two constrained segments, but not a vertex
+    lying ON one.
     """
     seg_o = np.column_stack([np.arange(rect_outer.shape[0]),
                              np.roll(np.arange(rect_outer.shape[0]), -1)])
@@ -145,7 +202,9 @@ def _annulus_top(rect_outer, circle_inner_pts, hole_center, target_edge,
     regions = []
     if refine_disks:
         for (dcx, dcy), rad, ring_edge, a_in in refine_disks:
-            ring_pts, n_ring = _circle_boundary((dcx, dcy), rad, ring_edge)
+            ring_pts, n_ring = _ring_points((dcx, dcy), rad, ring_edge,
+                                            np.vstack(verts_list),
+                                            np.vstack(seg_list))
             seg_r = np.column_stack([
                 np.arange(n_ring),
                 np.roll(np.arange(n_ring), -1),

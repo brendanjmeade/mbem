@@ -41,7 +41,7 @@ Backend.assemble -> solve -> evaluate_*`.
 
 | module | role |
 |---|---|
-| `model/core.py` | `RegionModel`, `Region`, `Patch` (`order` 0/1/2: nodal layout, `nodes`, `collocation_points`, `collocation_shape`, nodal `value_array`), `BCType`; orientation `sigma(R,p)` inferred from solid angles and validated (closure identity, interface antisymmetry, fault containment); `FAULT_ORIENTATION` |
+| `model/core.py` | `RegionModel`, `Region`, `Patch` (`order` 0/1/2: nodal layout, `nodes`, `collocation_points`, `collocation_shape`, nodal `value_array`), `BCType`; orientation `sigma(R,p)` inferred from solid angles and validated (closure identity, interface antisymmetry, fault containment); `FAULT_ORIENTATION`; a patch refuses a mesh with a collapsed element (`MIN_TRIANGLE_HEIGHT_OVER_L`) |
 | `model/layout.py` | deterministic unknown slots (`u`/`t` per patch, `3 * n_nodes` each) |
 | `model/equations.py` | `generate_system`: the one sign rule `A[row,u_p] += sigma H + diag`, `A[row,t_p] -= sigma G`, prescribed values and fault slip to the RHS; `COLLOCATION_JUMP`; the calibrated diagonal per collocation point, spread over the element's nodes by `N_k(x_c)` |
 | `backends/dense.py`, `backends/hmat.py` | `DenseBackend` (LU; any mix of P0/P1/P2 patches, rows at collocation points) and `HBackend` (block-compressed + preconditioned FGMRES; P0 only, refuses higher order); same `BlockSystem`, same `jump`/`deflate` API, `solve()` returns the slot dict, `asm.report`; the half-jump and collocation-near-fault guards |

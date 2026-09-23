@@ -112,6 +112,36 @@ class Patch:
                              f"0, 1 or 2 (got {self.order!r})")
         self.order = int(self.order)
         n_nodes(self.order)                     # raises unless 0, 1, 2
+        self._refuse_degenerate()
+
+    def _refuse_degenerate(self) -> None:
+        """A patch's mesh may not carry a collapsed element.
+
+        A triangle whose height over its longest edge is below
+        ``defaults.MIN_TRIANGLE_HEIGHT_OVER_L`` has no frame for the
+        kernels to integrate over (they return a zero block), no mesh
+        scale for ``eps="auto"``, and a collocation point on top of its
+        neighbour's -- which shrinks its cluster's bounding box to a
+        point, so the compressed backend's admissibility test accepts a
+        block whose elements TOUCH and compresses a near field. It is a
+        mesher failure and is refused here, at the one place every
+        backend goes through, rather than diagnosed later as a
+        compression or conditioning problem.
+        """
+        tv = np.asarray(self.mesh.vertices, float)[np.asarray(self.mesh.triangles)]
+        edges = tv[:, [1, 2, 0], :] - tv
+        L = np.linalg.norm(edges, axis=2).max(axis=1)
+        two_area = np.linalg.norm(np.cross(tv[:, 1] - tv[:, 0],
+                                           tv[:, 2] - tv[:, 0]), axis=1)
+        h_over_L = two_area / np.where(L > 0.0, L, 1.0) ** 2
+        bad = np.nonzero(h_over_L <= defaults.MIN_TRIANGLE_HEIGHT_OVER_L)[0]
+        if bad.size:
+            worst = int(bad[np.argmin(h_over_L[bad])])
+            raise ValueError(
+                f"patch '{self.name}': {bad.size} of {tv.shape[0]} elements "
+                f"are degenerate (height / longest edge at or below "
+                f"{defaults.MIN_TRIANGLE_HEIGHT_OVER_L:g}; worst "
+                f"{h_over_L[worst]:.1e} at element {worst})")
 
     @property
     def n_triangles(self) -> int:

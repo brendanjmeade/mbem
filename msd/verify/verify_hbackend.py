@@ -22,7 +22,10 @@ Three checks, each PASS/FAIL:
 
 The later checks cover the material sweep (view cache, preconditioner
 reuse, warm start, Krylov recycling), parallel determinism, the
-calibrated jump, combined storage, the flat view (the batched matvec and
+calibrated jump and the CALIBRATION ROW SUMS it is built from (the one
+part of the operator an entrywise parity does not bound, and what the
+bench harness's unit-translation vector measures), combined storage, the
+flat view (the batched matvec and
 leaf kernel against the block loop they replaced), the block-Jacobi rung,
 and the convergence rate: FGMRES iterations on the fault-zone model at two
 sizes ~2.8x apart must grow no faster than N^``GMRES_ITER_GROWTH_ALPHA``
@@ -52,6 +55,8 @@ from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
 from mbem.la.hop import PairCompressed                            # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
+from mbem.model.equations import (COLLOCATION_JUMP,               # noqa: E402
+                                  calibrated_diagonal)
 from mbem.wrappers import build_vertical_fault_zone_model         # noqa: E402
 
 EPS = 3.0
@@ -391,6 +396,73 @@ def check_calibrated():
 
     return (op_err < OP_PARITY and rhs_err < OP_PARITY and worst < SOL_PARITY
             and report.converged and worst_rb < SOL_PARITY)
+
+
+def _exact_calibration(system, hasm):
+    """``calibrated_diagonal`` with the H row-sums taken from the KERNELS
+    instead of from the compressed pairs -- the calibration the exact
+    operator would carry."""
+    arrays = kb.MeshArrays()
+
+    def rowsum(region, q, p):
+        mat = hasm.materials[region.name]
+        coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
+        xq = arrays.field_points(q.mesh)
+        tv, nrm = arrays.source_arrays(p.mesh)
+        eps_p = hasm.eps_for(p)
+        S = np.zeros((q.n_nodes, 3, 3))
+        for k in range(3):
+            dens = np.zeros((p.n_nodes, 3))
+            dens[:, k] = 1.0
+            S[:, :, k] = tk.t_disp_contract(xq, tv, nrm, eps_p, dens, *coeffs)
+        return S
+
+    return calibrated_diagonal(system, rowsum)
+
+
+def _calibration_error(system, hasm) -> float:
+    exact = _exact_calibration(system, hasm)
+    return max(float(np.max(np.abs(hasm.calib[k] - exact[k]))) for k in exact)
+
+
+def check_calibration_rowsums():
+    """The calibrated diagonal is built from the COMPRESSED row sums
+    (``AssembledH._calibration``), so a block tolerance lands directly in
+    the operator's free term: ``C_h - C_exact`` IS the row-sum
+    compression error, and it is the only part of the operator no
+    entrywise parity bounds. An entrywise bound is per block and
+    relative to that block; a row sum adds every block of a row, and
+    what it adds up to is a quantity the exact operator holds at
+    ``COLLOCATION_JUMP``, so the two can move apart. It is what the
+    bench harness's unit-translation test vector measures, and what a
+    compression change degrades first.
+
+    The model is the fault-zone box refined until its H pairs actually
+    carry admissible blocks -- at the gate's own size the calibration
+    pairs are all dense leaves and the error is round-off, which pins
+    nothing. A second arm runs the same model at a 100x looser block
+    tolerance and this criterion must REJECT it, so the clause is known
+    to discriminate rather than merely to be satisfied.
+    """
+    limit = defaults.H_PARITY_CALIBRATION * TOL * COLLOCATION_JUMP
+    model = _build_zone_model(mb.ElasticMaterial(mu=10.0, lam=10.0),
+                              refine=2.0)
+    system = generate_system(model)
+    n_lr = 0
+    errs = {}
+    for label, tol in (("operator tolerance", TOL),
+                       ("seeded: 100x looser", 100.0 * TOL)):
+        hasm = HBackend(jump="calibrated", tol=tol).assemble(system, EPS)
+        if tol == TOL:
+            n_lr = sum(p.n_lowrank for p in hasm._pairs.values())
+        errs[label] = _calibration_error(system, hasm)
+        print(f"    {label:22s} tol {tol:.0e}: max |C_h - C_exact| = "
+              f"{errs[label]:.2e} ({errs[label] / limit:.2f} of the limit)")
+    print(f"    {system.layout.n_unknowns} unknowns, {n_lr} admissible "
+          f"blocks; limit {limit:.2e} = {defaults.H_PARITY_CALIBRATION:g} x "
+          f"tol x {COLLOCATION_JUMP:g}")
+    return (n_lr > 0 and errs["operator tolerance"] < limit
+            and errs["seeded: 100x looser"] > limit)
 
 
 def check_combined_storage():
@@ -1058,6 +1130,8 @@ def main():
          check_views_bounded),
         ("parallel ACA determinism + speed", check_parallel_determinism),
         ("calibrated jump in the H path", check_calibrated),
+        ("calibration row sums vs the exact kernels",
+         check_calibration_rowsums),
         ("combined storage (1x memory) parity", check_combined_storage),
         ("flat view vs the block loop", check_flat_view),
         ("numba ACA vs the Python reference", check_aca_numba),

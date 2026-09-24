@@ -118,21 +118,107 @@ exact kernels (`H_PARITY_CALIBRATION`) -- the one part of the operator an
 entrywise parity does not bound.
 
 **Next: the shared-subspace fold, not the kernel.** Measured at 261k unknowns,
-the ACA phase (208 s of a 245 s assembly) is **68.9 % the serial QR/SVD fold**
-that WP5 added, 20.3 % the rest of the compression pool, and only **10.8 %
-kernel evaluation**. So a free kernel would buy 1.12x. The fold's own cost is
+the ACA phase (208 s of a 245 s assembly) is **68.9 % the serial fold** that WP5
+added, 20.3 % the rest of the compression pool, and only **10.8 % kernel
+evaluation**. So a free kernel would buy 1.12x. The fold's own cost is
 corroborated from the other direction: WP5 reported it adding ~54 s at 117k,
 and this decomposition finds 50.8 s there; three independent estimates of the
-kernel's share (at 1, 6 and 12 quadrature points) agree to 1 %. WP5 already
-named the fix and skipped it for budget: the per-basis factors leave
-`_recompress` with orthogonal columns, so the one big `(3n, sum K)` QR can
-become block Gram-Schmidt (GEMMs plus B small QRs), or be deferred until a
-second material is actually asked for. Worth ~2.8x on the ACA phase, against
-quadrature's 1.09x. Note the constraint that boxed WP5 in: pooling the fold is
-9x SLOWER (OpenBLAS serializes on its buffer lock), scipy's economic QR is
-3-25x faster but silently corrupts 2-6 blocks per model, and numba's QR
-returned freed memory (fixed in c480c75) -- so the fix has to avoid LAPACK
-contention rather than parallelize around it.
+kernel's share (at 1, 6 and 12 quadrature points) agree to 1 %.
+
+The fold is `shared_subspace` (`aca.py:487`): two `np.linalg.qr` of the
+concatenated per-basis factors, B core GEMMs, then two `np.linalg.eigh` of
+(K,K) Gram matrices. There is no SVD in it -- the SVD is one level out, in
+`SharedLR.combine`, the per-material view. WP5 named the fix and skipped it for
+budget: replace the two big `(3n, sum K)` QRs with block Gram-Schmidt. What the
+factors actually arrive with, which decides whether that works: `V_b` has
+exactly orthonormal columns, and `U_b = Qu (u s)` (`aca_numba.py:194-210`) is
+orthogonal but NOT orthonormal -- the singular values ride on its columns,
+spanning ~1e4 -- so its orthonormal basis is a column rescale away and its own
+R factor is `diag(s_b)`. Block Gram-Schmidt therefore needs no per-basis QR,
+and more to the point **needs no LAPACK factorization at all** (GEMMs, norms
+and projections only), so unlike the present fold it can run in a numba nogil
+kernel on the existing pool. Worth ~2.8x on the ACA phase, against quadrature's
+1.09x.
+
+Two constraints on any rewrite, and one correction to this file's own record:
+scipy's economic QR is 3-25x faster but silently corrupts 2-6 blocks per model,
+and numba's `np.linalg.qr` returned freed memory (fixed in `c480c75`). Pooling
+the fold was recorded here as 9x slower; that is wrong. The 9x belongs to
+`_recombine`, the per-material recombination loop (`hop.py:283-284`). The
+fold's own measurement is **0.6x of one thread** (`hop.py:236-238`,
+`aca.py:84-86`), i.e. ~1.7x slower -- bad enough to explain why WP5 left it on
+the main thread, but not the wall the 9x implied.
+
+**The memory measurement round (M0-M7): what actually holds the bytes.**
+`operator_stats` had computed the near / low-rank / bases split at every rung
+since WP0 and `compact()` dropped it before the `bench-json:` line, so no run
+had ever recorded it. With it recorded (topo_inclusion, default policy):
+
+  unknowns   near GB  lowrank GB  total GB  near %  ndense   nlr  mean rank
+    31,098      1.79        0.36      2.15   83.1     4141   2123      19.6
+   117,120      6.22        3.33      9.54   65.1     6533  14569      17.7
+   260,598     14.34       10.86     25.20   56.9    29561  39185      16.5
+
+The near field is **exactly O(N)** (exponent 0.98 over the full 8.4x range,
+55 KB per unknown); the low-rank part grows at **N^1.60** and the total at
+N^1.16. The far-field growth is NOT compression failing -- the mean rank FALLS
+with size -- it is the block count, growing at N^1.37.
+
+Four things were then measured and three of them are negative results:
+
+* **Partition tuning is not a lever: 1.18x, measured.** The block-count growth
+  is real (`MAX_ADMISSIBLE_BLOCK = 1024` leaves 0.5 % of blocks at the cap at
+  31k, 18.9 % at 117k, 32.8 % at 261k with 4,059 interactions split), and a
+  structural model over the partition alone predicts 2.07x from raising the cap,
+  dropping `ACA_MIN_BLOCK` and halving the leaf. The real harness delivers
+  25.20 -> 21.42 GB (1.18x) for +22 % build time, at equal iterations. The model
+  is wrong because it assumes every admissible block compresses to rank 16: rank
+  grows with block size, and small far blocks do not compress enough to be worth
+  factoring, so they fall back to exact storage and land BACK in the near field.
+  That is also why halving the leaf (near bytes scale exactly with leaf size in
+  the partition) moves the measured near field by only 1.14x.
+* **Algebraic H^2 is REJECTED on measurement: 3.2x WORSE, at two sizes.**
+  Predicted from the flat-H factors themselves (the fold's Qu/Qv are the block
+  bases; an H^2 cluster basis is their union over the blocks of one cluster --
+  `shared_subspace`'s computation one level up). Far field at 31k / 117k:
+  flat 1.05 / 8.16 GB against H^2 3.41 / 26.48 GB. The coupling matrices are
+  88-89 % of it. Mechanism: sharing a basis across all of a cluster's
+  interaction directions inflates its rank from ~17 to ~175, and with B = 6
+  material bases each block then pays B k_t k_s instead of B k_u k_v -- 107x per
+  block -- which swamps the 3x saved on basis storage. Cluster-to-summed rank is
+  0.618 at 31k and 0.493 at 117k, so sharing does work; it cannot pay for
+  quadratic coupling. (The nestedness check fails too, median residual 2-3e-1,
+  but that only says ACA bases are not nested -- expected, since ACA picks
+  pivots per block.) **The consequence for the far field is the useful part:**
+  an O(N) scheme pays here only if its coupling operators are SHARED across
+  blocks rather than stored per block -- translation-invariant M2L fixed by
+  interpolation order, which is exactly Trial B's Chebyshev bbFMM and is not
+  something an algebraic conversion can produce.
+* **float32 storage is a free 2x.** Rounding the stored factors through float32
+  in place leaves the operator error unchanged to four digits at every rung
+  (2.791e-5 / 2.891e-5 / 1.397e-5 float64 against 2.791e-5 / 2.891e-5 /
+  1.398e-5 with near AND low-rank single), because float32's 6e-8 sits 500x
+  below the 1e-4 block tolerance the compression already spends. Saves 12.6 GB
+  of 25.2 GB at 261k, including the cancellation-sensitive unit-translation
+  vector. This is larger than every partition constant combined and costs no
+  build time. What it still needs before adoption: a mixed-precision matvec
+  (float32 storage, float64 accumulation) and a re-based determinism gate.
+* **Out-of-core is nearly free once warm.** Spilling every flat buffer to disk
+  and mapping it back: in-RAM 82.2 ms, mmap warm 82.9 ms (1.0x), mmap cold
+  3819 ms (46.5x, 2.50 GB/s effective; the page cache could not be purged
+  without sudo, so that is an optimistic bound). The matvec agrees bitwise --
+  mapping is arithmetically transparent, and `U_flat`/`V_flat`/`D_flat` are
+  already contiguous buffers, so this needs no new code path. The dense blocks
+  are a linear scan and are the right thing to spill; the low-rank part is a
+  gather and should stay resident.
+
+Two robustness items the round exposed: `ADMISSIBILITY_ETA = 3` crashes the
+build outright (`aca.py:141`, `SharedLR.combine`'s k x k SVD raises
+`LinAlgError: SVD did not converge` with no fallback -- weaker admissibility
+gives higher-rank, worse-conditioned cores); and every `(field patch, source
+patch)` pair builds its OWN cluster tree and partition, so admissibility is
+never tested across the union of the geometry (~48 independent partitions on
+this model). One global tree is the prerequisite for any FMM anyway.
 
 **Point sources for the far field: measured, works, does not pay yet (1.06x).**
 A 6-point symmetric rule is 5.8x cheaper than the exact triangle integration on

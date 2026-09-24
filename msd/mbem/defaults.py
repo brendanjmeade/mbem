@@ -512,6 +512,11 @@ BENCH_SOLUTION_ERROR_MAX = 1e-3
 BENCH_TIME_RATIO_MAX = 1.15        # any phase wall time
 BENCH_TIME_FLOOR_S = 0.5           # phases shorter than this are timer noise, not gated
 BENCH_RSS_RATIO_MAX = 1.10         # peak RSS
+# Stored operator bytes per unknown (near + low-rank + shared bases).
+# Tighter than the RSS band because it is the one quantity free of
+# transients: RSS also carries the fallback stacks, the preconditioner
+# and the Krylov basis, so a compression regression can hide inside it.
+BENCH_BYTES_RATIO_MAX = 1.05
 BENCH_RSS_RAM_FRACTION_MAX = 0.7   # peak RSS against physical RAM
 BENCH_ITER_SLACK = 2               # FGMRES iterations may exceed the baseline by this
 # A gate run is refused above this 1-minute load average: another process

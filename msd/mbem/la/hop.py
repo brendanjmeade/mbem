@@ -126,6 +126,7 @@ class PairCompressed:
                  min_leaf: int = defaults.CLUSTER_MIN_LEAF,
                  eta: float = defaults.ADMISSIBILITY_ETA,
                  max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
+                 min_aca: int = defaults.ACA_MIN_BLOCK,
                  tree_cache: dict | None = None,
                  arrays: kb.MeshArrays | None = None,
                  n_workers: int | None = None,
@@ -175,7 +176,8 @@ class PairCompressed:
             return t
 
         self._part = build_partition(_tree(field_mesh), _tree(source_mesh),
-                                     eta=eta, max_admissible=max_admissible)
+                                     eta=eta, max_admissible=max_admissible,
+                                     min_aca=min_aca)
         self.n_lowrank = len(self._part.admissible)     # admissible blocks
         self.n_dense = len(self._part.dense)
         self.n_fallback = 0        # certificate failures AFTER the retry

@@ -475,7 +475,9 @@ def run_rung(model: str, scale: float, backend: str, opts: dict,
         return rec
 
     # ---- compressed backend ----
-    hb_kwargs = dict(tol=opts["tol"], min_leaf=opts["leaf"], eta=opts["eta"])
+    hb_kwargs = dict(tol=opts["tol"], min_leaf=opts["leaf"], eta=opts["eta"],
+                     max_admissible=opts["max_admissible"],
+                     min_aca=opts["min_aca"])
     if opts.get("storage"):
         hb_kwargs["storage"] = opts["storage"]
     hb = HBackend(jump=JUMP, **hb_kwargs)
@@ -530,7 +532,9 @@ def child_argv(args, model, scale, backend, out_path) -> list:
             "--model", model, "--scale", f"{scale:g}", "--backend", backend,
             "--eta", f"{args.eta:g}", "--leaf", str(args.leaf),
             "--tol", f"{args.tol:g}", "--mesh-cache", str(args.mesh_cache),
-            "--mu-inc", f"{args.mu_inc:g}"]
+            "--mu-inc", f"{args.mu_inc:g}",
+            "--max-admissible", str(args.max_admissible),
+            "--min-aca", str(args.min_aca)]
     if args.storage:
         argv += ["--storage", args.storage]
     return argv
@@ -610,6 +614,14 @@ def compact(rec: dict) -> dict:
             return out
     out["n_unknowns"] = rec["n_unknowns"]
     out["phases"] = {k: round(v, 3) for k, v in rec["phases"].items()}
+    # The near/low-rank/bases split is what decides whether an O(N)
+    # far field is worth building; it was computed at every rung and
+    # dropped here, so no run before this one recorded it.
+    if rec.get("bytes"):
+        out["bytes"] = {k: (int(v) if k != "per_unknown" else round(v, 1))
+                        for k, v in rec["bytes"].items()}
+    if rec.get("ranks"):
+        out["ranks"] = rec["ranks"]
     out["iterations"] = rec.get("iterations")
     out["fallbacks"] = rec.get("fallbacks")
     out["peak_rss_gb"] = round(rec["peak_rss_gb"], 3)
@@ -676,6 +688,15 @@ def gate(records: list, baseline: list) -> list:
         if rec["fallbacks"] is not None and b["fallbacks"] is not None and \
                 rec["fallbacks"] > b["fallbacks"]:
             fails.append(f"{tag}: fallbacks {rec['fallbacks']} > {b['fallbacks']}")
+        # Stored bytes per unknown, which peak RSS only bounds from above
+        # (it also carries transients and the preconditioner). Baselines
+        # from before this field existed simply skip the clause.
+        bpu, bpu0 = (rec.get("bytes") or {}).get("per_unknown"), \
+                    (b.get("bytes") or {}).get("per_unknown")
+        if bpu is not None and bpu0:
+            if bpu > defaults.BENCH_BYTES_RATIO_MAX * bpu0:
+                fails.append(f"{tag}: {bpu:.0f} B/unknown > "
+                             f"{defaults.BENCH_BYTES_RATIO_MAX:g} x {bpu0:.0f}")
     return fails
 
 
@@ -751,12 +772,21 @@ def main():
                     help="side count for the large-panel compression "
                          "primitive (2*panel^2 triangles per mesh); "
                          "skips the ladders")
+    ap.add_argument("--max-admissible", type=int,
+                    default=defaults.MAX_ADMISSIBLE_BLOCK,
+                    help="cap on admissible block side (elements); 0 = no cap")
+    ap.add_argument("--min-aca", type=int, default=defaults.ACA_MIN_BLOCK,
+                    help="admissible blocks with min side below this are "
+                         "stored dense instead of compressed")
     ap.add_argument("--_child", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--_out", type=pathlib.Path, help=argparse.SUPPRESS)
     args = ap.parse_args()
     scales = args.scale or DEFAULT_SCALES[args.model]
+    # --max-admissible 0 means "no cap": the partition then admits a
+    # block as soon as it is admissible, at any size.
     opts = dict(eta=args.eta, leaf=args.leaf, tol=args.tol,
-                storage=args.storage)
+                storage=args.storage, min_aca=args.min_aca,
+                max_admissible=args.max_admissible or (1 << 30))
 
     if args._child:
         try:

@@ -82,6 +82,7 @@ class HBackend:
                  min_leaf: int = defaults.CLUSTER_MIN_LEAF,
                  eta: float = defaults.ADMISSIBILITY_ETA,
                  max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
+                 min_aca: int = defaults.ACA_MIN_BLOCK,
                  n_workers: int | None = None,
                  jump: str = "calibrated",
                  deflate: bool = False,
@@ -105,7 +106,8 @@ class HBackend:
         if storage not in ("basis", "combined"):
             raise ValueError(storage)
         self.opts = dict(tol=tol, min_leaf=min_leaf, eta=eta,
-                         max_admissible=max_admissible, n_workers=n_workers)
+                         max_admissible=max_admissible, min_aca=min_aca,
+                         n_workers=n_workers)
         self.jump = jump
         self.deflate = deflate
         self.storage = storage

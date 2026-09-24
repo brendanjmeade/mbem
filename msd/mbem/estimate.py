@@ -60,7 +60,8 @@ def estimate_memory(system, mode: str = "direct",
                     sweep: bool = False,
                     min_leaf: int = defaults.CLUSTER_MIN_LEAF,
                     eta: float = defaults.ADMISSIBILITY_ETA,
-                    max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK) -> dict:
+                    max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
+                    min_aca: int = defaults.ACA_MIN_BLOCK) -> dict:
     """Predicted peak bytes for assembling ``system``.
 
     mode: "direct" | "basis" (dense backends) | "hmat". ``storage`` and
@@ -100,7 +101,8 @@ def estimate_memory(system, mode: str = "direct",
         for fp, sp, kern in _pair_keys(system, rhs=sweep).values():
             B = kernel_n_basis(kern)
             part = build_partition(_tree(fp.mesh), _tree(sp.mesh),
-                                   eta=eta, max_admissible=max_admissible)
+                                   eta=eta, max_admissible=max_admissible,
+                                   min_aca=min_aca)
             # The near field is per material in BOTH storage modes (it is
             # re-evaluated from the kernels, never stored per basis).
             for rows, cols in part.dense:

@@ -83,6 +83,7 @@ class HBackend:
                  eta: float = defaults.ADMISSIBILITY_ETA,
                  max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
                  min_aca: int = defaults.ACA_MIN_BLOCK,
+                 precision=None,
                  n_workers: int | None = None,
                  jump: str = "calibrated",
                  deflate: bool = False,
@@ -105,9 +106,11 @@ class HBackend:
             raise ValueError(jump)
         if storage not in ("basis", "combined"):
             raise ValueError(storage)
+        # precision: storage precision of the views, normally derived
+        # from tol (la/flatview.storage_dtype); set it only to pin float64.
         self.opts = dict(tol=tol, min_leaf=min_leaf, eta=eta,
                          max_admissible=max_admissible, min_aca=min_aca,
-                         n_workers=n_workers)
+                         precision=precision, n_workers=n_workers)
         self.jump = jump
         self.deflate = deflate
         self.storage = storage

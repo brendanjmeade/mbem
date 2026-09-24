@@ -18,6 +18,7 @@ from . import defaults
 from .kernels import kernel_n_basis
 from .kernels import basis as kb
 from .la.cluster import build_cluster_tree, build_partition
+from .la.flatview import storage_dtype
 from .la.hop import require_order0
 
 # Per-basis ACA rank assumed for every admissible block, at
@@ -61,7 +62,8 @@ def estimate_memory(system, mode: str = "direct",
                     min_leaf: int = defaults.CLUSTER_MIN_LEAF,
                     eta: float = defaults.ADMISSIBILITY_ETA,
                     max_admissible: int = defaults.MAX_ADMISSIBLE_BLOCK,
-                    min_aca: int = defaults.ACA_MIN_BLOCK) -> dict:
+                    min_aca: int = defaults.ACA_MIN_BLOCK,
+                    tol: float = defaults.BLOCK_COMPRESSION_TOL) -> dict:
     """Predicted peak bytes for assembling ``system``.
 
     mode: "direct" | "basis" (dense backends) | "hmat". ``storage`` and
@@ -98,6 +100,9 @@ def estimate_memory(system, mode: str = "direct",
 
         dense_bytes = 0
         lowrank_bytes = 0
+        # A view's factors and near field are stored at the precision its
+        # block tolerance allows (la/flatview.storage_dtype).
+        vb = np.dtype(storage_dtype(tol)).itemsize
         for fp, sp, kern in _pair_keys(system, rhs=sweep).values():
             B = kernel_n_basis(kern)
             part = build_partition(_tree(fp.mesh), _tree(sp.mesh),
@@ -106,13 +111,15 @@ def estimate_memory(system, mode: str = "direct",
             # The near field is per material in BOTH storage modes (it is
             # re-evaluated from the kernels, never stored per basis).
             for rows, cols in part.dense:
-                dense_bytes += (3 * len(rows)) * (3 * len(cols)) * 8
+                dense_bytes += (3 * len(rows)) * (3 * len(cols)) * vb
             for rows, cols in part.admissible:
                 k = min(ASSUMED_BASIS_RANK, len(rows), len(cols))
-                lowrank_bytes += 3 * (len(rows) + len(cols)) * k * 8
+                lowrank_bytes += 3 * (len(rows) + len(cols)) * k * vb
                 if storage == "basis":      # + the block's shared subspace
                     kj = min(int(ASSUMED_JOINT_FRACTION * B * k) + 1,
                              3 * len(rows), 3 * len(cols))
+                    # The payload is float64 whatever the view's storage
+                    # precision: it is aca.SharedLR, upstream of FlatView.
                     lowrank_bytes += (3 * (len(rows) + len(cols)) * kj
                                       + B * kj * kj) * 8
         out["dense_leaf_bytes"] = dense_bytes

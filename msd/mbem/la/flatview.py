@@ -124,11 +124,31 @@ def _u_dense_blocks(x_field, tri_verts, eps_arr, lrow_ptr, lrows,
                         + c[2] * blk[2, a, b])
 
 
+def storage_dtype(tol: float) -> np.dtype:
+    """Storage precision of a view compressed at block tolerance ``tol``.
+
+    Single once the tolerance is coarse enough to dominate float32's own
+    ~6e-8 (``STORAGE_SINGLE_MIN_TOL``), double otherwise. Derived from the
+    tolerance rather than chosen, so a tight build is never silently
+    storage-limited. Arithmetic is float64 either way.
+    """
+    return (np.float32 if float(tol) >= defaults.STORAGE_SINGLE_MIN_TOL
+            else np.float64)
+
+
 def dense_leaves(kernel: str, x_field, tri_verts, normals, eps_arr,
-                 blocks: list, coeffs) -> tuple[np.ndarray, np.ndarray]:
+                 blocks: list, coeffs,
+                 dtype=np.float64) -> tuple[np.ndarray, np.ndarray]:
     """``(D_flat, d_ptr)`` of the dense blocks ``[(rows, cols)]`` (element
     index arrays, rows ascending) for coefficient vector ``coeffs``:
-    block L is the (3 nr, 3 nc) row-major slice at ``d_ptr[L]``."""
+    block L is the (3 nr, 3 nc) row-major slice at ``d_ptr[L]``.
+
+    ``dtype`` is the STORAGE precision (``storage_dtype``); the kernels
+    combine their bases in float64 and the store rounds once, so this
+    allocates at the final precision rather than casting afterwards --
+    a cast would hold a float64 copy and a float32 copy of the largest
+    buffer in the view at the same time.
+    """
     c = np.ascontiguousarray(np.asarray(coeffs, dtype=float))
     n = len(blocks)
     lrow_ptr = np.zeros(n + 1, dtype=np.int64)
@@ -142,7 +162,7 @@ def dense_leaves(kernel: str, x_field, tri_verts, normals, eps_arr,
              if n else np.zeros(0, dtype=np.int32))
     lcols = (np.concatenate([np.asarray(cc) for _, cc in blocks]).astype(np.int32)
              if n else np.zeros(0, dtype=np.int32))
-    D_flat = np.empty(d_ptr[-1])
+    D_flat = np.empty(d_ptr[-1], dtype=dtype)
     if n:
         if kernel == KERNEL_T:
             _t_dense_blocks(x_field, tri_verts, normals, eps_arr, lrow_ptr,
@@ -257,6 +277,12 @@ def _apply_chunks(c0, c1, x, y, xl, n_lr, row_ptr, row_idx, col_ptr, col_idx,
 def _flat_matvec(x, n_rows, n_lr, row_ptr, row_idx, col_ptr, col_idx, rank,
                  u_ptr, v_ptr, w_ptr, d_ptr, U_flat, V_flat, D_flat,
                  chunk_ptr, chunk_blk, chunk_r0, chunk_r1, max_width):
+    # W, y and the gathered x slice are float64 BY CONSTRUCTION: numba
+    # types a bare np.empty(n) as float64, and that is what keeps every
+    # accumulation double when U_flat/V_flat/D_flat are single. W is the
+    # one that matters most -- it is an in-place running sum over up to
+    # 3 nc terms (_lowrank_w), so typing it from V_flat.dtype, the
+    # natural-looking edit, would silently make it a float32 reduction.
     W = np.empty(w_ptr[n_lr])
     for i in prange(n_lr):                 # phase 1: one thread per block
         _lowrank_w(i, i + 1, x, col_ptr, col_idx, rank, v_ptr, w_ptr,
@@ -302,7 +328,13 @@ class FlatView:
     """
 
     def __init__(self, shape: tuple, lr_blocks: list, dense_blocks: list,
-                 D_flat: np.ndarray, d_ptr: np.ndarray):
+                 D_flat: np.ndarray, d_ptr: np.ndarray,
+                 dtype=np.float64):
+        # One dtype for ALL THREE buffers: a view with, say, a float64
+        # U_flat and a float32 D_flat is silently legal (numba just
+        # compiles another specialization) and would differ from its
+        # siblings with nothing to catch it.
+        self.dtype = np.dtype(dtype)
         self.shape = (int(shape[0]), int(shape[1]))
         self.n_lr = len(lr_blocks)
         self.n_dense = len(dense_blocks)
@@ -325,8 +357,8 @@ class FlatView:
             self.u_ptr[i + 1] = self.u_ptr[i] + U.size
             self.v_ptr[i + 1] = self.v_ptr[i] + V.size
             self.w_ptr[i + 1] = self.w_ptr[i] + k
-            U_parts.append(np.ascontiguousarray(U, dtype=float).ravel())
-            V_parts.append(np.ascontiguousarray(V, dtype=float).ravel())
+            U_parts.append(np.ascontiguousarray(U, dtype=self.dtype).ravel())
+            V_parts.append(np.ascontiguousarray(V, dtype=self.dtype).ravel())
             row_lists.append(_dof_idx(rows))
             col_lists.append(_dof_idx(cols))
         for i in range(self.n_lr, nb):
@@ -341,10 +373,12 @@ class FlatView:
             row_lists.append(_dof_idx(rows))
             col_lists.append(_dof_idx(cols))
         self.U_flat = (np.concatenate(U_parts) if U_parts
-                       else np.zeros(0, dtype=float))
+                       else np.zeros(0, dtype=self.dtype))
         self.V_flat = (np.concatenate(V_parts) if V_parts
-                       else np.zeros(0, dtype=float))
-        self.D_flat = np.ascontiguousarray(D_flat, dtype=float)
+                       else np.zeros(0, dtype=self.dtype))
+        # ``dense_leaves`` already allocates at the storage dtype, so this
+        # is a no-op cast on the normal path and a safety net otherwise.
+        self.D_flat = np.ascontiguousarray(D_flat, dtype=self.dtype)
         self.d_ptr = np.asarray(d_ptr, dtype=np.int64)
         if self.d_ptr.size != self.n_dense + 1:
             raise ValueError("d_ptr does not match the dense block list")
@@ -449,12 +483,22 @@ class FlatView:
                 yield rdofs, cdofs, D, None
 
     def to_dense(self) -> np.ndarray:
+        """The view as a dense float64 matrix.
+
+        The rank-k product is taken in float64 even when the factors are
+        stored single: two float32 operands would dispatch to sgemm, whose
+        inner sum over k accumulates at float32, and this is the reference
+        every dense-parity gate compares against -- it has to sum the same
+        way ``matvec`` does, which goes through ``_dot4`` against a float64
+        partner.
+        """
         M = np.zeros(self.shape)
         for rdofs, cdofs, A, V in self.blocks():
             if V is None:
                 M[np.ix_(rdofs, cdofs)] += A
             else:
-                M[np.ix_(rdofs, cdofs)] += A @ V.T
+                M[np.ix_(rdofs, cdofs)] += (np.asarray(A, dtype=np.float64)
+                                            @ np.asarray(V, dtype=np.float64).T)
         return M
 
     @property

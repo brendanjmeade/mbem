@@ -46,7 +46,7 @@ from ..kernels import tri_kernels as tk
 from .aca import BlockEvalCache, certify_combined, compress_block
 from .aca_numba import KERNEL_FLAG, block_factors
 from .cluster import build_cluster_tree, build_partition
-from .flatview import FlatView, dense_leaves
+from .flatview import FlatView, dense_leaves, storage_dtype
 
 
 def _dof_idx(elems: np.ndarray) -> np.ndarray:
@@ -131,7 +131,8 @@ class PairCompressed:
                  arrays: kb.MeshArrays | None = None,
                  n_workers: int | None = None,
                  storage: str = "basis",
-                 combine_for=None):
+                 combine_for=None,
+                 precision=None):
         """``storage="basis"`` (default) keeps the GEOMETRY-ONLY shared
         subspace of the admissible blocks: any material recombines
         without re-compressing, at the JOINT rank of the B bases rather
@@ -161,6 +162,12 @@ class PairCompressed:
         self.n_basis = self.eval.n_basis
         self.shape = (3 * self.n_field, 3 * self.n_source)
         self.tol = tol
+        # Storage precision of every view of this pair, from its own block
+        # tolerance (la/flatview.storage_dtype); ``precision`` overrides it
+        # for the gates that need float64 to compare bitwise against a
+        # float64 reference. Arithmetic stays float64 either way.
+        self.storage_dtype = (storage_dtype(tol) if precision is None
+                              else np.dtype(precision).type)
         self.storage = storage
         self._n_workers = (n_workers if n_workers is not None
                            else min(16, os.cpu_count() or 1))
@@ -329,6 +336,15 @@ class PairCompressed:
                     for i, (rows_exact, cols_exact) in zip(idx, stacks):
                         rows, cols, payload = blocks[i]
                         U, V = payload.combine(c, tol)
+                        # Certify the factors AS STORED: round through the
+                        # storage precision and back, so the certificate
+                        # sees the rounding the view will apply while the
+                        # product it forms still accumulates in float64,
+                        # exactly as the matvec does. Certifying before the
+                        # rounding would bound a block never applied.
+                        if self.storage_dtype != np.float64:
+                            U = U.astype(self.storage_dtype).astype(np.float64)
+                            V = V.astype(self.storage_dtype).astype(np.float64)
                         e = certify_combined(U, V, c, rows_exact, cols_exact,
                                              payload.cert_rows,
                                              payload.cert_cols)
@@ -360,7 +376,7 @@ class PairCompressed:
         stored basis stacks recombined per material."""
         ev = self.eval
         return dense_leaves(ev.kernel, ev.x_field, ev.tri_verts, ev.normals,
-                            ev.eps, blocks, c)
+                            ev.eps, blocks, c, dtype=self.storage_dtype)
 
     def _combine(self, blocks: list, c: np.ndarray):
         """The per-material ``FlatView`` of ``blocks`` for coefficients
@@ -369,7 +385,8 @@ class PairCompressed:
         lr_blocks, exact_blocks, err, n_exact = self._recombine(blocks, c)
         dense_blocks = exact_blocks + list(self._part.dense)
         D_flat, d_ptr = self._dense_leaves(dense_blocks, c)
-        return (FlatView(self.shape, lr_blocks, dense_blocks, D_flat, d_ptr),
+        return (FlatView(self.shape, lr_blocks, dense_blocks, D_flat, d_ptr,
+                         dtype=self.storage_dtype),
                 err, n_exact)
 
     def view_reference(self, coeffs: np.ndarray) -> list:

@@ -474,10 +474,17 @@ def check_combined_storage():
 
     The payload is bounded on BOTH sides. Below: dropping it must
     actually save memory. Above: it is one shared subspace per block, not
-    B factor pairs -- measured 2.4x one material view of this pair, where
+    B factor pairs -- measured 4.8x one material view of this pair, where
     the same payload unfolded (``ACA_JOINT_TOL_FACTOR`` at 0, joint rank
-    = the summed per-basis rank) is 6.4x. A regression that undid the
-    fold would land above the upper bound."""
+    = the summed per-basis rank) is 12.8x. A regression that undid the
+    fold would land above the upper bound.
+
+    The ratio is 2x what it was before the views went to single storage
+    (2.4x / 6.4x): the payload is ``aca.SharedLR`` and stays float64
+    whatever the view's storage precision, so halving the DENOMINATOR
+    alone doubles it. The bound is re-based rather than widened -- the
+    gap between folded and unfolded, which is what it detects, is
+    unchanged at 2.7x."""
     field = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), 0.0,
                                    16, 16, normal_up=True)   # 512 tris
     source = make_rectangular_patch((-60.0, 60.0), (-60.0, 60.0), -240.0,
@@ -519,7 +526,7 @@ def check_combined_storage():
     print(f"    combined+calibrated end-to-end vs dense: rel = {worst:.2e} "
           f"(converged {rep.converged})")
 
-    return (1.5 < ratio < 4.0 and same_a and err_b == 0.0
+    return (3.0 < ratio < 8.0 and same_a and err_b == 0.0
             and still_dropped and worst < SOL_PARITY and rep.converged)
 
 
@@ -648,7 +655,15 @@ def check_flat_view():
     different order (numba loops against BLAS dot, in-loop coefficients
     against tensordot), which is round-off, not tolerance. What IS
     bitwise is the flat matvec across thread counts -- the row chunks own
-    their output rows, so no reduction order can change."""
+    their output rows, so no reduction order can change.
+
+    Two arms, because the view's STORAGE precision is chosen from the
+    block tolerance (``la/flatview.storage_dtype``) and at the default
+    1e-4 that is float32. The round-off clause is checked on a view
+    pinned to float64, so it keeps testing the numba kernel rather than
+    the rounding; the rounding is then measured on its own against
+    ``FLATVIEW_STORAGE_PARITY``. Loosening the first clause to accommodate
+    the second would retire the guarantee it exists for."""
     import numba
 
     sys.path.insert(0, str(ROOT / "examples"))
@@ -656,13 +671,20 @@ def check_flat_view():
     from assess_fig06_inclusion import build_model as inclusion_model
 
     ok = True
+    zone = generate_system(_build_zone_model(
+        mb.ElasticMaterial(mu=10.0, lam=10.0)))
     worst_d, worst_m, _ = _flat_view_parity(
-        HBackend(jump="half", storage="basis").assemble(
-            generate_system(_build_zone_model(
-                mb.ElasticMaterial(mu=10.0, lam=10.0))), EPS),
-        "fault-zone", with_dense=True)
+        HBackend(jump="half", storage="basis",
+                 precision=np.float64).assemble(zone, EPS),
+        "fault-zone (float64)", with_dense=True)
     ok &= worst_d < defaults.FLATVIEW_PARITY
     ok &= worst_m < defaults.FLATVIEW_PARITY
+
+    worst_ds, worst_ms, _ = _flat_view_parity(
+        HBackend(jump="half", storage="basis").assemble(zone, EPS),
+        "fault-zone (as stored)", with_dense=True)
+    ok &= worst_ds < defaults.FLATVIEW_STORAGE_PARITY
+    ok &= worst_ms < defaults.FLATVIEW_STORAGE_PARITY
 
     meshes, fault, _n_hat, s_hat = build_inclusion()
     model = inclusion_model(meshes, fault, s_hat,
@@ -670,8 +692,9 @@ def check_flat_view():
     system = generate_system(model)
     hasm = HBackend(jump="half", storage="basis").assemble(system, "auto")
     print(f"    inclusion model: {system.layout.n_unknowns} unknowns")
-    _, worst_inc, _ = _flat_view_parity(hasm, "inclusion", with_dense=False)
-    ok &= worst_inc < defaults.FLATVIEW_PARITY
+    _, worst_inc, _ = _flat_view_parity(hasm, "inclusion (as stored)",
+                                        with_dense=False)
+    ok &= worst_inc < defaults.FLATVIEW_STORAGE_PARITY
 
     # Thread-count determinism of the whole compressed operator.
     x = np.random.default_rng(11).standard_normal(system.layout.n_unknowns)

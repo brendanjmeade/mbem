@@ -280,6 +280,30 @@ FLATVIEW_PARALLEL_MIN_WORK = 1_000_000
 # fault-zone views and 2e-15 over the 10.9k inclusion model's); what
 # stays bitwise is the flat matvec across thread counts.
 FLATVIEW_PARITY = 1e-12
+# STORAGE precision of a flat view's factors and dense leaves, chosen from
+# the block tolerance the view was compressed at -- single when that
+# tolerance is this coarse or coarser, double otherwise. Arithmetic stays
+# float64 everywhere: the scratch W, the output y and the gathered x slice
+# are double, so every accumulation is double and only the stored operand
+# is single (la/flatview.py). float32 carries ~6e-8 relative, so at the
+# default 1e-4 the storage error is 500x under what the compression
+# already spends -- measured on topo_inclusion, the operator error is
+# unchanged to four digits at 31k / 117k / 261k unknowns (2.791e-5 /
+# 2.891e-5 / 1.397e-5 double against 2.791e-5 / 2.891e-5 / 1.398e-5 with
+# BOTH the factors and the near field single) for half the bytes. The rule
+# is tied to the tolerance rather than exposed as a free switch because a
+# convergence study at 1e-8 would otherwise be storage-limited without
+# saying so: 1e-5 keeps at least a 100x margin over float32's own floor.
+STORAGE_SINGLE_MIN_TOL = 1e-5
+# The same flat view stored single against stored double (verify_hbackend):
+# what the storage precision itself costs, measured separately from the
+# code-equivalence check above so neither hides the other. FLATVIEW_PARITY
+# stays 1e-12 on a float64-pinned view -- that clause is about the numba
+# kernel reproducing the block loop, and it must not be loosened to make
+# room for rounding. Measured 6.9e-8 on the fault-zone views and 8.9e-8 on
+# the 10.9k inclusion model, i.e. float32's own floor; 1e-6 is that with
+# an order of margin, and still 100x under BLOCK_COMPRESSION_TOL.
+FLATVIEW_STORAGE_PARITY = 1e-6
 
 # --- Preconditioner rung ladder ---------------------------------------
 # Rung 1, the exact dense LU of a super-block, while it is under this

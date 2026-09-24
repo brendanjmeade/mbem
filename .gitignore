@@ -13,3 +13,6 @@ fbem/cache/
 # clq: figure outputs of examples/ (regenerable)
 clq/fig_*.png
 clq/fig_*.pdf
+
+# msd: bench_scaling's mesh cache (regenerable; the mesher takes 5 min at 168k)
+msd/examples/_cache/

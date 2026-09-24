@@ -140,14 +140,60 @@ and projections only), so unlike the present fold it can run in a numba nogil
 kernel on the existing pool. Worth ~2.8x on the ACA phase, against quadrature's
 1.09x.
 
-Two constraints on any rewrite, and one correction to this file's own record:
-scipy's economic QR is 3-25x faster but silently corrupts 2-6 blocks per model,
-and numba's `np.linalg.qr` returned freed memory (fixed in `c480c75`). Pooling
-the fold was recorded here as 9x slower; that is wrong. The 9x belongs to
-`_recombine`, the per-material recombination loop (`hop.py:283-284`). The
-fold's own measurement is **0.6x of one thread** (`hop.py:236-238`,
-`aca.py:84-86`), i.e. ~1.7x slower -- bad enough to explain why WP5 left it on
-the main thread, but not the wall the 9x implied.
+**Why the fold does not pool: measured, and it is not the buffer lock.** This
+file recorded that pooling the fold is slow because OpenBLAS serializes on its
+buffer lock, so a fix "has to avoid LAPACK contention rather than parallelize
+around it". Both halves of that are wrong, and the second sent the named fix at
+the one part that was never the problem.
+
+A LAPACK-free thin QR (modified Gram-Schmidt, one reorthogonalization, rank
+detection by residual norm, stored row-major so every dot and axpy is
+contiguous) matches `shared_subspace` to 2.3e-15 with identical ranks, needs no
+BLAS call at all -- and as a bare nogil kernel on the existing pool it scales
+**11.3x at 16 threads on large blocks and 10.3x on small ones**. The pool is
+fine. What does not scale is the GIL-held numpy WRAPPER around the
+factorization, and wrapping that same kernel in it reproduces the collapse
+exactly (large blocks 3.15x at 4 workers then 0.22x at 16; small blocks 0.28x
+at 4 and 0.02x at 16), as does the LAPACK version (0.13x at 16).
+
+Per-fold profile, which explains the shape:
+
+    stage                    m = 3072        m = 384
+    QR (already nogil)    37.9 ms  86.8 %   4.6 ms  45.0 %
+    _unit_gram x2          2.3 ms   5.3 %   2.3 ms  21.9 %
+    _principal (eigh) x2   2.1 ms   4.8 %   2.0 ms  19.7 %
+    cores, proj, final     1.4 ms   3.1 %   1.4 ms  13.3 %
+
+The wrapper costs ~5.7 ms per fold at ANY block size, because it works on
+(K, K) matrices with K = sum of the per-basis ranks (~102), independent of the
+block's own size. So the GIL-held fraction is 13 % on a 1024-element block
+(Amdahl ceiling 7.6x) and 55 % on a 128-element one (ceiling 1.8x), and the
+production partition is dominated by the small end. Measured scaling is worse
+than Amdahl in both cases, so it is convoy, not just serialization.
+
+The fix that follows is therefore NOT the one WP5 named: replacing the QR
+attacks the part that already scales. It is to put the WHOLE fold in one nogil
+kernel -- the Gram matrices, the truncation, the core products and the final
+`Qu @ Wu` with it. The only hard piece is `_principal`'s symmetric
+eigendecomposition of a (K, K) Gram; numba's LAPACK is not trustworthy here
+(its `np.linalg.qr` returned freed memory, `c480c75`), so that wants a
+hand-written cyclic Jacobi, ~3x slower serially than `eigh` and fully nogil.
+Projected: fold 143 s -> ~14 s at 261k, ACA phase 208 -> 79 s, assembly
+245 -> 116 s, i.e. **~2.1x on assembly**.
+
+NOT SCHEDULED. Assembly is not the binding constraint -- memory is, and A1
+halved it -- and an interpolation far field has no ACA factors to fold, so this
+code is the first thing Path C deletes. Recorded so the next person does not
+re-derive the wrong diagnosis.
+
+Two constraints that do still hold for any rewrite: scipy's economic QR is
+3-25x faster but silently corrupts 2-6 blocks per model, and numba's
+`np.linalg.qr` returned freed memory (fixed in `c480c75`). And one more
+correction: pooling the fold was recorded here as 9x slower. That 9x belongs to
+`_recombine`, the per-material recombination loop (`hop.py:283-284`); the
+fold's own figure is 0.6x of one thread (`hop.py:236-238`, `aca.py:84-86`).
+`_recombine` is numpy under the GIL too, so its 9x is likely the same convoy
+and its stated cause wants re-measuring before it is trusted.
 
 **The memory measurement round (M0-M7): what actually holds the bytes.**
 `operator_stats` had computed the near / low-rank / bases split at every rung

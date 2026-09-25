@@ -327,18 +327,73 @@ adjacency comes from refinement contrast between surfaces (fault and inclusion
 fine, host coarse), not from the big host triangles. W and X have identical
 distinct-pair counts -- exact transposes -- which is a free correctness check.
 
-**Required design item found by the measurement: enlarged interpolation boxes.**
-Placing an element at the finest level whose box edge is at least its own size
-leaves a max protrusion of 0.53 box edges and collapses the V-list separation
-gap to 0.043 h, and Chebyshev interpolation is invalid for ANY source outside
-its box. Strict containment pins 52 % of elements at 284 KiB/unknown (~250 GiB
-at 4M); box edge >= 2x element size pins 16 % and makes the placement rule, not
-ncrit, set the near-field floor. The fix is standard enlarged-box bbFMM: keep
-size >= 1 centroid placement, enlarge each box's INTERPOLATION DOMAIN to the
-bounding box of its own contents, keep the M2L table on the nominal boxes, and
-absorb the enlargement into P2M/L2P. It costs nothing in the lists. Also demote
-W/V box pairs whose effective gap after protrusion is <= 0 to direct (4-7 % of
-W box pairs, +5 % on U).
+**The interpolation domain is a PLACEMENT question, and the fix prescribed here
+was wrong.** Placing an element at the finest level whose box edge is at least
+its own size leaves a max protrusion of 0.53 box edges, and Chebyshev
+interpolation is invalid for any source outside its box. This file prescribed
+"enlarge each box's interpolation domain to the bounding box of its own
+contents, keep the M2L table on the nominal boxes" -- that is `fmm.py`'s
+`domain="canonical"`, and it is IDENTICALLY the plain cube (measured 3e-15 at
+every p through 12: the extent lattice reproduces every polynomial of degree
+< p per axis and a cube Chebyshev weight is one, so extent-P2M composed with
+the transform IS cube-P2M). It fails the operator clause. The paragraph also
+ruled out the placement rule on the strength of STRICT containment (52 %
+pinned, 284 KiB/unknown) and never priced a modest safety factor, which is the
+thing that works.
+
+Measured at the operator, fault zone at refine 1, p = 6 (U) / 8 (T),
+far-isolated max over 9 test vectors against `FMM_OPERATOR_PARITY` = 2e-4:
+
+  extent, safety 1.0 (today)            1.082e-04   0/9 over
+  cube,   safety 1.5                    7.166e-05   0/9      0.66x the extent
+  extent, safety 1.5                    9.490e-05   0/5
+  cube,   safety 1.0                    6.654e-04   4/5      FAILS by 3.3x
+  cube + inflate (1.25, 1.0), safety 1.5  2.393e-04 1/5      FAILS
+
+So the bare cube fails, and the cure is not the domain but
+`OCTREE_PLACEMENT_SAFETY` 1.0 -> 1.5, which cuts protrusion 0.333 -> 0.200 and
+takes the cube from 6.15x worse than the extent to 0.66x, i.e. BETTER. The
+control that proves the mechanism: the extent barely moves under the same
+change (1.082e-04 -> 9.490e-05), having no extrapolation to cure. Raising p
+instead is worse and dearer -- p = 8/10 clears the bar at only 1.17x margin for
+2.6x the M2L work and 3.8x the table memory.
+
+**Inflating the domain is actively harmful, which was not obvious.**
+`inflate=(1.25, 1.0)` nearly contains (max|xhat| 1.114) and is 3.3x WORSE than
+not inflating at 1.393. Two non-adjacent boxes are 2 edges apart centre to
+centre while their lattices span +-f/2 edges, so M2L separation is
+(2 - f_s/2 - f_t/2) cos(pi/2p) and vanishes near f = 2: at topo's containment
+factor 2.055 the two node lattices interpenetrate (separation 0.027 edges,
+(eps/r)^2 = 13, error 9.81 at p = 6). Containment is NOT what buys accuracy --
+extrapolating mildly with the full V separation beats interpolating with a
+degraded one.
+
+**Why the cube is the only O(1) far field.** Each far pass is homogeneous, so a
+level-l table is a level-l' table times a power of two: 258 of the cube's 316
+distinct transfer keys serve more than one level, up to 5 each, and 316 is the
+classical bbFMM transfer-vector count -- O(1) in N. The extent shares nothing
+(0 of 21,740 keys serve more than one level; 686 of 702 V box pairs distinct on
+the fault zone), so its table count is proportional to N: ~3.3 M V box pairs
+and ~13.8 TiB at p = 6 at 4M unknowns, which means it cannot precompute M2L at
+all and every V pair re-evaluates the kernel -- the per-block coupling that made
+algebraic H^2 3.2x worse than flat H. Shared tables at 240 transfer vectors are
+1.00 GiB at p = 6 and 5.63 GiB at p = 8, independent of N.
+
+The price is the near field: safety 1.5 costs 2.28x element pairs on
+topo_inclusion (1.64x on U alone) and buys 38 % fewer V box pairs and 24 %
+fewer tables; ncrit does not pay it back (ncrit 16 + safety 1.5 measures
+6.455 M against ncrit 32's 6.579 M). At 4M that is ~35.6 GiB near + 1-5.6 GiB
+far, ~37-41 GiB of 128.
+
+NOT YET SHIPPED, and the reason is the honest one: every operator number above
+is the fault zone, the only model with an affordable dense reference, whose
+protrusion is 0.33. Safety 1.5 leaves topo_inclusion at f_src 1.658 --
+essentially the FAILING value on the fault zone (1.667) -- and reaching the
+passing 1.400 there needs safety ~3.0 at 5.49x the near field. Treat "safety
+1.5 fixes the cube" as demonstrated at 0.33 box edges and unproven at 0.53. The
+way to settle it is a dense operator reference on a small model with topo-like
+grading. Also still open: demote W/V box pairs whose effective gap after
+protrusion is <= 0 to direct (4-7 % of W box pairs, +5 % on U).
 
 Two facts about this model that the earlier record got wrong: the size grading
 is driven by the FINE end (host_top at 0.177 km; the max edge at scale 3 is

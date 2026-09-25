@@ -37,8 +37,15 @@ operator -- and never against another approximation.
   f  the eps^2 PASS must matter: one pass against two, on a pair and on the
      operator.
   g  the INTERPOLATION DOMAIN: containment on the enlarged extents, its
-     failure on the nominal cubes, and what that costs -- the M2L table is
-     shared only on the cubes, so this is the price of the design decision.
+     failure on the nominal cubes, and the three ways to have both that and
+     a SHARED M2L table -- a uniform cube inflation, a source-only one, and
+     a per-box change of basis onto the cube lattice. Each is priced in
+     error, in the V-list node separation it spends, in the W and X margins
+     it spends (those two paths evaluate at a FIELD POINT, not at a node,
+     so the V separation says nothing about them), and in the number of
+     M2L tables it actually shares, counted on the lattices rather than on
+     the cube indices. The half-width floor is checked by removal: without
+     it a flat box's P2M is NaN.
 
 Run from msd/. PASS:/FAIL:, exit 1 on FAIL. It is slow (minutes): the
 reference evaluates every M2L where it is used, in numpy.
@@ -64,8 +71,8 @@ from mbem.backends.hmat import AssembledH                         # noqa: E402
 from mbem.kernels import (KERNEL_T, KERNEL_U, kernel_coeffs)      # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
-from mbem.la.fmm import (FmmTree, PairFMM, _far_apply,            # noqa: E402
-                         _far_params)
+from mbem.la.fmm import (FmmTree, PairFMM, _cheb_nodes,           # noqa: E402
+                         _far_apply, _far_params)
 from mbem.model import generate_system                            # noqa: E402
 from mbem.model.equations import (add_block_diagonal,            # noqa: E402
                                   term_diagonal)
@@ -587,10 +594,156 @@ def check_eps_terms() -> bool:
     return ok and gains[6] >= defaults.FMM_EPS_TERM_GAIN_OPERATOR
 
 
+def _m2l_tables(gm) -> tuple:
+    """``(distinct M2L tables, V box pairs)`` on ``gm``'s own M2L lattices.
+
+    Two V pairs share ONE table iff their target and source node lattices
+    coincide up to a single translation -- iff the two half-widths and the
+    centre offset agree, which is what the key quantizes. Counting
+    (level, offset) instead counts CUBES and returns the same number for
+    every domain, the per-box extents included, where nothing is shared.
+    """
+    R = gm.tree.root_edge
+    sdom = tdom = gm.cube_dom
+    if sdom is None:
+        sdom, tdom = gm.src_dom, gm.tgt_dom
+    keys, n = set(), 0
+    for a, lst in gm.lists.V.items():
+        for b in lst:
+            keys.add((tuple(np.round(tdom[1][a] / R, 9)),
+                      tuple(np.round(sdom[1][b] / R, 9)),
+                      tuple(np.round((sdom[0][b] - tdom[0][a]) / R, 9))))
+            n += 1
+    return len(keys), n
+
+
+def _v_separation(gm, p: int) -> float:
+    """The closest V-list NODE pair, in box edges.
+
+    What every domain inflation spends: the interpolation error is bounded
+    through the kernel's analyticity BETWEEN the two node sets, and the
+    eps^2 expansion through (eps/r)^4 at the same r. Separable -- the
+    lattices are tensor products, so the minimum of the squared distance
+    is the sum of the per-axis minima.
+    """
+    R = gm.tree.root_edge
+    sdom = tdom = gm.cube_dom
+    if sdom is None:
+        sdom, tdom = gm.src_dom, gm.tgt_dom
+    z = _cheb_nodes(p)
+    worst = np.inf
+    for a, lst in gm.lists.V.items():
+        edge = R / (1 << int(gm.tree.level[a]))
+        for b in lst:
+            s = 0.0
+            for d in range(3):
+                u = tdom[0][a][d] + tdom[1][a][d] * z
+                v = sdom[0][b][d] + sdom[1][b][d] * z
+                s += float(np.abs(u[:, None] - v[None, :]).min()) ** 2
+            worst = min(worst, np.sqrt(s) / edge)
+    return float(worst)
+
+
+def _wx_margin(gm) -> tuple:
+    """``(W margin, X margin)``: how far OUTSIDE the other side's domain the
+    point-evaluated paths evaluate, in units of that domain's half-width.
+
+    V is node against node and ``_v_separation`` covers it. W and X are not:
+    W evaluates a MULTIPOLE at a field point, which converges only outside
+    the source box's own domain, and X builds a local expansion from exact
+    source integrals and then interpolates it over the target box's domain,
+    which converges only if the source is outside THAT. Both margins must
+    exceed 1, and neither is implied by max|xhat|, which is about a box's
+    own contents. A domain inflation spends them: the X margin is the
+    target domain's to lose, so a source-only inflation leaves it alone.
+    """
+    tree = gm.tree
+    sc, sh = gm.src_dom
+    tc, th = gm.tgt_dom
+    w = x = np.inf
+    for a, lst in gm.lists.W.items():
+        pts = gm.centroids[tree.elements_of(a)]
+        if pts.size:
+            for b in lst:
+                w = min(w, float(np.abs((pts - sc[b]) / sh[b]
+                                        ).max(axis=1).min()))
+    for a, lst in gm.lists.X.items():
+        for b in lst:
+            held = tree.elements_of(b)
+            if held.size:
+                v = gm.verts[held].reshape(-1, 3)
+                x = min(x, float(np.abs((v - tc[a]) / th[a]
+                                        ).max(axis=1).min()))
+    return w, x
+
+
+def _floor_is_load_bearing(meshes, arrays) -> tuple:
+    """``(flat boxes, elements whose P2M would be non-finite)`` with the
+    half-width floor removed.
+
+    A box holding one planar patch has ZERO extent across that plane, so
+    without ``FMM_MIN_HALF_OVER_EDGE`` the P2M weight divides 0 by 0 and the
+    multipole is NaN -- silently, since nothing raises. The floor is not a
+    tidiness measure and this is the clause that says so.
+    """
+    keep = defaults.FMM_MIN_HALF_OVER_EDGE
+    defaults.FMM_MIN_HALF_OVER_EDGE = 0.0
+    try:
+        gm = FmmTree(meshes, arrays=arrays)
+        flat = int((gm.src_dom[1] == 0.0).any(axis=1).sum())
+        with np.errstate(divide="ignore", invalid="ignore"):
+            p2m = gm.stencil(4).p2m
+        return flat, int((~np.isfinite(p2m)).any(axis=1).sum())
+    finally:
+        defaults.FMM_MIN_HALF_OVER_EDGE = keep
+
+
 def check_domain() -> bool:
-    """[g] Interpolation on the enlarged extents contains every source; on
-    the nominal cubes -- where the M2L table WOULD be shared, which is the
-    economy a production bbFMM exists for -- it does not.
+    """[g] The interpolation domain, and the three ways to have BOTH
+    containment and a shared M2L table.
+
+    An element protrudes up to 0.53 box edges, so the nominal cube -- the
+    only lattice an M2L table can be shared on -- extrapolates at P2M,
+    while the per-box extent contains every source and shares nothing.
+    Each candidate buys the missing half back somewhere, and each is priced
+    here on the same geometry against the same exact pair:
+
+      inflate=f           the cube scaled by one factor at every box and
+                          level, so the lattice stays translation-invariant
+      inflate=(f, 1)      the same on the SOURCE side only; a target is a
+                          collocation point and never protrudes
+      domain="canonical"  per-box extents for P2M/L2P/W/X, the cube lattice
+                          for M2L alone, with a change of basis between
+
+    What an inflation spends is the V-list node separation: two
+    non-adjacent boxes are 2 edges apart and their lattices span +-f/2 of
+    an edge, so f near 2 leaves them touching and BOTH the interpolation
+    and the eps^2 expansion lose their small parameter. The clause reports
+    the separation beside the error for that reason.
+
+    It also spends the W and X MARGINS, which max|xhat| does not see: W
+    evaluates a multipole at a field point and X interpolates a local
+    expansion built from exact source integrals, so each needs the other
+    side's geometry OUTSIDE its own domain. The X margin belongs to the
+    TARGET domain, which is why a source-only inflation leaves it exactly
+    where the plain cube puts it. On this model both margins stay above 1
+    at every factor; on ``topo_inclusion`` they do not, and that is where
+    the uniform inflation dies -- measured there, the plain cube already
+    has 2 of 2509 X records holding a source inside the target's own
+    domain, the uniform inflation at the containment factor has 51, and
+    the extent has none with a 1.21 margin to spare. This clause cannot
+    reach that model (31,098 unknowns, no dense reference) and does not
+    pretend to; what it pins is the mechanism and its direction.
+
+    The half-width FLOOR is checked by removing it: a box holding one
+    planar patch has zero extent across the plane, and without the floor
+    its P2M is NaN rather than an error.
+
+    The canonical transform is pinned as an IDENTITY, not as an error: the
+    extent lattice reproduces every polynomial of degree < p per axis and a
+    cube Chebyshev weight is one, so extent-P2M composed with the transform
+    IS cube-P2M. Measured on the two panels, which have no W and no X, so
+    the two configurations differ nowhere else.
 
     The single-p error does not settle the choice and can point the wrong
     way: a tight extent is a SMALLER domain than the cube wherever nothing
@@ -598,6 +751,13 @@ def check_domain() -> bool:
     can win on the pairs it extrapolates least. What settles it is the
     trend in p, because extrapolation amplifies like rho^p while
     interpolation converges like rho^-p.
+
+    NOR DOES ONE PAIR SETTLE IT, and this clause prints one. Clause [d]
+    rerun on the cube measures 5.3e-4 / 4.8e-4 / 1.9e-4 far-isolated
+    against the extent's 4.3e-5 / 8.0e-5 / 6.3e-6 -- two of the three over
+    FMM_OPERATOR_PARITY. The cube is 5x better at p = 8 on the pair
+    printed here and 6-30x worse on the operator that pair belongs to.
+    Read the ratio line as a statement about ONE pair of one model.
     """
     model, system, _dense, geom, _arrays = _zone()
     keys = _pair_keys(system)
@@ -609,43 +769,84 @@ def check_domain() -> bool:
     exact = _exact_pair(fp.mesh, sp.mesh, kernel, mat, eps)
     ref = exact @ np.random.default_rng(5).standard_normal(exact.shape[1])
     x = np.random.default_rng(5).standard_normal(exact.shape[1])
+    f_src, f_tgt = geom.containment_factors()
+    f = float(np.ceil(100 * f_src) / 100)
     print(f"    {fp.name} <- {sp.name} [{kernel}], protrusion up to "
-          f"{geom.tree.protrusion(geom.verts).max():.2f} box edges")
+          f"{geom.tree.protrusion(geom.verts).max():.2f} box edges; "
+          f"containment needs cube inflation {f_src:.3f} on the source, "
+          f"{f_tgt:.3f} on the target")
 
-    trees = {"extent": geom, "cube": FmmTree(_zone_meshes(model),
-                                             domain="cube")}
-    out = {}
+    meshes = _zone_meshes(model)
+    trees = {"extent": geom,
+             "cube": FmmTree(meshes, domain="cube"),
+             f"cube f={f:g}": FmmTree(meshes, domain="cube", inflate=f),
+             f"src f={f:g}": FmmTree(meshes, domain="cube", inflate=(f, 1.0)),
+             "canonical": FmmTree(meshes, domain="canonical")}
+    flat, nan_rows = _floor_is_load_bearing(meshes, _arrays)
+    print(f"    half-width floor {defaults.FMM_MIN_HALF_OVER_EDGE:g} of the "
+          f"cube edge: without it {flat} boxes get a zero source half-width "
+          f"and {nan_rows} elements a non-finite P2M row (topo_inclusion: "
+          f"423 boxes, 4678 of 8116 elements)")
+
+    out, margins = {}, {}
     for domain, gm in trees.items():
         row = []
         for p in range(4, 9):
             pair = PairFMM(fp.mesh, sp.mesh, kernel, eps, p=p, geom=gm)
-            row.append((_errs(pair.matvec(c, x), ref)[0], pair.st.max_xhat))
+            row.append((_errs(pair.matvec(c, x), ref)[0], pair.st.xhat))
         out[domain] = row
-        print(f"    domain={domain!r:8s} max|xhat| {row[0][1]:.3f}: "
-              + "  ".join(f"p={p}: {e:.2e}"
-                          for p, (e, _h) in zip(range(4, 9), row)))
+        tab, n_v = _m2l_tables(gm)
+        margins[domain] = _wx_margin(gm)
+        x8 = row[-1][1]
+        print(f"    {domain:11s} max|xhat| P2M {x8['p2m']:.3f} L2P "
+              f"{x8['l2p']:.3f}" + (f" M2C {x8['m2c']:.3f}" if "m2c" in x8
+                                    else " " * 10)
+              + f"  V sep {_v_separation(gm, 8):.3f} edges  M2L tables "
+              f"{tab}/{n_v}  W/X margin {margins[domain][0]:.3f}/"
+              f"{margins[domain][1]:.3f}")
+        print(f"    {'':11s} " + "  ".join(
+            f"p={p}: {e:.2e}" for p, (e, _h) in zip(range(4, 9), row)))
     ratio = [c / e for (e, _1), (c, _2) in zip(out["extent"], out["cube"])]
     print("    cube over extent: " + "  ".join(
         f"p={p}: x{r:.2f}" for p, r in zip(range(4, 9), ratio)))
 
-    # What the cube domain buys: on it every box's node lattice is the
-    # nominal one, so two box pairs at the same level and integer offset
-    # share one M2L table. On the extents they share nothing.
-    tree = geom.tree
-    offsets, entries = set(), 0
-    for a, lst in geom.lists.V.items():
-        lo_a, hi_a = tree.cube(a)
-        edge = float(hi_a[0] - lo_a[0])
-        for b in lst:
-            d = np.rint((tree.cube(b)[0] - lo_a) / edge).astype(int)
-            offsets.add((int(tree.level[a]), int(d[0]), int(d[1]), int(d[2])))
-            entries += 1
-    print(f"    M2L tables the cube domain would share: {len(offsets)} "
-          f"distinct (level, offset) over {entries} V box pairs "
-          f"(x{entries / max(len(offsets), 1):.1f}); on the extents, "
-          f"{entries} distinct")
-    return (all(h <= 1.0 + 1e-12 for _e, h in out["extent"])
-            and all(h > 1.0 for _e, h in out["cube"]))
+    # The canonical domain is the cube's own operator wherever the two can
+    # differ only through M2L -- on the panels, which are all V list.
+    field, source = _panels()
+    e0 = kb.resolve_eps(EPS, source)
+    v = np.random.default_rng(8).standard_normal(3 * source.n_triangles)
+    y = {}
+    for domain in ("cube", "canonical"):
+        pr = PairFMM(field, source, KERNEL_U, e0, p=6, domain=domain)
+        y[domain] = pr.matvec(np.asarray(kernel_coeffs(KERNEL_U, MAT)), v)
+        wx = pr.counts()["W"] + pr.counts()["X"]
+    same = float(np.linalg.norm(y["canonical"] - y["cube"])
+                 / np.linalg.norm(y["cube"]))
+    print(f"    canonical vs cube on the panels (W+X = {wx}): {same:.2e} -- "
+          f"the transform reproduces the cube lattice exactly, so it moves "
+          f"the extrapolation rather than removing it")
+
+    shared = {d: _m2l_tables(g)[0] for d, g in trees.items()}
+    n_v = _m2l_tables(geom)[1]
+    return (all(h["p2m"] <= 1.0 + 1e-12 and h["l2p"] <= 1.0 + 1e-12
+                for _e, h in out["extent"])
+            and all(h["p2m"] > 1.0 for _e, h in out["cube"])
+            and all(h["p2m"] <= 1.0 + 1e-12 and h["l2p"] <= 1.0 + 1e-12
+                    for _e, h in out[f"src f={f:g}"])
+            and all(h["m2c"] > 1.0 for _e, h in out["canonical"])
+            and same < 1e-12
+            and shared["extent"] > 0.9 * n_v
+            and len({shared[d] for d in trees if d != "extent"}) == 1
+            and (_v_separation(trees["cube"], 8)
+                 > _v_separation(trees[f"src f={f:g}"], 8)
+                 > _v_separation(trees[f"cube f={f:g}"], 8))
+            and nan_rows > 0
+            and min(margins["extent"]) > 1.0
+            # the X margin is the TARGET domain's: a uniform inflation
+            # spends it, a source-only one leaves it at the cube's value.
+            and (margins["extent"][1] > margins["cube"][1]
+                 > margins[f"cube f={f:g}"][1])
+            and margins[f"src f={f:g}"][1] == margins["cube"][1])
 
 
 CHECKS = [

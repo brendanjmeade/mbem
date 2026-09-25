@@ -53,17 +53,57 @@ order, which the gate pins as max|xhat| <= 1.
 
 What that costs is the shared M2L table: with a domain per box the kernel
 between two node sets is not a function of their offset, so nothing is
-shared -- the economy a production bbFMM exists for. ``domain="cube"`` puts
-both roles on the nominal cubes, where the lattice IS translation-invariant
-(152 distinct (level, offset) tables against 702 V box pairs on the
-fault-zone model) and P2M extrapolates instead. The gate prices both rather
-than assuming, and on that model the cube is the MORE accurate of the two at
-every p from 4 to 8 (x1.8 to x5.4, widening with p): the enlarged extent is
-the larger domain wherever anything protrudes, while extrapolating 0.33 box
-edges costs nothing at these orders, the kernel being analytic well past the
-box. The default stays on the extents because containment is what holds at
-any protrusion and any p and that measurement is one model's; the switch is
-one argument away when the shared table gets built.
+shared -- the economy a production bbFMM exists for. Four domains are
+offered, and only the extent is NOT shareable:
+
+    domain="extent"                per-box bounding box; contains every
+                                   source; nothing shared
+    domain="cube", inflate=f       the nominal cube scaled by one factor f,
+                                   the same at every box and level, so the
+                                   node lattice stays translation-invariant
+                                   and the M2L table stays shared; f large
+                                   enough contains the protrusion too
+    domain="canonical"             per-box extents for P2M/L2P, plus a
+                                   per-box change of basis onto the nominal
+                                   cube lattice around M2L alone
+
+``inflate`` is one factor or ``(f_source, f_target)``. Targets are
+collocation POINTS and are always inside their own cube, so only the source
+domain ever has to grow; splitting the two pays the accuracy for the
+protrusion on one side instead of both. What limits f is not accuracy in
+the abstract but the V list: two non-adjacent boxes are 2 edges apart
+centre to centre and their node lattices span +-f/2 edges, so the M2L
+separation is ``(2 - f_s/2 - f_t/2) * cos(pi/2p)`` edges and vanishes near
+f = 2 -- the interpolation domain would then reach the singularity it is
+interpolating across.
+
+``domain="canonical"`` keeps containment exact where the geometry enters
+(P2M, L2P, W and X are all on the extents) and moves only M2L onto the
+shared cube lattice, through two separable p^3 x p^3 transforms per box. It
+does not buy anything WHERE THE PROBLEM IS: the extent lattice reproduces
+every polynomial of degree < p per axis and a cube Chebyshev weight IS one,
+so extent-P2M composed with the transform is cube-P2M identically --
+measured at 3e-15 on a pair with no W and no X, at every p through 12. Its
+M2L is the cube's, so it inherits the cube's stall. What it keeps is the
+extent's W and X margins, which is not nothing -- 2.6x better than the cube
+on the fault-zone OPERATOR, where W and X are 144 box pairs each -- but it
+is still 4.8x worse than the extent and still over ``FMM_OPERATOR_PARITY``.
+The gate pins the identity so it is not rediscovered as a third option.
+
+The default stays on the extents because containment is what holds at any
+protrusion and any p, and because the choice is the far field's to make once
+the shared table is built. ONE PAIR AT ONE p DOES NOT SETTLE WHICH IS MORE
+ACCURATE, and taken at face value it points the wrong way. The cube wins the
+fault-zone pair ``verify_fmm`` [g] prints, by 5x at p = 8. On the OPERATOR
+that pair belongs to it is 6-30x worse and over ``FMM_OPERATOR_PARITY``, and
+on topo_inclusion -- 0.53 box edges of protrusion against the fault zone's
+0.33 -- its convergence in p STALLS while the extent's does not
+(``interface_side <- host_top``, far-isolated at p = 4, 6, 8: cube 5.2e-3,
+7.5e-4, 4.1e-4 against the extent's 6.6e-3, 4.7e-4, 3.5e-5). The stall is
+M2L, not P2L: replacing the X list by its exact value moves the cube's error
+by 1-3 % from p = 6 up, so what fails is the P2M EXTRAPOLATION of a
+protruding source into the multipole -- the thing the extent exists to
+prevent, arriving at the protrusion the trunk's target topology has.
 
 THE TREE IS PER PAIR OR SHARED. With no ``geom``, ``PairFMM`` builds one
 ``Octree`` over the union of its own field points and source elements: the
@@ -287,17 +327,20 @@ class _Stencil:
         nb = len(tree.boxes)
         p3 = p ** 3
         z = _cheb_nodes(p)
-        self.max_xhat = 0.0
+        # One number per PASS, because they fail for different reasons: a
+        # source protrudes, a collocation point never does, and a child's
+        # nodes leave its parent only through the half-width floor.
+        self.xhat = {"p2m": 0.0, "l2p": 0.0, "m2m": 0.0, "l2l": 0.0}
         # Node index layout, matching _weights3's C order on (p, p, p).
         grid = np.stack(np.meshgrid(z, z, z, indexing="ij"),
                         axis=-1).reshape(p3, 3)
 
-        self.src_nodes = np.empty((nb, p3, 3))
-        self.tgt_nodes = np.empty((nb, p3, 3))
-        for dom, out in ((geom.src_dom, self.src_nodes),
-                         (geom.tgt_dom, self.tgt_nodes)):
+        def lattice(dom):
             center, half = dom
-            out[:] = center[:, None, :] + half[:, None, :] * grid[None, :, :]
+            return center[:, None, :] + half[:, None, :] * grid[None, :, :]
+
+        self.src_nodes = lattice(geom.src_dom)
+        self.tgt_nodes = lattice(geom.tgt_dom)
 
         # P2M: the Chebyshev weight integrated over each source triangle.
         # L2P: the weight at each collocation point.
@@ -312,11 +355,11 @@ class _Stencil:
             for e in held:
                 S3, over = _weights3(bary @ geom.verts[e], c_s, h_s, p)
                 self.p2m[e] = geom.areas[e] * (wq[:, None] * S3).sum(axis=0)
-                self.max_xhat = max(self.max_xhat, over)
+                self._seen("p2m", over)
             S3, over = _weights3(geom.centroids[held], geom.tgt_dom[0][bi],
                                  geom.tgt_dom[1][bi], p)
             self.l2p[held] = S3
-            self.max_xhat = max(self.max_xhat, over)
+            self._seen("l2p", over)
 
         # M2M / L2L: the child's nodes expressed in the parent's domain.
         self.m2m = [None] * nb
@@ -325,16 +368,46 @@ class _Stencil:
             pj = int(tree.parent[bi])
             if pj < 0:
                 continue
-            self.m2m[bi] = self._axis_maps(geom.src_dom, bi, pj, z, p)
-            self.l2l[bi] = self._axis_maps(geom.tgt_dom, bi, pj, z, p)
+            self.m2m[bi] = self._axis_maps(geom.src_dom, bi, geom.src_dom, pj,
+                                           z, p, "m2m")
+            self.l2l[bi] = self._axis_maps(geom.tgt_dom, bi, geom.tgt_dom, pj,
+                                           z, p, "l2l")
 
-    def _axis_maps(self, dom, bi: int, pj: int, z, p: int) -> list:
+        # M2L on the shared cube lattice: the per-box change of basis into
+        # it and back. Only the canonical domain has one; the others run
+        # M2L on the same nodes P2M and L2P already use.
+        self.src_m2l_nodes = self.src_nodes
+        self.tgt_m2l_nodes = self.tgt_nodes
+        self.e2c_src = self.e2c_tgt = None
+        if geom.cube_dom is not None:
+            self.xhat["m2c"] = self.xhat["c2l"] = 0.0
+            self.src_m2l_nodes = lattice(geom.cube_dom)
+            self.tgt_m2l_nodes = self.src_m2l_nodes
+            self.e2c_src = [self._axis_maps(geom.src_dom, bi, geom.cube_dom,
+                                            bi, z, p, "m2c")
+                            for bi in range(nb)]
+            self.e2c_tgt = [self._axis_maps(geom.tgt_dom, bi, geom.cube_dom,
+                                            bi, z, p, "c2l")
+                            for bi in range(nb)]
+
+    def _seen(self, pass_: str, value: float) -> None:
+        self.xhat[pass_] = max(self.xhat[pass_], float(value))
+
+    @property
+    def max_xhat(self) -> float:
+        """The worst |xhat| over every pass -- what the gates pin."""
+        return max(self.xhat.values())
+
+    def _axis_maps(self, dom, bi: int, into, ci: int, z, p: int,
+                   pass_: str) -> list:
+        """Box ``bi``'s nodes in ``dom``, evaluated in box ``ci``'s ``into``
+        domain: three (p, p) axis matrices, ``_separable``'s operands."""
         center, half = dom
+        c_in, h_in = into
         out = []
         for d in range(3):
-            xh = ((center[bi, d] + half[bi, d] * z - center[pj, d])
-                  / half[pj, d])
-            self.max_xhat = max(self.max_xhat, float(np.abs(xh).max()))
+            xh = (center[bi, d] + half[bi, d] * z - c_in[ci, d]) / h_in[ci, d]
+            self._seen(pass_, np.abs(xh).max())
             out.append(_cheb_weights(xh, p))
         return out
 
@@ -352,12 +425,17 @@ class FmmTree:
 
     def __init__(self, meshes, ncrit: int = defaults.OCTREE_NCRIT,
                  placement_safety: float = defaults.OCTREE_PLACEMENT_SAFETY,
-                 domain: str = "extent",
+                 domain: str = "extent", inflate=1.0,
                  arrays: kb.MeshArrays | None = None):
-        if domain not in ("extent", "cube"):
+        if domain not in ("extent", "cube", "canonical"):
             raise ValueError(f"unknown interpolation domain {domain!r}")
+        f = ((float(inflate), float(inflate)) if np.isscalar(inflate)
+             else tuple(float(v) for v in inflate))
+        if len(f) != 2 or min(f) < 1.0:
+            raise ValueError("inflate is one factor >= 1, or (source, target)")
         a = arrays if arrays is not None else kb.MeshArrays()
         self.domain = domain
+        self.inflate = f
         self._range: dict = {}
         cen, siz, verts, areas, off = [], [], [], [], 0
         for m in meshes:
@@ -380,17 +458,33 @@ class FmmTree:
         self.tree = Octree(self.centroids, np.concatenate(siz), self.verts,
                            ncrit=ncrit, placement_safety=placement_safety)
         self.lists = InteractionLists(self.tree)
-        self.src_dom = self._domains(self.verts)
-        self.tgt_dom = self._domains(self.centroids)
+        self._cube = np.array([np.concatenate(self.tree.cube(b))
+                               for b in range(len(self.tree.boxes))])
+        self.src_dom = self._domains(self.verts, f[0])
+        self.tgt_dom = self._domains(self.centroids, f[1])
+        # The lattice M2L is stated on when it is not the role's own:
+        # translation-invariant, hence shared, hence the canonical frame.
+        # Always the nominal cube -- ``inflate`` scales the extents P2M and
+        # L2P work on, never the frame the shared table is stated in.
+        self.cube_dom = (self._cube_domain(1.0) if domain == "canonical"
+                         else None)
         self._stencils: dict = {}
 
-    def _domains(self, geo: np.ndarray) -> tuple:
-        """``(center, half)`` per box for one role.
+    def _cube_domain(self, factor: float) -> tuple:
+        cube = self._cube
+        return 0.5 * (cube[:, :3] + cube[:, 3:]), \
+            factor * 0.5 * (cube[:, 3:] - cube[:, :3])
+
+    def _domains(self, geo: np.ndarray, factor: float) -> tuple:
+        """``(center, half)`` per box for one role, scaled by ``factor``.
 
         ``domain="extent"`` is the bounding box of what the box holds --
         the only domain a protruding source is inside; ``"cube"`` is the
-        nominal cube, on which the M2L table would be shared and P2M
-        extrapolates.
+        nominal cube, on which the M2L table is shared and P2M
+        extrapolates; ``"canonical"`` is the extent, the cube entering
+        only through :attr:`cube_dom`. Scaling by ONE factor per role
+        preserves whatever translation invariance the base domain had,
+        because the cubes at a level are congruent.
 
         Every half-width is floored at a fraction of the box's own cube
         edge (``FMM_MIN_HALF_OVER_EDGE``). A flat patch gives a box zero
@@ -399,18 +493,44 @@ class FmmTree:
         ENLARGES a domain, so every point it must contain is still inside.
         The floor is relative to the cube because an absolute one would
         put a child's nodes outside its parent's domain, which is where
-        M2M and L2L evaluate them.
+        M2M and L2L evaluate them. Even the relative floor moves them
+        slightly out when BOTH boxes are floored and their extent centres
+        differ -- 1.0005 on topo_inclusion, where 423 of 783 boxes hold a
+        planar patch and would otherwise divide 0 by 0 -- so the floor is
+        load-bearing, and small enough that what it costs is 5e-4 of a
+        half-width. Raising it to 1e-3 costs 0.44 (``verify_fmm`` [g]).
         """
-        tree = self.tree
-        nb = len(tree.boxes)
-        cube = np.array([np.concatenate(tree.cube(b)) for b in range(nb)])
         if self.domain == "cube":
-            lo, hi = cube[:, :3], cube[:, 3:]
-        else:
-            lo, hi = tree.extents(geo)
-        floor = defaults.FMM_MIN_HALF_OVER_EDGE * (cube[:, 3] - cube[:, 0])
+            return self._cube_domain(factor)
+        lo, hi = self.tree.extents(geo)
+        floor = defaults.FMM_MIN_HALF_OVER_EDGE * (self._cube[:, 3]
+                                                   - self._cube[:, 0])
         half = np.maximum(0.5 * (hi - lo), floor[:, None])
-        return 0.5 * (lo + hi), half
+        return 0.5 * (lo + hi), factor * half
+
+    def containment_factors(self) -> tuple:
+        """``(f_source, f_target)``: the smallest uniform cube inflation
+        that puts every source VERTEX, and every collocation point, inside
+        its own box's domain -- what ``inflate`` has to be for P2M and L2P
+        to interpolate rather than extrapolate. ``f_target`` is 1 by
+        construction, a collocation point being placed by its own box.
+
+        Read it with the price: the V-list node separation is
+        ``(2 - (f_source + f_target) / 2) cos(pi/2p)`` box edges, so a
+        factor near 2 leaves the two lattices touching.
+        """
+        cen = 0.5 * (self._cube[:, :3] + self._cube[:, 3:])
+        half = 0.5 * (self._cube[:, 3:] - self._cube[:, :3])
+        f = [0.0, 0.0]
+        for bi in range(len(self.tree.boxes)):
+            held = self.tree.elements_of(bi)
+            if not held.size:
+                continue
+            for i, geo in enumerate((self.verts[held].reshape(-1, 3),
+                                     self.centroids[held])):
+                f[i] = max(f[i], float(np.abs((geo - cen[bi])
+                                              / half[bi]).max()))
+        return tuple(f)
 
     def range_of(self, mesh) -> tuple:
         """``(start, stop)`` of one mesh's elements in the tree's indexing."""
@@ -428,7 +548,9 @@ class FmmTree:
 
     def summary(self) -> str:
         c = self.lists.counts()
-        return (f"FmmTree {self.domain!r}: {self.tree.summary()}; "
+        f = (f" inflate {self.inflate[0]:g}/{self.inflate[1]:g}"
+             if self.inflate != (1.0, 1.0) else "")
+        return (f"FmmTree {self.domain!r}{f}: {self.tree.summary()}; "
                 f"U {c['U']} V {c['V']} W {c['W']} X {c['X']} box pairs")
 
 
@@ -463,7 +585,7 @@ class PairFMM:
                  p: int | None = None, geom: FmmTree | None = None,
                  eps_terms: int = defaults.FMM_EPS_TERMS,
                  ncrit: int = defaults.OCTREE_NCRIT,
-                 domain: str = "extent",
+                 domain: str = "extent", inflate=1.0,
                  arrays: kb.MeshArrays | None = None):
         self.kernel = kernel
         self.n_basis = kernel_n_basis(kernel)          # raises on a bad tag
@@ -478,7 +600,7 @@ class PairFMM:
         arrays = arrays if arrays is not None else kb.MeshArrays()
         self.geom = geom if geom is not None else FmmTree(
             [field_mesh, source_mesh], ncrit=ncrit, domain=domain,
-            arrays=arrays)
+            inflate=inflate, arrays=arrays)
         self.st = self.geom.stencil(self.p)
 
         f0, f1 = self.geom.range_of(field_mesh)
@@ -622,6 +744,28 @@ class PairFMM:
                        else q.reshape(q.shape[0], 3, 3, k))
         return out
 
+    def _canonical(self, boxes: list, which: str, only=None) -> list:
+        """One box list carried between its own domain and the cube lattice.
+
+        ``which="e2c_src"`` anterpolates a multipole onto the cube nodes
+        (the same contraction M2M uses), ``"e2c_tgt"`` evaluates a local
+        expansion held on the cube nodes at the box's own target nodes
+        (the contraction L2L uses). Returns ``boxes`` itself when the
+        domain needs no transform, which is every domain but canonical.
+        """
+        maps = getattr(self.st, which)
+        if maps is None:
+            return boxes
+        contract = 0 if which == "e2c_src" else 1
+        out = [None] * len(boxes)
+        for bi in (range(len(boxes)) if only is None else only):
+            val = boxes[bi]
+            if val is None:
+                continue
+            C = val.reshape((self.p,) * 3 + (-1,))
+            out[bi] = _separable(maps[bi], C, contract).reshape(val.shape)
+        return out
+
     def _upward(self, charge: np.ndarray) -> list:
         """Multipole per box: P2M of its residents, then M2M of its
         children. Boxes are level-ordered, so descending index order is
@@ -653,20 +797,32 @@ class PairFMM:
         A local expansion holds the FIELD VALUES at the box's target nodes,
         which is what makes bbFMM black-box: M2L, P2L and L2L all add or
         interpolate values, and L2P is one more interpolation.
+
+        Under ``domain="canonical"`` M2L alone runs on the shared cube
+        lattice: each multipole it reads is carried there once per
+        traversal, each local it writes carried back once. P2L, L2L and
+        L2P stay on the extents, so the geometry still only ever meets a
+        domain that contains it.
         """
         tree = self.geom.tree
         p3 = self.p ** 3
         Lx = [None] * len(tree.boxes)
         step = max(1, int(defaults.FMM_MAX_POINT_PAIRS // max(p3 * p3, 1)))
 
+        used = {b for _a, _r, bs, _n in self._m2l for b in bs}
+        Mc = self._canonical(M, "e2c_src", used)
+        Lc = [None] * len(tree.boxes) if Mc is not M else Lx
         for a, _rows, bs, _n in self._m2l:
-            xt = self.st.tgt_nodes[a]
+            xt = self.st.tgt_m2l_nodes[a]
             for i0 in range(0, len(bs), step):
                 chunk = bs[i0:i0 + step]
-                ys = np.concatenate([self.st.src_nodes[b] for b in chunk])
-                qs = self._split(np.concatenate([M[b] for b in chunk]), k)
+                ys = np.concatenate([self.st.src_m2l_nodes[b] for b in chunk])
+                qs = self._split(np.concatenate([Mc[b] for b in chunk]), k)
                 val = _far_apply(self.kernel, xt, ys, qs, params)
-                Lx[a] = val if Lx[a] is None else Lx[a] + val
+                Lc[a] = val if Lc[a] is None else Lc[a] + val
+        if Lc is not Lx:
+            for a, val in enumerate(self._canonical(Lc, "e2c_tgt")):
+                Lx[a] = val
 
         for a, _rows, cols, _n in self._p2l:
             block = self._exact(self.st.tgt_nodes[a], cols, c)

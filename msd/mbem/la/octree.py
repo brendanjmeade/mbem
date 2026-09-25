@@ -28,12 +28,19 @@ centroid. That leaves it PROTRUDING from its box by up to 0.53 box edges, and
 Chebyshev interpolation is invalid for a source outside its box at all. Demanding
 strict containment instead pins 52 % of elements and costs 284 KiB/unknown, and
 demanding a 2x margin makes the placement rule rather than ``ncrit`` set the
-near-field floor. So each box carries, besides its nominal cube, the bounding
-box of everything it actually holds (``Box.lo``/``hi`` against
-``Box.cube_lo``/``cube_hi``): the M2L table stays on the nominal cubes, which
-keeps it translation-invariant, and the enlargement is absorbed into P2M/L2P.
-Lists are formed on the nominal cubes and then repaired, because a protruding
-element can destroy the separation a list entry assumed.
+near-field floor. So every box offers TWO domains: its nominal cube
+(:meth:`Octree.cube`) and the bounding box of what it actually holds
+(:meth:`Octree.extents`). Which one interpolation should use is a real choice
+with a real cost, and it is priced rather than assumed in ``la/fmm.py`` -- only
+the cube lattice is translation-invariant, so only the cube gives the shared
+M2L table a bbFMM exists for, while only the extent contains a protruding
+source. Nothing here picks for the caller.
+
+The lists are formed on the nominal cubes and are NOT repaired afterwards: a
+protruding element can leave a V or W entry less separated than its cubes
+suggest (measured, the worst V node separation falls from 1.02 to 0.68 box
+edges under the extent domain), and demoting those entries to direct is an
+open item, not something this module does.
 
 Lists follow the standard adaptive-FMM definitions, with adjacency meaning that
 two closed cubes touch (face, edge, corner or containment) even at different

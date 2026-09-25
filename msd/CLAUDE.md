@@ -50,7 +50,7 @@ Backend.assemble -> solve -> evaluate_*`.
 | `kernels/basis.py` | material-basis recombination, `resolve_eps`/`resolve_patch_eps`, mesh arrays, Lagrange node lattice and shape functions in the kernels' node order |
 | `evaluate.py` | interior displacement/stress from a solution at each patch's order; `_double_layer_stress` pairs each `Sdd` term with its eigenstress; `DisplacementEvaluator` for repeated grids (P0 only) |
 | `geometry.py` | exact point-to-triangle distance (near-boundary warning, fault containment) |
-| `la/` | `cluster` (trees, admissibility), `aca`, `hop.PairCompressed`, `hodlr`, `solver.fgmres`, `preconditioner.BlockGaussSeidel` (dense LU then cluster block-Jacobi; a HODLR rung by explicit policy) |
+| `la/` | `cluster` (trees, admissibility), `aca`, `hop.PairCompressed`, `hodlr`, `solver.fgmres`, `preconditioner.BlockGaussSeidel` (dense LU then cluster block-Jacobi; a HODLR rung by explicit policy); the FMM far field: `octree` (adaptive tree, size-constrained placement, U/V/W/X from a dual-tree traversal) and `fmm.PairFMM` (reference Chebyshev bbFMM with `PairCompressed`'s `matvec`; correctness first, slower than dense at gate size) |
 | `selfcheck.py` | runtime guard: refuses to run if the fault sign convention is wrong (three cached stages, two Poisson ratios) |
 | `defaults.py` | every tolerance and threshold |
 | `estimate.py`, `topography.py`, `wrappers.py` | memory prediction; vertical surface warp; the `build_vertical_fault_zone_model` example |

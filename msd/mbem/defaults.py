@@ -327,6 +327,88 @@ OCTREE_PLACEMENT_SAFETY = 1.0
 # coordinates fit in a 64-bit key.
 OCTREE_LEVEL_CAP = 21
 
+# --- Chebyshev black-box FMM (la/fmm.py) ------------------------------
+# Chebyshev nodes per dimension (p^3 per box). Measured per admissible block
+# at the canonical worst offset (2, 0, 0): the single-layer U kernel reaches
+# 1e-4 relative Frobenius at p = 6, the double-layer T kernel, one derivative
+# higher and so one order less smooth, only at p = 8. At p = 8 the MAX-ENTRY
+# error of the T kernel is still 1.3-3.0e-4, i.e. 1e-4 is met in the
+# Frobenius norm alone -- a gate on this path reports both norms or it
+# reports the easier one.
+FMM_ORDER_U = 6
+FMM_ORDER_T = 8
+# Terms of K(eps) = K0 + eps^2 K1 + O(eps^4) the far field carries. Both are
+# translation-invariant and K1 is homogeneous of K0's degree minus 2, so the
+# second term is the same machinery at a different radial power with the
+# source weight w_j eps_j^2. Two terms hold 1e-4 on 100 % of admissible
+# blocks; one term fails it on 62.5 %. The expansion parameter is
+# (eps/r)^2 with r the separation the expansion is actually EVALUATED at --
+# M2L node to node, M2P field point to node -- and that is NOT the two box
+# edges the placement rule bounds cube centres by: interpolating on the
+# enlarged extents pushes the two node sets toward each other, so the worst
+# V-list node separation measures 0.68 box edges against the cube domain's
+# 1.02. Measured on the fault-zone model under eps="auto" (eps_j = 0.1 h_j),
+# worst over every far-field evaluation: (eps/r)^2 = 1.2e-2 and a truncation
+# (eps/r)^4 = 1.5e-4 on the extent domain, 5.5e-3 and 3.1e-5 on the cube.
+# Both sit under the interpolation error at p <= 8, which is why two terms
+# hold, but the bound is the measurement, not the placement rule. A SCALAR
+# eps carries no bound at all -- at eps = 3 on the same model (eps/r)^4 =
+# 2.6e-2, 260x the target -- so a number measured there prices the
+# expansion, not the FMM.
+FMM_EPS_TERMS = 2
+# Target-source point pairs one M2L evaluation may hold at once. The
+# reference forms d and the radial weights over the whole (p^3, p^3) block,
+# so this caps the working set (at p = 8 one block is 512 x 512 and ~25
+# arrays of it, ~50 MB); larger V lists are chunked by source box.
+FMM_MAX_POINT_PAIRS = 2_000_000
+# Columns per traversal in PairFMM.to_dense, which the gates use and no
+# solve does: the whole FMM runs once per chunk, so this trades memory for
+# traversals.
+FMM_DENSE_COLUMN_CHUNK = 48
+# Near-field (U list) blocks cached per coefficient vector. One entry is one
+# material's exact near field of the pair; the gate's operator sweep touches
+# at most two materials per pair.
+FMM_NEAR_CACHE_MAX = 4
+# PairFMM against the exact dense pair (verify_fmm), relative, in BOTH the
+# 2-norm/Frobenius and max-entry senses: the per-block design target itself.
+# At the default orders the two-panel pair measures 5e-10 (U) and 7e-9 (T),
+# four to six orders under it, because that geometry is far better separated
+# than the canonical worst offset the orders were chosen at.
+FMM_PAIR_PARITY = 1e-4
+# The end-to-end operator error, as the FAR-ISOLATED metric (the error over
+# the exact far field alone, not over the whole operator -- the near field is
+# exact, so a naive relative error understates by the fraction of A v the far
+# field carries: measured 10.1x and 16.4x on the two Gaussians and 1.6x on
+# the unit translation, this operator's far field being 4.5 % of its max).
+# Measured at the default orders on the fault-zone model at refine 1, eps
+# "auto", jump "half": 4.3e-5 / 8.0e-5 / 6.3e-6 over gaussian 0 / gaussian 1
+# / translation, against a naive 4.2e-6 / 4.9e-6 / 4.0e-6. The limit is the
+# worst of those with 2.5x margin.
+FMM_OPERATOR_PARITY = 2e-4
+# p = 4 -> p = 8 must gain at least this on a pair. Measured 5e4 (U) and 4e4
+# (T) on the two-panel pair; the floor is three orders under that, so it
+# fails only if p has stopped controlling the error at all.
+FMM_P_CONVERGENCE_GAIN = 1e2
+# Two eps passes over one on a PAIR, same measurement. There the
+# interpolation error is 1e-9 and the eps^2 term is the whole of the rest,
+# so the gain is the expansion's own: measured x155 (U) and x1.2e4 (T) on
+# the two-panel pair at the default orders under eps="auto".
+FMM_EPS_TERM_GAIN = 1e1
+# The same END TO END, where the gain is bounded by where the interpolation
+# error sits: the eps^2 term is ~(eps/r)^2 = 2.5e-3 of the far field and the
+# far field is 4.5 % of the fault-zone operator, so ~1e-4 of ||A v|| --
+# above the p = 6 interpolation error (gain x2.3, measured) and BELOW the
+# p = 4 one, where two passes are no better than one (x0.92, measured) and
+# the comparison says nothing about the expansion.
+FMM_EPS_TERM_GAIN_OPERATOR = 1.5
+# Floor on an interpolation domain's half-width, in units of the box's own
+# cube edge. A flat patch leaves its boxes zero extent across the plane, and
+# a zero width divides the rounding of a quadrature point by itself; the
+# floor only enlarges a domain, so containment survives it. Relative to the
+# cube rather than absolute because M2M and L2L evaluate a child's nodes in
+# its PARENT's domain, and an absolute floor puts them outside it.
+FMM_MIN_HALF_OVER_EDGE = 1e-6
+
 # --- Preconditioner rung ladder ---------------------------------------
 # Rung 1, the exact dense LU of a super-block, while it is under this
 # many DOFs. The cap is a MEMORY decision: there is no build-time

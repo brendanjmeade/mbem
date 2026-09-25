@@ -305,6 +305,28 @@ STORAGE_SINGLE_MIN_TOL = 1e-5
 # an order of margin, and still 100x under BLOCK_COMPRESSION_TOL.
 FLATVIEW_STORAGE_PARITY = 1e-6
 
+# --- Adaptive octree, the FMM far field's tree (la/octree.py) ----------
+# Elements per box before it subdivides. Measured on topo_inclusion at scale 3
+# (66,842 elements), near field in KiB/unknown as U / U+W+X: 16 -> 2.01 / 4.40,
+# 32 -> 4.69 / 8.18, 64 -> 7.45 / 15.83, 128 -> 19.25 / 34.38. 16 saves 5 GiB
+# at 4M unknowns and DOUBLES the M2L count (335,766 box pairs against 165,698),
+# which is not worth it out of 128 GB; 64 nearly doubles the near-field kernel
+# pairs (12.7 M -> 23.2 M) for a 38 % M2L saving; 128 is worse again, its leaf
+# occupancy reaching 52. At 32 the tree is depth 9 with mean occupancy 14.4.
+OCTREE_NCRIT = 32
+# An element may go no deeper than the level whose cube edge is this multiple
+# of its own size. 1.0 is the loosest rule that keeps an element comparable to
+# its box; it leaves a protrusion of up to 0.53 box edges, which is why the
+# interpolation domain is the box's CONTENTS (Octree.extents) and not its cube.
+# Tightening it instead is worse on both counts: strict containment pins 52 %
+# of elements at 284 KiB/unknown (~250 GiB at 4M), and 2.0 pins 16 % and makes
+# the placement rule rather than OCTREE_NCRIT set the near-field floor.
+OCTREE_PLACEMENT_SAFETY = 1.0
+# Hard depth limit, so a degenerate cloud cannot recurse without end. The
+# 1e6-element target reaches ~10 levels; 21 is what three packed integer box
+# coordinates fit in a 64-bit key.
+OCTREE_LEVEL_CAP = 21
+
 # --- Preconditioner rung ladder ---------------------------------------
 # Rung 1, the exact dense LU of a super-block, while it is under this
 # many DOFs. The cap is a MEMORY decision: there is no build-time

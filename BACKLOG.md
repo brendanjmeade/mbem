@@ -266,6 +266,91 @@ patch)` pair builds its OWN cluster tree and partition, so admissibility is
 never tested across the union of the geometry (~48 independent partitions on
 this model). One global tree is the prerequisite for any FMM anyway.
 
+**The far-field decision is made: adaptive octree + Chebyshev bbFMM (B, C).**
+Three gates were measured before committing the weeks, and two of them moved
+the plan.
+
+*B's stated justification was wrong.* "One global tree" was costed at 1.76x on
+the near field; measured over four tree configurations at fixed leaf and
+admissibility, GLOBALITY buys 1.04-1.22x (and is worse two-sided at scale 1)
+while the OCTREE BOX SHAPE buys 2.2-2.7x. The 1.76x also held `ACA_MIN_BLOCK`
+fixed across configurations -- a rule about ACA's certificate, which a bbFMM
+does not have, and which fired on 0 % of the baseline's bytes and 76 % of the
+octree's. The only defensible reason to make the tree global is that a SHARED
+translation-invariant M2L table requires one tree. That is sufficient; the
+near-field argument is not.
+
+*C's gate passes.* `K(eps) = K0 + eps_j^2 K1` holds 1e-4 on 100 % of admissible
+blocks and 100 % of far-field work (13x headroom); one pass fails on 62.5 %.
+K0 is the classical Kelvin kernel (2.6e-12 against the eps -> 0 analytic
+stack), K0 and K1 are translation-invariant to 1.7e-8, and K1 is homogeneous of
+exactly K0's degree minus 2 -- so BOTH M2L tables are shared across a level and
+eps enters only as a per-source weight `w_j eps_j^2`. Per-element eps is a
+non-issue; the constraint is eps/h. A per-leaf scalar eps is ruled out (15.8x
+spread inside one 96-element leaf). Order p = 6 (U) and p = 8 (T), in the
+Frobenius norm -- at p = 8 the max-entry error is 1.3-3.0e-4, so 1e-4 is NOT
+met entrywise. The 18 -> 6 component lever holds: `D_ijm = C_qmkl dU_ik/dy_l`
+to 2.8e-16 at two Poisson ratios, so T reuses U's table by differentiating the
+Chebyshev basis, at ~2x the error and still inside 1e-4 at p = 8.
+
+*The near field is not the constraint, and the 58-vs-95 GB question was a
+category error.* Measured on the real graded geometry with real U/V/W/X lists,
+two independent implementations agreeing to the integer pair count at ncrit
+64/128 and within 1-3 % at 16/32 (self-checks: U+V+2W = N^2 exactly,
+4,467,852,964 = 66,842^2; U symmetric; brute-force adjacency):
+
+  scale 3, KiB/unknown f64        4M unknowns, f32
+  ncrit    U     W     X   U+W+X    U only   U+W+X
+     16  2.01  1.39  1.00   4.40    3.8 GiB   8.4 GiB
+     32  4.69  1.92  1.57   8.18    8.9 GiB  15.6 GiB
+     64  7.45  4.88  3.49  15.83   14.2 GiB  30.2 GiB
+    128 19.25  8.49  6.65  34.38   36.7 GiB  65.6 GiB
+
+With the ~3 GB far field that is ~13 GB of 128 at 4M unknowns. The earlier
+figures compared different sets: the H-matrix near field IS the FMM's U+W+X,
+confirmed on the live operator to 5 % (16.4 M pair-keys against 15.6 M octree
+U+W+X, U alone 6.9 M), because an H-matrix has no M2P/P2L and must store every
+mixed-level pair densely.
+
+**ncrit = 32.** 16 saves 5 GiB and doubles M2L (335,766 V box pairs against
+165,698); 64 nearly doubles near-field kernel pairs (12.7 M -> 23.2 M) for a
+38 % M2L saving; 128 is worse again. V-list length is mean 28-34 and max 81-84
+against 189 for a uniform tree, and the U list is 12-14 boxes not 27 -- these
+are 2-D surfaces in a 3-D tree.
+
+**W and X need M2P/P2L, and not because of the grading.** W+X is 0.75-1.2x the
+U list; punting both to direct evaluation costs 1.8-2.2x on the near field and
+more on flops, because a W record is fat (147 element pairs against 55.6 for a
+U record: a W source is an internal box with a subtree under it). Removing the
+element-size constraint entirely still leaves W+X at 0.83x U, so the mixed-level
+adjacency comes from refinement contrast between surfaces (fault and inclusion
+fine, host coarse), not from the big host triangles. W and X have identical
+distinct-pair counts -- exact transposes -- which is a free correctness check.
+
+**Required design item found by the measurement: enlarged interpolation boxes.**
+Placing an element at the finest level whose box edge is at least its own size
+leaves a max protrusion of 0.53 box edges and collapses the V-list separation
+gap to 0.043 h, and Chebyshev interpolation is invalid for ANY source outside
+its box. Strict containment pins 52 % of elements at 284 KiB/unknown (~250 GiB
+at 4M); box edge >= 2x element size pins 16 % and makes the placement rule, not
+ncrit, set the near-field floor. The fix is standard enlarged-box bbFMM: keep
+size >= 1 centroid placement, enlarge each box's INTERPOLATION DOMAIN to the
+bounding box of its own contents, keep the M2L table on the nominal boxes, and
+absorb the enlargement into P2M/L2P. It costs nothing in the lists. Also demote
+W/V box pairs whose effective gap after protrusion is <= 0 to direct (4-7 % of
+W box pairs, +5 % on U).
+
+Two facts about this model that the earlier record got wrong: the size grading
+is driven by the FINE end (host_top at 0.177 km; the max edge at scale 3 is
+36.4 km, not 88.9, and host_base is 0.89 % of the near field because it sits
+200 km from everything), and a box can be occupied AND internal -- a pinned
+element interacts directly with its own box's whole subtree, which costs
+0.21-0.28 KiB/unknown and is what makes W/X nonempty here. Subdivide on the
+TOTAL element count exceeding ncrit, not on the descendable count.
+
+Still unmeasured: nobody has assembled an FMM operator and compared it end to
+end against `AssembledH`. Every error above is per-block.
+
 **Point sources for the far field: measured, works, does not pay yet (1.06x).**
 A 6-point symmetric rule is 5.8x cheaper than the exact triangle integration on
 the T kernel at the ACA's own row/column granularity (inside numba; a

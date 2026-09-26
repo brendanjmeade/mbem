@@ -99,11 +99,32 @@ that pair belongs to it is 6-30x worse and over ``FMM_OPERATOR_PARITY``, and
 on topo_inclusion -- 0.53 box edges of protrusion against the fault zone's
 0.33 -- its convergence in p STALLS while the extent's does not
 (``interface_side <- host_top``, far-isolated at p = 4, 6, 8: cube 5.2e-3,
-7.5e-4, 4.1e-4 against the extent's 6.6e-3, 4.7e-4, 3.5e-5). The stall is
-M2L, not P2L: replacing the X list by its exact value moves the cube's error
-by 1-3 % from p = 6 up, so what fails is the P2M EXTRAPOLATION of a
-protruding source into the multipole -- the thing the extent exists to
-prevent, arriving at the protrusion the trunk's target topology has.
+7.5e-4, 4.1e-4 against the extent's 6.6e-3, 4.7e-4, 3.5e-5).
+
+WHAT ACTUALLY FAILS IS THE X LIST, not the domain and not the protrusion.
+This docstring previously read "the stall is M2L, not P2L: replacing the X
+list by its exact value moves the cube's error by 1-3 %". That is true of the
+PER-PAIR tree it was measured on and false at the operator over a shared
+tree, where X is a real list. Measured on topo_inclusion, replacing X by its
+exact value: scale 1 cube safety 1.5, 4.777e-03 -> 9.625e-05 (50x); scale 2
+safety 2.75, 2.371e-04 -> 9.078e-05 (2.6x); scale 3 (260,598 unknowns) safety
+2.75, 3.061e-03 -> 1.119e-04, i.e. from 15x over ``FMM_OPERATOR_PARITY`` to
+passing, a 27x cure. The negative control holds: where the X margin is
+already 2.178 the same substitution moves nothing (1.003e-05 -> 9.842e-06).
+
+X is P2L, so its target is a FIELD POINT and its separation is not the V
+list's. Over the 15 topo configurations with operator numbers, an X margin
+>= 2.026 passes 5/5 and <= 1.487 fails 10/10, and protrusion leaves nothing
+residual once the margin is accounted for. The safety factor only ever
+worked by moving that margin: at safety 2.75 it is 2.178 at scale 1 but 1.400
+at scale 2 and 1.000 at scale 3, which is why a value tuned on one mesh did
+not transfer. The fix is an X-list admissibility rule -- the criterion is
+bracketed between 1.487 and 2.026 and has not been located, so it is not
+written here yet.
+
+With X exact so nothing else is in it, the cube's own extrapolation limit is
+protrusion 0.33-0.35 box edges (f_src 1.66-1.71): 9.6e-05 at 0.329, 3.0e-04
+at 0.355, 1.2e-03 at 0.527.
 
 THE TREE IS PER PAIR OR SHARED. With no ``geom``, ``PairFMM`` builds one
 ``Octree`` over the union of its own field points and source elements: the

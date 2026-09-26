@@ -385,15 +385,70 @@ fewer tables; ncrit does not pay it back (ncrit 16 + safety 1.5 measures
 6.455 M against ncrit 32's 6.579 M). At 4M that is ~35.6 GiB near + 1-5.6 GiB
 far, ~37-41 GiB of 128.
 
-NOT YET SHIPPED, and the reason is the honest one: every operator number above
-is the fault zone, the only model with an affordable dense reference, whose
-protrusion is 0.33. Safety 1.5 leaves topo_inclusion at f_src 1.658 --
-essentially the FAILING value on the fault zone (1.667) -- and reaching the
-passing 1.400 there needs safety ~3.0 at 5.49x the near field. Treat "safety
-1.5 fixes the cube" as demonstrated at 0.33 box edges and unproven at 0.53. The
-way to settle it is a dense operator reference on a small model with topo-like
-grading. Also still open: demote W/V box pairs whose effective gap after
-protrusion is <= 0 to direct (4-7 % of W box pairs, +5 % on U).
+**Settled at the target geometry, and it is the X LIST, not the domain.** The
+"dense reference" that capped every operator number at the 2.6k fault zone was
+never needed: every term of the far-isolated metric is a matvec, and
+`matvec_exact_rows` over ALL rows is matrix-free -- 2.2 s and 2.0 GiB at 31,098
+unknowns where a dense matrix is 7.2 GiB. Validated against the dense operator
+where dense is affordable (`A_far + A_U + D = A` to 0.0e+00 on four different
+near/far partitions) and against the gate's own [d] row.
+
+With that, topo_inclusion itself, p = 6/8, all rows, against 2e-4:
+
+  config                          31,098      117,120     260,598
+  cube,   safety 2.75           5.13e-05 ok  2.37e-04 OVER  3.06e-03 OVER
+  extent, safety 2.75           8.47e-05 ok  4.25e-05 ok    1.04e-03 OVER
+  extent, safety 1.0 (default)  7.20e-04 OVER
+
+So NOTHING passes at scale, the incumbent default included, and a safety factor
+tuned on one mesh does not transfer. The cause is the X (P2L) list, whose
+target is a FIELD POINT, so its separation is not the V list's. Replacing X by
+its exact value: scale 1 cube 1.5, 4.78e-03 -> 9.63e-05 (50x); scale 2 cube
+2.75, 2.37e-04 -> 9.08e-05 (2.6x); scale 3 cube 2.75, 3.06e-03 -> 1.12e-04, a
+27x cure that turns 15x-over into passing. Negative control: where the X margin
+is already 2.178 the same substitution moves nothing (1.02x). Over the 15 topo
+configurations with operator numbers, X margin >= 2.026 passes 5/5 and <= 1.487
+fails 10/10; protrusion leaves nothing residual once the margin is accounted
+for. Safety only ever worked by moving that margin -- at 2.75 it is 2.178 at
+scale 1, 1.400 at scale 2 and 1.000 at scale 3.
+
+**So the shippable change is an X-list admissibility rule.** The criterion is
+BRACKETED between 1.487 and 2.026 and has not been located; nothing between
+them has been measured. Until it is, `domain="extent"` and
+`OCTREE_PLACEMENT_SAFETY = 1.0` stay, not because they pass but because no
+alternative does and they are the measured baseline.
+
+With X exact so nothing else contaminates it, the cube's own extrapolation
+limit is protrusion 0.33-0.35 box edges (f_src 1.66-1.71), and the safety
+factor that guarantees it on topo's grading is 2.0, not 2.75 -- measured
+protrusion 0.273 / 0.286 / 0.285 at the three scales, and the sawtooth bound
+prot <= c/safety with c <= 0.67 makes it a guarantee rather than a coincidence.
+Safety 3.0 is the ceiling: it leaves the fault-zone model at 100 % U list, i.e.
+no far field at all.
+
+**The far-field byte projection in this file is 36x low.** "316 keys ~ 1.0 GiB"
+counted ONE U table at p = 6 with no eps pass. At the shipping orders with
+`FMM_EPS_TERMS = 2` a transfer key holds U(p=6) 2 (3.216)^2 = 6.4 MiB PLUS
+T(p=8) 2 (3.512)x(9.512) = 108.0 MiB, so 114.4 MiB per key. At 4M unknowns the
+cube is ~295-318 GiB, not ~3 GB. The extent is ~98 TiB, so the O(log N) vs
+O(N) conclusion is untouched (cube keys 514/1048/1536 over three meshes,
+residual < 4 % on a + b ln N; extent 21,740/69,266/147,662, linear in N) -- but
+the cube's table does NOT fit at 1e6 elements without either M2L compression or
+the 18 -> 6 differentiated-basis lever, which removes T's own table entirely
+and is the term that dominates here. That lever is measured (2.8e-16 at two
+Poisson ratios) and is now load-bearing rather than an optimisation.
+
+Near-field price, measured at 72 B per near element pair (`_near_blocks`
+materialises a float64 block): safety 1.0 is 267M pairs and 18 GiB at 4M,
+safety 2.0 is 424M and 28 GiB, safety 2.75 is 876M and 59 GiB. An X-exact
+policy adds up to +54 % on top, though a real criterion moves only the pairs
+below its threshold.
+
+Also still open: demote W/V box pairs whose effective gap after protrusion is
+<= 0 to direct (4-7 % of W box pairs, +5 % on U). And extent + X-exact at scale
+3 was never run -- if the X rule rescues the incumbent domain too, the whole
+cube-vs-extent question collapses into the X rule and the domain stops
+mattering.
 
 Two facts about this model that the earlier record got wrong: the size grading
 is driven by the FINE end (host_top at 0.177 km; the max edge at scale 3 is

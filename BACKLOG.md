@@ -412,11 +412,70 @@ fails 10/10; protrusion leaves nothing residual once the margin is accounted
 for. Safety only ever worked by moving that margin -- at 2.75 it is 2.178 at
 scale 1, 1.400 at scale 2 and 1.000 at scale 3.
 
-**So the shippable change is an X-list admissibility rule.** The criterion is
-BRACKETED between 1.487 and 2.026 and has not been located; nothing between
-them has been measured. Until it is, `domain="extent"` and
-`OCTREE_PLACEMENT_SAFETY = 1.0` stay, not because they pass but because no
-alternative does and they are the measured baseline.
+**The X rule, located.** When forming an X entry, take
+`rho = min over the vertices of the source box's resident elements of
+max_d |v_d - c_d| / h_d` against the TARGET box's interpolation domain
+`(c, h)`; if `rho < 2.0` do not emit it -- keep descending the target and
+re-test, and where it cannot descend send that `res(a) x res(b)` block to
+direct. X only; V and W untouched. Five lines at `octree.py:422`
+(`_descend_sub_res`), where the descent and the U fallback already exist; it
+closes the open item that module's docstring already names. One structural
+consequence: the lists are built on nominal cubes and are domain-blind, but the
+margin is not -- the same box pair reports 1.000 on the cube and 1.450 on the
+extent -- so `InteractionLists` has to be told which domain will be
+interpolated in.
+
+Measured, clause-[d] iso over three test vectors against 2e-4, real
+re-partitioned matvecs:
+
+  config                no rule     with rule            all X exact
+  x3 cube saf 2.75    5.985e-03   2.768e-04 FAIL 1.4x    2.747e-04 FAIL
+  x3 cube saf 2.00    5.953e-03   1.866e-04 PASS         2.420e-04 FAIL
+  x3 extent saf 2.75  1.223e-03   3.315e-04 FAIL 1.7x    3.290e-04 FAIL
+  x1 cube saf 1.5     4.777e-03   1.038e-04 PASS         9.625e-05
+  x2 extent saf 2.50  3.215e-04   8.631e-05 PASS         1.466e-04
+  x2 cube saf 2.75    2.785e-04   8.360e-05 PASS         1.354e-04
+
+Price at scale 3: 3 entries, 540 element pairs, 0.0009 % of the near field
+(22 entries / 18,446 pairs / 0.067 % on the cube at safety 2.0). Moving the
+WHOLE X list instead costs +54.3 % and still fails.
+
+2.0 and not the fitted minimum: the located value moved 1.45 -> 1.90 -> 1.65,
+once per newly measured configuration, and 1.65 clears the entry it must catch
+(rho 1.6437) by 0.4 %. 2.0 is a superset everywhere, sits on the plateau the
+sweep found (error unchanged from 1.65 to 4.0 in all six instrumented
+configurations), and `rho > 1` is the well-posedness condition -- the source
+strictly outside the interpolant's own domain -- so 2.0 is that plus margin.
+**`eta >= 0.30` is NOT an equivalent form and must not be used**: at x2 extent
+saf 2.50, where the failure is X-caused and `rho < 1.65` cures it
+(3.215e-04 -> 8.631e-05), `eta >= 0.30` selects ZERO entries.
+
+The rule is NECESSARY, NOT SUFFICIENT. At x1 cube safety 1.0 (protrusion
+0.527) no threshold passes -- even all-X-exact leaves 1.243e-03 -- so placement
+still has to control protrusion independently. Only ONE configuration passes at
+scale 3: cube at safety 2.0. Nothing is implemented yet; `domain="extent"` and
+`OCTREE_PLACEMENT_SAFETY = 1.0` remain the measured baseline, not a passing
+configuration.
+
+**The gate's own metric was penalising the fix, and is corrected.** The
+far-isolated error divides by `||A_far v||` of the CURRENT partition -- which
+is exactly what a change under test moves. Demoting 3 X entries at 260,598
+unknowns, 540 element pairs of 57 million, drops that denominator by 36 %, so a
+fix leaving the absolute error untouched reads as a 1.6x REGRESSION; and the
+x3 cube safety-2.0 "pass" and safety-2.75 "fail" have the SAME absolute error
+(2.9048e-05 against 2.8999e-05) on denominators differing by 49 %. Tuning
+against a denominator that moves when you touch the operator is how the
+threshold wandered. `_far_operator` now states that the denominator must come
+from one fixed partition, and the operator clause gates a SECOND limit,
+`FMM_OPERATOR_PARITY_NAIVE = 5e-5` over `||A v||` -- weaker, but a pure ratio
+of the operator to itself that no change to the near/far split can move.
+Neither alone is safe: the naive one is too loose, the isolated one lets a
+variant pass by shrinking its own far field.
+
+The most useful number the study produced: once X is handled, the absolute
+error over `||A v||` is **uniformly ~1e-5 at every scale and both domains**
+(8.4e-6 to 1.24e-5), against up to 5.8e-4 before. The operator is in better
+shape than the isolated metric has been reporting.
 
 With X exact so nothing else contaminates it, the cube's own extrapolation
 limit is protrusion 0.33-0.35 box edges (f_src 1.66-1.71), and the safety

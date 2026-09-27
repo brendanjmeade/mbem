@@ -385,6 +385,20 @@ FMM_PAIR_PARITY = 1e-4
 # / translation, against a naive 4.2e-6 / 4.9e-6 / 4.0e-6. The limit is the
 # worst of those with 2.5x margin.
 FMM_OPERATOR_PARITY = 2e-4
+# The same error over ||A v|| instead -- weaker, but a pure ratio of the
+# operator to itself, so unlike the isolated metric NO change to the near/far
+# split can move it. Both are gated, because neither alone is safe: the
+# isolated one states the accuracy that matters and the naive one stops a
+# variant passing by shrinking its own far field. Measured need: demoting 3 X
+# entries at 260,598 unknowns (540 element pairs of 57 M) drops ||A_far v|| by
+# 36 %, so a fix that leaves the absolute error untouched reads as a 1.6x
+# regression, and two configurations with the same absolute error (2.9048e-05
+# / 2.8999e-05) land either side of FMM_OPERATOR_PARITY on denominators that
+# differ by 49 %. Measured value: 4.2e-6 / 4.9e-6 / 4.0e-6 over the three test
+# vectors at the default orders on the gate's model, and ~1.0e-5 on
+# topo_inclusion at every scale and both domains once the X list is handled.
+# 5e-5 is that worst measurement with 5x margin.
+FMM_OPERATOR_PARITY_NAIVE = 5e-5
 # p = 4 -> p = 8 must gain at least this on a pair. Measured 5e4 (U) and 4e4
 # (T) on the two-panel pair; the floor is three orders under that, so it
 # fails only if p has stopped controlling the error at all.

@@ -86,6 +86,7 @@ MAT = mb.ElasticMaterial(mu=30.0, lam=45.0)
 EPS = "auto"                      # eps_j = 0.1 h_j; see defaults.FMM_EPS_TERMS
 PAIR_TOL = defaults.FMM_PAIR_PARITY
 OP_TOL = defaults.FMM_OPERATOR_PARITY
+NAIVE_TOL = defaults.FMM_OPERATOR_PARITY_NAIVE
 ORDER = {KERNEL_U: defaults.FMM_ORDER_U, KERNEL_T: defaults.FMM_ORDER_T}
 
 
@@ -429,9 +430,23 @@ def check_far_isolation() -> bool:
 
 def _far_operator(system, pairs, materials) -> np.ndarray:
     """The exact operator restricted to the element pairs the FMM does NOT
-    evaluate exactly, term by term -- the denominator of the isolated
-    metric. Its complement plus the collocation diagonal must reproduce
-    ``AssembledDense.A`` exactly, which is checked where it is used."""
+    evaluate exactly, term by term. Its complement plus the collocation
+    diagonal must reproduce ``AssembledDense.A`` exactly, which is checked
+    where it is used.
+
+    THE DENOMINATOR MUST COME FROM ONE FIXED PARTITION. It is tempting to
+    take each configuration's own near/far split, and that is wrong: the
+    split is what a change under test MOVES. Demoting three X entries at
+    260,598 unknowns -- 540 element pairs of 57 million -- drops
+    ``||A_far v||`` by 36 %, so a fix that leaves the absolute error alone
+    reads as a 1.6x REGRESSION, and two configurations with the same
+    absolute error (2.9048e-05 against 2.8999e-05) land either side of the
+    limit because their denominators differ by 49 %. Callers therefore
+    compute this ONCE, from the reference configuration, and reuse it for
+    every variant they compare. Tuning an FMM against a denominator that
+    moves when you touch the operator is how a threshold wandered
+    1.45 -> 1.90 -> 1.65 over three measurements of the same quantity.
+    """
     n = system.layout.n_unknowns
     A_far = np.zeros((n, n))
     A_near = np.zeros((n, n))
@@ -509,8 +524,15 @@ def check_operator() -> bool:
             iso = e / float(np.max(np.abs(ref_far @ v)))
             print(f"    {tag}  {name:12s}: naive {naive:.3e}  far-isolated "
                   f"{iso:.3e}  2-norm {e2:.3e}   ({time.time() - t0:.0f}s)")
-            if order is ORDER:
+            if order == ORDER:
+                # Two limits, because neither alone is safe. The isolated
+                # one is the meaningful accuracy statement but its
+                # denominator is a property of the PARTITION; the naive one
+                # is weaker but is a pure ratio of the operator to itself,
+                # so no change to the near/far split can move it. A variant
+                # that passes by shrinking its own far field fails here.
                 ok &= iso < OP_TOL
+                ok &= naive < NAIVE_TOL
     return ok
 
 

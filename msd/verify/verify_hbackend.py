@@ -603,7 +603,70 @@ def check_bj_rung():
     for name in ("HODLR", "block-Jacobi"):
         print(f"    iteration penalty {name} / dense LU: "
               f"{results[name] / exact:.1f}x")
-    return results["block-Jacobi"] <= 4.0 * exact
+    ok = results["block-Jacobi"] <= 4.0 * exact
+
+    # THE CHUNK KNOB IS LIVE. `bj_chunk` reads defaults in the BODY, not in
+    # the signature: a default bound at def time cannot be moved by
+    # rebinding `defaults`, so a sweep written that way measures the value
+    # compiled in and agrees with itself only at the default. That failure
+    # is silent, so it is pinned here -- halving the chunk must at least
+    # double the chunk count, both through the kwarg and through `defaults`.
+    def chunks_at(**kw):
+        s = BlockGaussSeidel(hasm, max_dense=1500, above_dense="block_jacobi",
+                             hodlr_max=0, grouping="patch", **kw).summary()
+        return s["bj_chunk"], sum(sb.get("chunks", 0) for sb in
+                                  s["super_blocks"]
+                                  if sb["rung"] == "block_jacobi")
+
+    wide, narrow = chunks_at(bj_chunk=1500), chunks_at(bj_chunk=750)
+    # Through solve(), on ONE assembled operator, because that is the path a
+    # sweep takes and it has its own way to fail: the ladder is cached, so a
+    # second solve asking for a different chunk must REBUILD rather than
+    # silently report the first arm. Deleting the kwarg's plumbing, or the
+    # rebuild, fails here and nowhere else.
+    swept = []
+    for ch in (1500, 750):
+        hasm.solve(precond_bj_chunk=ch, precond_max_dense=1500,
+                   precond_above_dense="block_jacobi", precond_hodlr_max=0)
+        s = hasm.report.precond_summary
+        swept.append((s["bj_chunk"],
+                      sum(sb.get("chunks", 0) for sb in s["super_blocks"]
+                          if sb["rung"] == "block_jacobi")))
+    hasm._precond = None                  # leave the operator as we found it
+    print(f"    chunk knob through solve(): {swept[0]} then {swept[1]}")
+    ok &= swept == [wide, narrow]
+    held = defaults.PRECOND_BJ_CHUNK_DOF
+    try:                                    # the same move through defaults
+        defaults.PRECOND_BJ_CHUNK_DOF = 750
+        rebound = chunks_at()
+    finally:
+        defaults.PRECOND_BJ_CHUNK_DOF = held
+    print(f"    chunk knob: 1500 -> {wide[1]} chunks, 750 -> {narrow[1]} "
+          f"(kwarg), {rebound[1]} (rebound defaults)")
+    ok &= narrow[1] >= 2 * wide[1] and rebound == narrow
+    ok &= (wide[0], narrow[0]) == (1500, 750)
+
+    # THE THREADED APPLY IS BITWISE. Its chunks own disjoint index sets, so
+    # there is no reduction to reassociate and nothing may move: threads are
+    # a scheduling change, not an arithmetic one. Gated with array_equal and
+    # not a tolerance -- a tolerance would accept a real reordering.
+    M = BlockGaussSeidel(hasm, max_dense=200, above_dense="block_jacobi",
+                         hodlr_max=0, bj_chunk=200, grouping="patch")
+    nch = sum(sb.get("chunks", 0) for sb in M.summary()["super_blocks"]
+              if sb["rung"] == "block_jacobi")
+    r = np.random.default_rng(11).standard_normal(hasm.layout.n_unknowns)
+    held = defaults.PRECOND_APPLY_THREADS
+    try:
+        defaults.PRECOND_APPLY_THREADS = 1
+        serial = M(r)
+        defaults.PRECOND_APPLY_THREADS = max(2, held)
+        threaded = M(r)
+    finally:
+        defaults.PRECOND_APPLY_THREADS = held
+    same = np.array_equal(serial, threaded)
+    print(f"    threaded apply over {nch} chunks on "
+          f"{max(2, held)} threads, bitwise vs serial: {same}")
+    return ok and same
 
 
 def _flat_view_parity(hasm, label, with_dense: bool):

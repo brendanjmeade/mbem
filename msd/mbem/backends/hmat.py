@@ -182,8 +182,13 @@ class AssembledH:
         self._refresh_material_state()
         self._precond = None
         # The materials the preconditioner was BUILT at -- what
-        # rebuild_for_materials measures a reuse step against.
+        # rebuild_for_materials measures a reuse step against -- and the
+        # ladder caps it was built at, so a later solve asking for
+        # different ones REBUILDS. Without that a sweep over one assembled
+        # operator silently measures its first arm at every later point,
+        # and agrees with itself wherever the caps happen to coincide.
         self._precond_materials: dict | None = None
+        self._precond_caps: tuple | None = None
         self._lineage = _Lineage() if _lineage is None else _lineage
 
     def _pair_combos(self) -> dict:
@@ -396,6 +401,7 @@ class AssembledH:
               precond_max_dense: int | None = None,
               precond_above_dense: str = defaults.PRECOND_RUNG_ABOVE_DENSE,
               precond_hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
+              precond_bj_chunk: int | None = None,
               recycle: bool | None = None):
         """Preconditioned FGMRES; returns {slot_name: (N_patch, 3) array}
         and leaves ``self.report`` (the ``SolveReport``).
@@ -409,7 +415,11 @@ class AssembledH:
         dense-LU cap, which is otherwise the machine's own
         (``la.preconditioner.dense_rung_max_dof``), and
         ``precond_above_dense`` names the rung past it ("block_jacobi" or
-        "hodlr"; ``defaults.PRECOND_RUNG_ABOVE_DENSE``).
+        "hodlr"; ``defaults.PRECOND_RUNG_ABOVE_DENSE``), and
+        ``precond_bj_chunk`` that rung's chunk size
+        (``defaults.PRECOND_BJ_CHUNK_DOF``) -- the term that sets the
+        preconditioner's memory, O(N x chunk), and trades against its
+        iteration count.
 
         Two sequence options, for the material sweeps (the solves this
         assembly's ``rebuild_for_materials`` chain produces):
@@ -442,12 +452,18 @@ class AssembledH:
             rs = lineage.recycle
             lineage.recycle_materials = dict(self.materials)
 
+        caps = (precond_max_dense, precond_above_dense, precond_hodlr_max,
+                precond_bj_chunk)
+        if self._precond is not None and self._precond_caps != caps:
+            self._precond = None          # asked for a different ladder
         if self._precond is None:
             self._precond = BlockGaussSeidel(self, max_dense=precond_max_dense,
                                              above_dense=precond_above_dense,
                                              hodlr_max=precond_hodlr_max,
+                                             bj_chunk=precond_bj_chunk,
                                              verbose=self.verbose)
             self._precond_materials = dict(self.materials)
+            self._precond_caps = caps
         if self.deflate:
             from .dense import translation_basis
             Z = translation_basis(self.layout)
@@ -513,6 +529,8 @@ class AssembledH:
                 <= defaults.PRECOND_REUSE_MAX_STEP:
             new._precond = self._precond
             new._precond_materials = self._precond_materials
+            new._precond_caps = self._precond_caps   # or the next solve
+            #                                          rebuilds what it kept
         return new
 
     # -- stats -------------------------------------------------------

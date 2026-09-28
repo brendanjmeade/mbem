@@ -837,6 +837,81 @@ assumes `GMRES_RESTART = 200` while the chunk-1000 projection is 125-206
 iterations, so the pessimistic end restarts and raising the restart to 300 costs
 ~6 GiB of the 19.1 GiB of headroom.
 
+**The block-Jacobi APPLY is threaded, and the knob that sets its chunk now
+works.** Two separate defects, both silent.
+
+The knob: `bj_chunk` was bound from `defaults` in the SIGNATURE, so rebinding
+`defaults.PRECOND_BJ_CHUNK_DOF` at runtime was inert -- demonstrated directly, a
+def-time binding still returns 9000 after the module attribute is set to 750 --
+and `AssembledH.solve` had no chunk kwarg at all. Both fixed by the idiom the
+same constructor already used for `max_dense`: `None` in the signature, resolved
+in the body. `check_bj_rung` now pins that the knob is LIVE through both routes
+(1500 -> 4 chunks, 750 -> 8 by kwarg and 8 by rebinding), which fails if it ever
+silently stops working. The default stays 9000: chunk 1000 is the 4M setting and
+is strictly worse at today's sizes (69 iterations and 29.2 s against 42 and
+20.6 s at 260,598).
+
+The apply: a serial Python loop over thousands of independent `lu_solve` calls
+into DISJOINT index sets. `scipy`'s `lu_solve` releases the GIL -- measured
+against a GIL-bound control through the same harness, which stayed at 1.02-1.10x
+where the real call reached 7.2x -- so the loop threads on a process-wide pool
+with a static contiguous partition, bitwise identical to serial and gated with
+`np.array_equal`.
+
+Three things the adversarial pass corrected, each of which would have gone into
+the record wrong:
+
+* **scipy's LAPACK here is Apple ACCELERATE, not the OpenBLAS numpy links.**
+  `OPENBLAS_NUM_THREADS` and `threadpoolctl` do not govern the timed call at all,
+  so the "pinned vs unpinned identical" experiment compared two identical
+  configurations. The conclusion survives by the correct route -- with one
+  right-hand side `lu_solve` is a level-2 solve measuring cpu/wall = 1.00 pinned
+  or free, so there is nothing to oversubscribe -- but the reason is a property
+  of the operation, not of thread policy. Note `lu_factor`, the BUILD, *is*
+  threaded by Accelerate (cpu/wall 2.44), which is why only the apply was serial.
+* **The thread count was chosen at a chunk size the cluster tree never
+  produces.** An early sweep used m ~ 700 and found a knee at 10 with 16 threads
+  unstable; the tree's median bisection actually yields ~976 DOF leaves at the 4M
+  target, where 12 threads give 7.3-7.4x and 16 give 7.4-7.5x with no regression.
+  `PRECOND_APPLY_THREADS = 12`, the performance-core count.
+* **The microbenchmark timed bare `lu_solve`, not the apply's shape.** The real
+  `solve_fn` does `z_inter[dof] = lu_solve(lu, r_inter[dof])`, two fancy-index
+  gathers per chunk that HOLD the GIL: 5.7x rather than 7.1x at 12 threads.
+
+And the honest headline, which is smaller than the loop's own speed-up: the
+`lu_solve` loop is only 65 % of the apply. The other 35 % is the Gauss-Seidel
+off-diagonal matvec, already numba `parallel=True`. Measured on the REAL apply,
+topo_inclusion at chunk 1000, whole `M(r)`, bitwise identical at every count:
+
+    scale  unknowns  chunks   serial    x4     x8    x12    x16
+      2     117,120     189   53.4 ms  1.74  2.01   1.96   1.96
+      3     260,598     396  114.7 ms  1.89  2.27   2.22   2.09
+
+**2.0-2.3x on the apply, not the 7x the loop gets**, knee at 8 threads on both
+scales and a regression by 16 on both. That is Amdahl on the 65/35 split -- and
+the agreement between the predicted 2.2x and the measured 2.01/2.27x is an
+independent confirmation of the split itself. `PRECOND_APPLY_THREADS = 8`: the
+synthetic sweep over bare `lu_solve` said 10-12, and it was measuring the wrong
+thing at the wrong size. The preconditioner goes from ~16 % of a 12 s far-field
+matvec to ~7 %; against a 1 s matvec it is still most of the cost, and the next
+target there is that off-diagonal matvec, not the loop.
+
+**Two more silent knobs of the same shape, both fixed.** `AssembledH` cached
+`_precond` and rebuilt it only when it was `None`, so a chunk sweep over ONE
+assembled operator measured its first arm at every later point -- and agreed
+with itself wherever the caps happened to coincide, which is how it survived.
+The ladder caps are now part of the cache key. And the first version of the
+gate exercised `BlockGaussSeidel` directly, so it would have stayed green if the
+`solve()` plumbing were deleted; it now sweeps the chunk through `solve()` on one
+operator, which fails if either the kwarg or the rebuild goes away.
+
+Batching was measured and REJECTED: a hand-stacked batched `getrs` is 3.4x
+slower than the loop and not bitwise (2.3e-15), and `np.linalg.solve` over a
+stacked array is 20x slower because it refactorizes. Bucketing is not the
+obstacle -- the tree produces only 9 distinct chunk sizes over 396 chunks -- a
+single-RHS triangular solve is simply bandwidth-bound and the loop already
+streams the factors once, contiguously.
+
 **A landmine in any chunk sweep**: `bj_chunk` is not a kwarg of
 `AssembledH.solve`, and `BlockGaussSeidel.__init__` binds
 `defaults.PRECOND_BJ_CHUNK_DOF` at def time, so rebinding the default after

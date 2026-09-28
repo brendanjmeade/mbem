@@ -612,6 +612,32 @@ PRECOND_HODLR_MAX_DOF = 150_000
 # follow) because the two bound different things -- memory per DOF against
 # memory per block -- and the measurement moved them an order apart.
 PRECOND_BJ_CHUNK_DOF = 9000
+# Threads the block-Jacobi APPLY runs its lu_solve calls on. The chunks own
+# disjoint index sets, so this is a scatter with no reduction and the result
+# is bitwise identical to the serial loop (`verify_hbackend.check_bj_rung`).
+# It matters because the apply is a per-ITERATION cost: at the 4M target the
+# only chunk that fits in memory is 1000, and the serial apply projects to
+# ~1.9 s against a far-field matvec of a few seconds.
+# scipy's LAPACK here is Apple ACCELERATE, not the OpenBLAS numpy links, so
+# OPENBLAS_NUM_THREADS does not govern it; with one right-hand side lu_solve
+# is a level-2 solve that measures cpu/wall = 1.00 either way, so there is
+# nothing to oversubscribe and nothing to pin. Several right-hand sides would
+# make it level 3 and that stops being true.
+# 8, from the REAL apply and not from a synthetic sweep over bare lu_solve --
+# which said 10-12, at a chunk size the cluster tree does not produce.
+# Measured on topo_inclusion at chunk 1000, whole M(r), bitwise identical to
+# serial at every count: scale 2 (117,120 unknowns, 189 chunks) 53.4 ms ->
+# 1.74 / 2.01 / 1.96 / 1.96x at 4 / 8 / 12 / 16 threads; scale 3 (260,598,
+# 396 chunks) 114.7 ms -> 1.89 / 2.27 / 2.22 / 2.09x. Both knee at 8 and both
+# REGRESS by 16.
+# The apply gains ~2.2x where the loop alone gains ~7x because the loop is
+# only ~65 % of it: the rest is the Gauss-Seidel off-diagonal matvec, already
+# numba parallel=True. That is Amdahl, not a threading defect, and it is why
+# more threads buy nothing here.
+PRECOND_APPLY_THREADS = 8
+# Below this many chunks a super-block applies serially: the dispatch is not
+# free and a 4-chunk block measured 1.1-2.3x with visible jitter.
+PRECOND_APPLY_MIN_CHUNKS = 8
 
 # --- HODLR ladder rung ------------------------------------------------
 # Loose tolerance of the rung's approximate inverse. It cannot move the

@@ -58,6 +58,7 @@ memory, not time, is what binds.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.linalg import lu_factor, lu_solve
@@ -320,7 +321,7 @@ class BlockGaussSeidel:
                  max_dense: int | None = None,
                  hodlr_tol: float = defaults.HODLR_PRECOND_TOL,
                  hodlr_max: int = defaults.PRECOND_HODLR_MAX_DOF,
-                 bj_chunk: int = defaults.PRECOND_BJ_CHUNK_DOF,
+                 bj_chunk: int | None = None,
                  grouping: str = defaults.PRECOND_GROUPING,
                  above_dense: str = defaults.PRECOND_RUNG_ABOVE_DENSE,
                  verbose: bool = False):
@@ -328,6 +329,13 @@ class BlockGaussSeidel:
         # rung boundary (what the gates do to exercise a lower rung).
         if max_dense is None:
             max_dense = dense_rung_max_dof()
+        # Read in the BODY, not in the signature. A default bound at def
+        # time cannot be moved by rebinding `defaults`, so a sweep written
+        # that way reports the chunk it set and measures the chunk that was
+        # compiled in -- and is invisible at the default, where the two
+        # agree. `check_precond_rungs` pins that the knob is live.
+        if bj_chunk is None:
+            bj_chunk = defaults.PRECOND_BJ_CHUNK_DOF
         if above_dense not in ("block_jacobi", "hodlr"):
             raise ValueError(
                 f"unknown rung above the dense cap {above_dense!r} "
@@ -434,8 +442,7 @@ class BlockGaussSeidel:
                 def solve_fn(r, lus=lus, perm=perm):
                     r_inter = r[perm]
                     z_inter = np.empty_like(r_inter)
-                    for dof, lu in lus:
-                        z_inter[dof] = lu_solve(lu, r_inter[dof])
+                    _bj_solve(lus, r_inter, z_inter)
                     z = np.empty_like(z_inter)
                     z[perm] = z_inter
                     return z
@@ -500,6 +507,63 @@ class BlockGaussSeidel:
                 rk[r0:r0 + term.row.size] -= contrib
             z[sb.global_idx] = sb.solve_fn(rk)
         return z
+
+
+_APPLY_POOL = None
+
+
+def _apply_pool():
+    """The process-wide pool the block-Jacobi apply runs on, or None.
+
+    Built once and reused: a solve applies the preconditioner 100-200 times
+    over several super-blocks, so a pool per apply would pay thread creation
+    a thousand times over. ``defaults.PRECOND_APPLY_THREADS`` is read HERE
+    rather than captured, so the count is a live knob.
+
+    What runs on it is ONLY ``scipy.linalg.lu_solve``, never a numba
+    ``parallel=True`` kernel (CLAUDE.md rule 8, the macOS workqueue crash);
+    and every apply joins the pool before returning, so the Gauss-Seidel
+    off-diagonal matvecs that follow are back on the main thread.
+    """
+    global _APPLY_POOL
+    n = int(defaults.PRECOND_APPLY_THREADS)
+    if n <= 1:
+        return None
+    if _APPLY_POOL is None or _APPLY_POOL._max_workers != n:
+        if _APPLY_POOL is not None:
+            _APPLY_POOL.shutdown(wait=True)
+        _APPLY_POOL = ThreadPoolExecutor(max_workers=n,
+                                         thread_name_prefix="bj-apply")
+    return _APPLY_POOL
+
+
+def _bj_solve(lus, r_inter, z_inter) -> None:
+    """``z_inter[dof] = lu_solve(lu, r_inter[dof])`` over every chunk.
+
+    The chunks own DISJOINT index sets, so this is a scatter with no
+    reduction and threading it is bitwise identical to the loop -- which
+    is what ``check_bj_rung`` pins, and why the partition is STATIC and
+    CONTIGUOUS: each worker runs its own chunks in the serial order.
+    ``scipy``'s ``lu_solve`` releases the GIL (measured against a
+    GIL-bound control through the same harness), and with one right-hand
+    side it is a level-2 solve that LAPACK never threads itself, so there
+    is nothing to oversubscribe. Several right-hand sides would make it
+    level 3 and that would stop being true.
+    """
+    pool = _apply_pool() if len(lus) >= defaults.PRECOND_APPLY_MIN_CHUNKS \
+        else None
+    if pool is None:
+        for dof, lu in lus:
+            z_inter[dof] = lu_solve(lu, r_inter[dof])
+        return
+
+    def run(rng):
+        for dof, lu in lus[rng[0]:rng[1]]:
+            z_inter[dof] = lu_solve(lu, r_inter[dof])
+
+    w = min(pool._max_workers, len(lus))
+    cut = [len(lus) * i // w for i in range(w + 1)]
+    list(pool.map(run, list(zip(cut[:-1], cut[1:]))))   # joins before return
 
 
 def _permuted_lu_solve(lu, r_concat, perm):

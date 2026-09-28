@@ -127,7 +127,7 @@ class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
                  jump: str = "calibrated", deflate: bool = False,
                  storage: str = "combined", sweep: bool = False,
-                 _shared=None, _lineage=None):
+                 _shared=None, _groups=None, _lineage=None):
         from .dense import (require_anchor_or_deflate,
                             warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
@@ -147,6 +147,11 @@ class AssembledH:
         self.sweep = sweep
         self.report = None
         self.materials = {r.name: r.material for r in system.model.regions}
+        # An FMM far field grouped by (region, kernel): one traversal for
+        # every term of a group instead of one per pair. It REPLACES the
+        # per-term pair.matvec below; the collocation diagonals are added
+        # exactly as they were, from the unscaled segment.
+        self._groups = _groups
 
         if _shared is None:
             self._pairs: dict = {}
@@ -305,12 +310,15 @@ class AssembledH:
 
     def matvec(self, x: np.ndarray) -> np.ndarray:
         y = np.zeros_like(x)
+        if self._groups is not None:
+            self._groups.matvec(x, y)
         for term in self.system.terms:
-            pair = self.pair_for(term)
-            mat = self.materials[term.region.name]
             seg = x[term.col.offset:term.col.stop]
-            y[term.row.offset:term.row.stop] += \
-                term.scale * pair.matvec(kernel_coeffs(term.kernel, mat), seg)
+            if self._groups is None:
+                pair = self.pair_for(term)
+                mat = self.materials[term.region.name]
+                y[term.row.offset:term.row.stop] += term.scale * pair.matvec(
+                    kernel_coeffs(term.kernel, mat), seg)
             D = term_diagonal(term, self.calib)
             if D is not None:
                 y[term.row.offset:term.row.stop] += diagonal_matvec(D, seg)

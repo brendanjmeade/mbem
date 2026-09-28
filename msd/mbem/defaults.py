@@ -436,6 +436,14 @@ FMM_NEAR_CACHE_MAX = 4
 # four to six orders under it, because that geometry is far better separated
 # than the canonical worst offset the orders were chosen at.
 FMM_PAIR_PARITY = 1e-4
+# One M2L evaluator against another (verify_fmm), relative. A variant such as
+# PairFMM(m2l="numba") is the SAME arithmetic in a different summation order,
+# so it is gated against the reference evaluator and never against the exact
+# kernel: at FMM_PAIR_PARITY a variant could regress by four orders and still
+# pass. Measured on the point kernels at three Poisson ratios, both kernels,
+# k = 1 and 3: 7.8e-15 worst; through a whole pair traversal it is the pair's
+# own accumulation on top of that.
+FMM_M2L_VARIANT_PARITY = 1e-12
 # The end-to-end operator error, as the FAR-ISOLATED metric (the error over
 # the exact far field alone, not over the whole operator -- the near field is
 # exact, so a naive relative error understates by the fraction of A v the far

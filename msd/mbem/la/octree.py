@@ -236,6 +236,35 @@ class Octree:
         L, q = self.boxes[bi]
         return self.resident[L][q]
 
+    def coords(self, bi: int) -> tuple:
+        """``(level, i, j, k)`` -- the box's integer position on its grid.
+
+        A shared M2L table is keyed on these and never on float geometry:
+        per-box lattices differ from an exact translate in the last bits
+        (measured 1e-16 of an edge), so a float key would miss and two
+        pairs that must share a table would build two.
+        """
+        L, q = self.boxes[bi]
+        i, j, k = _unkey(q)
+        return L, i, j, k
+
+    def transfer_offset(self, a: int, b: int) -> tuple:
+        """Integer offset of box ``b`` from box ``a``, both on one level.
+
+        V entries are same-level by construction and their parents adjacent,
+        so every component lies in [-3, 3] and at least one has |d| >= 2:
+        7^3 - 3^3 = 316 offsets whatever the mesh or the depth. That is the
+        whole M2L table count, because the LEVEL folds out -- each far pass
+        is homogeneous, so one level's table is another's times a power of
+        two (``fmm_table``; the degree is the kernel's, not the radial
+        power, for T).
+        """
+        la, ai, aj, ak = self.coords(a)
+        lb, bi_, bj, bk = self.coords(b)
+        if la != lb:
+            raise ValueError("a transfer offset needs two same-level boxes")
+        return bi_ - ai, bj - aj, bk - ak
+
     def cube(self, bi: int) -> tuple:
         """``(lo, hi)`` of the box's NOMINAL cube -- what M2L is stated on."""
         L, q = self.boxes[bi]

@@ -155,7 +155,7 @@ from collections import OrderedDict
 import numpy as np
 
 from .. import defaults
-from ..kernels import KERNEL_T, KERNEL_U, kernel_n_basis
+from ..kernels import KERNEL_T, KERNEL_U, kernel_coeffs, kernel_n_basis
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
 from .octree import InteractionLists, Octree, XMargin
@@ -621,6 +621,17 @@ class PairFMM:
     per-region material through ``kernel_coeffs``, the collocation diagonal
     -- is untouched. ``storage="basis"``, because the "combined" path warms
     views this class does not have.
+
+    EITHER ROLE MAY BE SEVERAL MESHES. ``field_mesh`` and ``source_mesh``
+    take a sequence as readily as one mesh, with ``eps_arr`` and ``scales``
+    aligned with the sources; the DOF layout is then the concatenation of
+    the meshes in the order given, so a caller gathers and scatters by slot.
+    ONE traversal then serves every pair of the two sets, which is what
+    :class:`FarGroups` is for: a per-pair traversal repeats the upward pass
+    once per field mesh sharing a source mesh, and leaves the M2L with a
+    batch of ~1.6 V entries per transfer offset. ``scales`` folds the term's
+    sigma into the source charge, which is exact only where the coupling is
+    complete -- FarGroups checks that rather than assuming it.
     """
 
     def __init__(self, field_mesh, source_mesh, kernel: str, eps_arr,
@@ -629,30 +640,85 @@ class PairFMM:
                  ncrit: int = defaults.OCTREE_NCRIT,
                  domain: str = "extent", inflate=1.0,
                  x_margin: float = defaults.FMM_X_MARGIN,
+                 m2l: str = "evaluated", scales=None,
                  arrays: kb.MeshArrays | None = None):
         self.kernel = kernel
         self.n_basis = kernel_n_basis(kernel)          # raises on a bad tag
         if eps_terms not in (1, 2):
             raise ValueError("eps_terms is 1 (K0) or 2 (K0 + eps^2 K1)")
         self.eps_terms = int(eps_terms)
+        # The far kernel's evaluator. "evaluated" is the reference every
+        # other value is gated against; it stays the default so a gate that
+        # names none compares against the reference by construction.
+        if m2l not in ("evaluated", "numba"):
+            raise ValueError('m2l is "evaluated" or "numba"')
+        self.m2l = m2l
+        if m2l == "numba":
+            from . import fmm_numba
+            self._apply = fmm_numba.far_apply
+        else:
+            self._apply = _far_apply
         self.p = int(p) if p is not None else _order_for(kernel)
-        self.n_field = field_mesh.n_triangles
-        self.n_source = source_mesh.n_triangles
+        # A sequence in either role is several meshes; eps and scales are then
+        # one per SOURCE mesh. Keyed off the argument's own type and not off
+        # eps_arr's, because a per-element eps for one mesh is itself a
+        # sequence and must not be read as one spec per mesh.
+        multi = isinstance(source_mesh, (list, tuple))
+        fields = list(field_mesh) if isinstance(field_mesh, (list, tuple)) \
+            else [field_mesh]
+        sources = list(source_mesh) if multi else [source_mesh]
+        eps_specs = list(eps_arr) if multi else [eps_arr]
+        if len(eps_specs) != len(sources):
+            raise ValueError("one eps spec per source mesh")
+        if scales is None:
+            scales = [1.0] * len(sources)
+        if len(scales) != len(sources):
+            raise ValueError("one scale per source mesh")
+        self.n_field = sum(m.n_triangles for m in fields)
+        self.n_source = sum(m.n_triangles for m in sources)
         self.shape = (3 * self.n_field, 3 * self.n_source)
-        self.eps = kb.as_eps_array(eps_arr, self.n_source)
+        self.eps = np.concatenate(
+            [kb.as_eps_array(e, m.n_triangles)
+             for e, m in zip(eps_specs, sources)]) if sources else \
+            np.empty(0)
+        # The term's sigma folded into the SOURCE, which is what lets one
+        # traversal serve a whole region: generate_system couples a region's
+        # patches completely and its scale is sigma(R, p), a function of the
+        # source patch alone.
+        self.scale = np.concatenate(
+            [np.full(m.n_triangles, float(s))
+             for s, m in zip(scales, sources)]) if sources else np.empty(0)
         arrays = arrays if arrays is not None else kb.MeshArrays()
         self.geom = geom if geom is not None else FmmTree(
-            [field_mesh, source_mesh], ncrit=ncrit, domain=domain,
+            fields + sources, ncrit=ncrit, domain=domain,
             inflate=inflate, x_margin=x_margin, arrays=arrays)
         self.st = self.geom.stencil(self.p)
 
-        f0, f1 = self.geom.range_of(field_mesh)
-        s0, s1 = self.geom.range_of(source_mesh)
-        self._f0, self._s0 = f0, s0
-        self.x_field = arrays.field_points(field_mesh)
-        self.tri_verts, self.normals = arrays.source_arrays(source_mesh)
-
+        # Local DOF order is the concatenation of the meshes as given, so a
+        # caller gathers and scatters by slot in that order. The traversal
+        # itself needs the TREE's global index, which these two maps carry.
         tree = self.geom.tree
+        n_elem = int(tree.n)
+        g2l_f = np.full(n_elem, -1, dtype=np.int64)
+        g2l_s = np.full(n_elem, -1, dtype=np.int64)
+        self._fld_g = np.empty(self.n_field, dtype=np.int64)
+        self._src_g = np.empty(self.n_source, dtype=np.int64)
+        for meshes, g2l, glob in ((fields, g2l_f, self._fld_g),
+                                  (sources, g2l_s, self._src_g)):
+            off = 0
+            for m in meshes:
+                a, b = self.geom.range_of(m)
+                loc = np.arange(off, off + (b - a), dtype=np.int64)
+                g2l[a:b] = loc
+                glob[loc] = np.arange(a, b, dtype=np.int64)
+                off += b - a
+        self._scaled = bool(np.any(self.scale != 1.0))
+        self.x_field = np.concatenate(
+            [arrays.field_points(m) for m in fields])
+        tv_nm = [arrays.source_arrays(m) for m in sources]
+        self.tri_verts = np.concatenate([t for t, _n in tv_nm])
+        self.normals = np.concatenate([n for _t, n in tv_nm])
+
         nb = len(tree.boxes)
         empty = np.empty(0, dtype=np.int64)
         self._tgt_res = [empty] * nb
@@ -663,8 +729,10 @@ class PairFMM:
             held = tree.elements_of(bi)
             if not held.size:
                 continue
-            self._tgt_res[bi] = np.sort(held[(held >= f0) & (held < f1)]) - f0
-            self._src_res[bi] = np.sort(held[(held >= s0) & (held < s1)]) - s0
+            lf = g2l_f[held]
+            ls = g2l_s[held]
+            self._tgt_res[bi] = np.sort(lf[lf >= 0])
+            self._src_res[bi] = np.sort(ls[ls >= 0])
             tgt_sub[bi] = self._tgt_res[bi].size > 0
             src_sub[bi] = self._src_res[bi].size > 0
         for bi in range(nb - 1, -1, -1):             # boxes are level-ordered
@@ -823,7 +891,7 @@ class PairFMM:
             acc = np.zeros((p3, nc, kk))
             cols = self._src_res[bi]
             if cols.size:
-                w = self.st.p2m[cols + self._s0]                # (ns, p^3)
+                w = self.st.p2m[self._src_g[cols]]              # (ns, p^3)
                 acc += np.tensordot(w.T, charge[cols], axes=([1], [0]))
             for ch in tree.children[bi]:
                 if M[ch] is None:
@@ -861,7 +929,7 @@ class PairFMM:
                 chunk = bs[i0:i0 + step]
                 ys = np.concatenate([self.st.src_m2l_nodes[b] for b in chunk])
                 qs = self._split(np.concatenate([Mc[b] for b in chunk]), k)
-                val = _far_apply(self.kernel, xt, ys, qs, params)
+                val = self._apply(self.kernel, xt, ys, qs, params)
                 Lc[a] = val if Lc[a] is None else Lc[a] + val
         if Lc is not Lx:
             for a, val in enumerate(self._canonical(Lc, "e2c_tgt")):
@@ -894,6 +962,8 @@ class PairFMM:
         X = np.asarray(x, dtype=float)
         vector = X.ndim == 1
         X = X.reshape(self.shape[1], -1)
+        if self._scaled:                 # sigma, once, for near and far alike
+            X = X * np.repeat(self.scale, 3)[:, None]
         k = X.shape[1]
         y = np.zeros((self.n_field, 3, k))
 
@@ -905,14 +975,14 @@ class PairFMM:
         for a, rows, bs, _n in self._m2p:
             ys = np.concatenate([self.st.src_nodes[b] for b in bs])
             qs = self._split(np.concatenate([M[b] for b in bs]), k)
-            y[rows] += _far_apply(self.kernel, self.x_field[rows], ys, qs,
-                                  params)
+            y[rows] += self._apply(self.kernel, self.x_field[rows], ys, qs,
+                                   params)
 
         for bi, val in enumerate(self._downward(M, params, c, X, k)):
             rows = self._tgt_res[bi]
             if val is None or not rows.size:
                 continue
-            y[rows] += np.tensordot(self.st.l2p[rows + self._f0], val,
+            y[rows] += np.tensordot(self.st.l2p[self._fld_g[rows]], val,
                                     axes=([1], [0]))
 
         y = y.reshape(self.shape[0], k)
@@ -939,6 +1009,82 @@ class PairFMM:
         return (f"PairFMM {self.shape} [{self.kernel}] p={self.p} "
                 f"terms={self.eps_terms}: U {c['U']} V {c['V']} W {c['W']} "
                 f"X {c['X']} entries, max|xhat| {self.st.max_xhat:.3f}")
+
+
+class FarGroups:
+    """The whole operator's FMM, as one traversal per (region, kernel).
+
+    WHY THE GROUPING IS EXACTLY THIS. ``generate_system`` couples a region's
+    patches COMPLETELY -- ``for q in region.patches: for p in
+    region.patches`` -- and the term's scale is ``sigma(R, p)``, a function
+    of the SOURCE patch alone, while the material is the region's. So every
+    term of one (region, kernel) shares one kernel, one coefficient vector
+    and one tree, and the sigma folds into the source charge: one traversal
+    computes all of them. The construction REFUSES a group that is not
+    complete, because folding the scale into the source would then send a
+    source to a field patch it does not couple to.
+
+    WHAT IT BUYS. A per-pair traversal repeats the upward pass once per
+    field mesh paired with the same source mesh, and leaves the M2L with a
+    batch of 1.6 V entries per transfer offset -- the width at which a
+    shared table is worth nothing (``fmm_numba``'s matrix-free kernel beats
+    a table below m ~ 8). Grouping removes the repeats and is what makes the
+    M2L key-major.
+
+    ``matvec`` accumulates every term's contribution into ``y``; the
+    collocation diagonals stay with the caller, which is where they were.
+    """
+
+    def __init__(self, system, materials, geom, order: dict, eps,
+                 arrays: kb.MeshArrays | None = None, **kw):
+        arrays = arrays if arrays is not None else kb.MeshArrays()
+        self.materials = materials
+        by_key: dict = {}
+        for t in system.terms:
+            by_key.setdefault((t.region.name, t.kernel), []).append(t)
+        self.groups = []
+        for (rname, kernel), terms in sorted(by_key.items()):
+            fps: dict = {}
+            sps: dict = {}
+            for t in terms:
+                fps.setdefault(id(t.field_patch), (t.field_patch, t.row))
+                sps.setdefault(id(t.source_patch),
+                               (t.source_patch, t.col, t.scale))
+            if len(terms) != len(fps) * len(sps):
+                raise ValueError(
+                    f"({rname}, {kernel}) couples {len(terms)} of "
+                    f"{len(fps) * len(sps)} patch pairs: a group whose "
+                    "coupling is incomplete cannot fold sigma into the source")
+            for t in terms:                      # one sigma per source patch
+                if t.scale != sps[id(t.source_patch)][2]:
+                    raise ValueError(
+                        f"({rname}, {kernel}) gives source patch "
+                        f"{t.source_patch.name} two scales")
+            srcs = [sp for sp, _c, _s in sps.values()]
+            pair = PairFMM([fp.mesh for fp, _r in fps.values()],
+                           [sp.mesh for sp in srcs], kernel,
+                           [kb.resolve_patch_eps(eps, sp) for sp in srcs],
+                           p=order[kernel], geom=geom, arrays=arrays,
+                           scales=[s for _sp, _c, s in sps.values()], **kw)
+            self.groups.append((
+                rname, kernel, pair,
+                [(r.offset, r.stop) for _f, r in fps.values()],
+                [(c.offset, c.stop) for _sp, c, _s in sps.values()]))
+
+    def matvec(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Accumulate every term's ``scale * A_term @ x[col]`` into ``y``."""
+        for rname, kernel, pair, rows, cols in self.groups:
+            c = np.asarray(kernel_coeffs(kernel, self.materials[rname]))
+            yg = pair.matvec(c, np.concatenate([x[a:b] for a, b in cols]))
+            off = 0
+            for a, b in rows:
+                y[a:b] += yg[off:off + (b - a)]
+                off += b - a
+        return y
+
+    def summary(self) -> str:
+        return "; ".join(f"{r}/{k}: {p.shape}" for r, k, p, _w, _c
+                         in self.groups)
 
 
 def _dof_rows(X: np.ndarray, cols: np.ndarray) -> np.ndarray:

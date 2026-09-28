@@ -71,7 +71,7 @@ from mbem.backends.hmat import AssembledH                         # noqa: E402
 from mbem.kernels import (KERNEL_T, KERNEL_U, kernel_coeffs)      # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
-from mbem.la.fmm import (FmmTree, PairFMM, _cheb_nodes,           # noqa: E402
+from mbem.la.fmm import (FarGroups, FmmTree, PairFMM, _cheb_nodes,  # noqa: E402
                          _far_apply, _far_params)
 from mbem.model import generate_system                            # noqa: E402
 from mbem.model.equations import (add_block_diagonal,            # noqa: E402
@@ -85,6 +85,7 @@ from verify_hbackend import _build_zone_model                     # noqa: E402
 MAT = mb.ElasticMaterial(mu=30.0, lam=45.0)
 EPS = "auto"                      # eps_j = 0.1 h_j; see defaults.FMM_EPS_TERMS
 PAIR_TOL = defaults.FMM_PAIR_PARITY
+VARIANT_TOL = defaults.FMM_M2L_VARIANT_PARITY
 OP_TOL = defaults.FMM_OPERATOR_PARITY
 NAIVE_TOL = defaults.FMM_OPERATOR_PARITY_NAIVE
 ORDER = {KERNEL_U: defaults.FMM_ORDER_U, KERNEL_T: defaults.FMM_ORDER_T}
@@ -346,6 +347,18 @@ def check_pair() -> bool:
         print(f"    [{kernel}] U list covers {frac:.1f} % of element "
               f"pairs -- nothing exact is mixed in")
         ok &= max(e2, emax, f2, fmax) < PAIR_TOL
+        # Every other M2L evaluator is gated HERE, against the reference one
+        # and not against the exact kernel: the same arithmetic in a different
+        # summation order, so the limit is roundoff. Against PAIR_TOL a
+        # variant could regress by four orders and still pass.
+        t0 = time.time()
+        var = PairFMM(field, source, kernel, eps, p=ORDER[kernel],
+                      m2l="numba")
+        xv = rng.standard_normal(pair.shape[1])
+        v2, vmax = _errs(var.matvec(c, xv), pair.matvec(c, xv))
+        print(f"    [{kernel}] m2l=numba vs the reference evaluator: 2-norm "
+              f"{v2:.3e}  max-entry {vmax:.3e}   ({time.time() - t0:.1f}s)")
+        ok &= max(v2, vmax) < VARIANT_TOL
     t0 = time.time()
     pair = PairFMM(field, source, KERNEL_U, eps, p=ORDER[KERNEL_U])
     c = np.asarray(kernel_coeffs(KERNEL_U, MAT))
@@ -432,6 +445,17 @@ def check_far_isolation() -> bool:
                   f"naive {naive:.3e}   far-isolated {iso:.3e}   "
                   f"(x{iso / naive:.1f})")
             ok &= iso < PAIR_TOL
+        # The M2L variant again, on the list this pair is chosen FOR: the
+        # far evaluator serves M2P as well as M2L, and clause [b]'s panels
+        # have no W or X, so that call site is gated only here.
+        var = PairFMM(fp.mesh, sp.mesh, kernel,
+                      kb.resolve_patch_eps(EPS, sp), p=ORDER[kernel],
+                      geom=pair.geom, m2l="numba")
+        xv = np.random.default_rng(2).standard_normal(pair.shape[1])
+        v2, vmax = _errs(var.matvec(c, xv), pair.matvec(c, xv))
+        print(f"        m2l=numba vs the reference evaluator (W {pair.counts()['W']}"
+              f" X {pair.counts()['X']}): 2-norm {v2:.3e}  max-entry {vmax:.3e}")
+        ok &= max(v2, vmax) < VARIANT_TOL
     return ok
 
 
@@ -480,11 +504,15 @@ def _far_operator(system, pairs, materials) -> np.ndarray:
     return A_far, A_near
 
 
-def _operator(order: dict, **kw):
-    _model, system, _dense, _geom, _arrays = _zone()
+def _operator(order: dict, grouped: bool = False, **kw):
+    model, system, _dense, geom, arrays = _zone()
     pairs = _zone_pairs(order, **kw)
+    groups = None
+    if grouped:
+        groups = FarGroups(system, {r.name: r.material for r in model.regions},
+                           geom, order, EPS, arrays, **kw)
     hasm = AssembledH(system, EPS, {}, False, jump="half", storage="basis",
-                      _shared=(pairs, {}))
+                      _shared=(pairs, {}), _groups=groups)
     return pairs, hasm
 
 
@@ -544,7 +572,25 @@ def check_operator() -> bool:
                 # that passes by shrinking its own far field fails here.
                 ok &= iso < OP_TOL
                 ok &= naive < NAIVE_TOL
-    return ok
+
+    # The grouped traversal is a REARRANGEMENT of the per-term sum, not an
+    # approximation: one traversal per (region, kernel) with sigma folded
+    # into the source, which is exact only because a region couples its
+    # patches completely. So it is gated against the per-term operator at
+    # roundoff -- against the dense operator it would pass while silently
+    # dropping a whole patch pair.
+    t0 = time.time()
+    _gp, hg = _operator(ORDER, grouped=True)
+    _pp, hp = _operator(ORDER)
+    worst = 0.0
+    for name, v in _test_vectors(system, np.random.default_rng(2)):
+        a, b = hg.matvec(v), hp.matvec(v)
+        worst = max(worst, float(np.max(np.abs(a - b)))
+                    / max(float(np.max(np.abs(b))), 1e-300))
+    print(f"    grouped ({len(hg._groups.groups)} traversals) vs per-term "
+          f"({len(_pair_keys(system))} pairs): {worst:.3e}   "
+          f"({time.time() - t0:.0f}s)")
+    return ok and worst < VARIANT_TOL
 
 
 # ---------------------------------------------------------------------

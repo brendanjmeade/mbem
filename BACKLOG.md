@@ -440,9 +440,12 @@ The specification as measured:
 Settled parameters, each measured not chosen: `OCTREE_NCRIT = 32`,
 `OCTREE_PLACEMENT_SAFETY = 2.0`, `FMM_X_MARGIN = 2.0`. Both interpolation
 domains pass at 260,598 unknowns with the X rule on, at ~1e-4 iso and ~7e-6
-naive, so the domain is C's to choose on the shared-M2L-table count alone
-(cube 486 / 1,010 / 1,450 distinct transfer keys across the three scales
-against the extent's 8,316 / 37,303 / 58,518).
+naive, so the domain is C's to choose on the shared-M2L-table count alone. At
+the shipping safety 2.0 that is cube 514 / 1,048 / 1,536 (level, offset) keys
+across the three scales against the extent's 10,992 / 50,064 / 132,020, and
+after the level fold 218 / 316 / 316 cube TABLES against the extent's nothing
+shared. The 486 / 1,010 / 1,450 and 8,316 / 37,303 / 58,518 this paragraph
+carried are reproducible but belong to safety 2.75, which 2.0 superseded.
 
 Placement was settled on 64 full FMM matvecs over ~9 h: safety {1.0, 1.5, 2.0,
 2.5} x {cube, extent} x all three vectors at scales 1 and 2, and 2.0 x both
@@ -572,19 +575,277 @@ no far field at all.
 counted ONE U table at p = 6 with no eps pass. At the shipping orders with
 `FMM_EPS_TERMS = 2` a transfer key holds U(p=6) 2 (3.216)^2 = 6.4 MiB PLUS
 T(p=8) 2 (3.512)x(9.512) = 108.0 MiB, so 114.4 MiB per key. At 4M unknowns the
-cube is ~295-318 GiB, not ~3 GB. The extent is ~98 TiB, so the O(log N) vs
-O(N) conclusion is untouched (cube keys 514/1048/1536 over three meshes,
-residual < 4 % on a + b ln N; extent 21,740/69,266/147,662, linear in N) -- but
-the cube's table does NOT fit at 1e6 elements without either M2L compression or
-the 18 -> 6 differentiated-basis lever, which removes T's own table entirely
-and is the term that dominates here. That lever is measured (2.8e-16 at two
-Poisson ratios) and is now load-bearing rather than an optimisation.
+the extent is ~98 TiB. **The ~295-318 GiB this paragraph carried for the cube
+was itself wrong, by 8.7x, and by ignoring the level fold established 200 lines
+above.** 114.4 MiB is per stored TABLE, and the stored tables are the distinct
+transfer OFFSETS, not the (level, offset) keys: the level folds out exactly, so
+514/1048/1536 is a count of keys and not of tables. The offset count saturates
+at 316 = 7^3 - 3^3, measured 218/316/316 at safety 2.0, 240/316/316 at 1.5 and
+316/316/316 at 1.0 over the three scales, and 316 is a combinatorial CEILING
+rather than a fit -- V entries are same-level by construction and their parents
+adjacent, so the offset lies in [-3,3]^3 minus [-1,1]^3. It is the one number in
+this program that needs no extrapolation. The cube's whole table set is
+therefore **35.3 GiB at float64, 17.7 GiB at float32, independent of N**, or
+17.6 / 8.8 GiB stored as the 14 (U) + 26 (T) distinct scalar p^3 x p^3
+geometry-only tables, which also makes the table material-INDEPENDENT instead of
+one copy per region material. The extent is untouched and still O(N): it cannot
+precompute M2L at all.
+
+So the 18 -> 6 differentiated-basis lever is an optimisation of ~3.2x, NOT a
+precondition for fitting in 128 GiB, and the claim that it "is now load-bearing"
+was an artefact of the same arithmetic. Its identity is exact -- verified
+symbolically in all 27 components over both eps passes at symbolic mu/lam, a
+stronger statement than the 2.8e-16 float check this file cites, which is
+reproducible from nothing in the tree -- but differentiating an interpolant
+costs 1.4-2.9x of accuracy at equal p, and the 1.1x operator margin at scale 3
+cannot absorb that, so taking it means shared p = 9 and it is then worth ~1.57x.
+Price the order change before writing the differentiated P2M: the order is the
+expensive half.
+
+**The fold's trap is the homogeneity DEGREE, and it is silent.** The U far
+passes are homogeneous of degree -1 and -3, the T passes of -2 and -4: every T
+term carries one extra factor of d in the numerator, so T's degree is the radial
+power minus one, not the radial power. Using the power for T rescales a reused
+table by exactly 2x too much per level of reuse (4x, 8x, 16x further out),
+measured rel 5.00e-01. The fold is a power of two and therefore BITWISE, so gate
+it with `np.array_equal` and not a tolerance -- a factor of 2 is invisible to
+every tolerance in this file.
+
+**The largest single term at 4M is not the far field, it is the preconditioner,
+and it appears in no budget here.** `PRECOND_BJ_CHUNK_DOF = 9000` and the
+cluster block-Jacobi rung stores one dense `lu_factor` per chunk
+(`preconditioner.py:428-431`), whose own comment states build memory is
+O(N x chunk): at 4M unknowns that is 4e6 x 9000 x 8 = 268 GiB, 2.1x the
+machine, against 30 GiB at chunk 1000 and 15 GiB at chunk 500. This rung is
+also the only one whose iteration count grows with N, so the chunk is a direct
+trade between the two, and it is unmeasured. Price it before C's far field:
+C's own terms (35.3 GiB of tables, ~28 GiB of near field, 14.0 GiB of Chebyshev
+stencil, 12.0 GiB of FGMRES workspace) fit in 128 GiB at float64 and this one
+does not.
 
 Near-field price, measured at 72 B per near element pair (`_near_blocks`
 materialises a float64 block): safety 1.0 is 267M pairs and 18 GiB at 4M,
 safety 2.0 is 424M and 28 GiB, safety 2.75 is 876M and 59 GiB. An X-exact
 policy adds up to +54 % on top, though a real criterion moves only the pairs
 below its threshold.
+
+**C is startable, and its order of operations is not the one recorded above.**
+Six things measured against the code rather than against this file:
+
+1. **The table's win is the BLAS rate, not the algebra.** Per V pair at the
+   shipping orders a dense table apply is 28.3 Mflop against 34.1 Mflop
+   matrix-free -- 1.2x, i.e. nothing. What the table buys is getting the same
+   arithmetic into GEMM: `_far_apply` issues nine un-optimised `np.einsum` calls
+   (two of them 88 % of the cost, `fmm.py:339-340`) running at ~0.9 Gflop/s on
+   one core, against 290-350 Gflop/s f64 and 650-685 f32 on the (1536, 4608) T
+   shape once the batch exceeds ~64 columns. A matrix-free numba transcription
+   reproduces `_far_apply` to 4.69e-15 and is already 27-31x faster for ZERO
+   table bytes. **So numba first, table second** -- the reverse of the recorded
+   plan, and the cheap half is also the one that cannot go wrong on memory.
+2. **The table only pays key-major.** Per-pair batching gives 1.60 V entries per
+   (pair key, offset): m = 1, which measures 14.6 Gflop/s bandwidth-bound
+   against 336 at m = 114. Reaching the many-column regime needs one traversal
+   covering many pairs, because `AssembledH` applies pair by pair and one
+   operator matvec therefore does 1.6-8.1x redundant M2L applications and
+   14-26x redundant upward-pass box visits against a single global traversal.
+   Make the M2L structure a per-offset list of (target box, source box) from the
+   first commit; adding the batch dimension afterwards is a rewrite.
+3. **There is no matvec budget, so "close the gap" has no target.** Measured
+   ~70-82 s per operator matvec at 2,592 unknowns (99.2 % M2L, 96-98 % of that
+   the T kernel). Projected at 4M: ~30 h today, ~240 s with an f64 table and
+   batched GEMM, ~71 s with f32 tables AND batching AND merged traversals.
+   At the measured 23/37/42 iterations a 2 h solve needs ~144 s per matvec and a
+   10 min solve needs ~12 s. State the budget as matvec seconds x iterations,
+   beside the flat-H comparator (166.6 ms at 260,598 unknowns, `4ddee8c`).
+4. **The drop-in claim is false on the default path.** `HBackend` and
+   `AssembledH` default to `storage="combined"`, whose `_refresh_material_state`
+   calls `pair.warm_views` (`hmat.py:219-222`), and `AssembledH.nbytes()` calls
+   `pair.nbytes()`; `PairFMM` has neither, so the default raises `AttributeError`
+   and the memory-reporting harness that produced every scale number in this file
+   cannot run on an FMM operator at all. The working drop-in is the private
+   `_shared=` kwarg at `storage="basis"`, which is what `verify_fmm` uses.
+   Separately, no FMM operator has ever been built at `jump="calibrated"`, the
+   production default -- every FMM number here is `jump="half"`.
+5. **The shipping default domain shares nothing.** `domain="extent"` is the one
+   domain whose table count is O(N). `domain="canonical"` is the interesting
+   third option and is UNMEASURED with the X rule on: it keeps the extents for
+   P2M/L2P/W/X and puts M2L alone on the shared cube lattice, so it would get the
+   cube's 316 tables with the extent's W and X margins. Its recorded numbers
+   (`fmm.py:87-90`) predate the X rule, which is the thing that was actually
+   failing. Measuring it is a configuration change and no new code, and it
+   should happen before any table is written.
+6. **No gate reaches the far field above 2,592 unknowns**, so the 1.1x margin C
+   inherits is unreproducible in-tree and every scale number here came from a
+   scratchpad. The pair clauses also sit 2,000-23,000x under `FMM_PAIR_PARITY`
+   on geometry orders easier than the offset (2,0,0) at which p = 6/8 was
+   chosen. Extend clause [b] with a single-key sub-clause at that offset (6.3 ms
+   at p = 6, 149 ms at p = 8), add `--backend fmm` to `bench_scaling.py` for the
+   scale rung, and gate the table against the reference evaluator at ~1e-12
+   behind an `m2l="evaluated"|"table"` switch -- never against the exact kernel
+   at 1e-4. Table-vs-reference cannot be bitwise: the reference reduces over all
+   source boxes of a V entry in one call, a table reduces per pair.
+
+**C's first three steps, measured. The domain is CANONICAL.** With the X rule
+on, canonical is the most accurate of the three domains at every scale AND
+shares the cube's table exactly. topo_inclusion, safety 2.0, X margin 2.0,
+p = 6/8, worst over all three harness vectors, far-isolated denominator from
+ONE fixed domain-blind partition per scale so it cannot move with the domain
+under test:
+
+    scale  unknowns   domain      naive     far-iso  worst x  M2L tables  offsets
+      1      31,098   extent    2.919e-05  1.018e-04   1.71x     10,992   10,992
+      1      31,098   cube      1.838e-05  5.999e-05   2.72x        514      218
+      1      31,098   canonical 1.460e-05  4.767e-05   3.42x        514      218
+      2     117,120   extent    2.247e-05  1.685e-04   1.19x     50,064   50,064
+      2     117,120   cube      2.264e-05  1.698e-04   1.18x      1,048      316
+      2     117,120   canonical 2.043e-05  1.208e-04   1.66x      1,048      316
+      3     260,598   extent    1.248e-05  1.078e-04   1.86x    132,020  132,019
+      3     260,598   cube      1.513e-05  1.279e-04   1.56x      1,536      316
+      3     260,598   canonical 1.513e-05  8.995e-05   2.22x      1,536      316
+
+All nine pass both limits. The recorded "canonical is 2.6x better than the cube,
+4.8x worse than the extent and still over FMM_OPERATOR_PARITY" (`fmm.py:87-90`)
+was measured before the X rule and no longer holds: canonical is 1.3-1.4x better
+than the cube and 1.2-2.1x better than the EXTENT. The mechanism holds under a
+role-by-role look -- canonical contains exactly wherever the geometry enters
+(P2M, L2P, C2L all max|xhat| = 1.0000) and keeps the extent's W and X margins and
+X-rule refusals, extrapolating only in the M2L change of basis (m2c 1.50-1.55,
+the same size as the cube's P2M 1.52-1.56). The offset count saturates at the
+316 ceiling from scale 2 on, against the extent's 132,019 at scale 3.
+
+Two cautions. Canonical creates NO headroom: at the binding scale (2) its margin
+is 1.66x, and on the naive limit at scale 3 it is indistinguishable from the cube
+(1.5125e-05 against 1.5128e-05), so what is left is the interpolation order. And
+with safety pinned at 2.0 and only the domain varying, a GAUSSIAN binds the
+far-isolated limit at every scale -- the translation binds the naive limit at
+scale 3. The translation is the binding vector of the SAFETY sweep, not of every
+sweep; quote both limits and all three vectors or none.
+
+**The M2L evaluator is 85x faster and the table is now a second-order lever**
+(`la/fmm_numba.py`, `PairFMM(m2l="numba")`). The reference's nine unoptimised
+einsums ran at 0.8 Gflop/s on one core; the fused nogil kernel measures 67.0
+Gflop/s at the real M2L shape (p = 8 T, nt = 512, ns = 3584, 209 Mflop): 266.8 ms
+-> 3.12 ms, and 23.6 ms serial, i.e. 11.3x on one core and 7.6x more from the
+pool. Parity against the reference evaluator: 7.8e-15 worst over three Poisson
+ratios x both kernels x k = 1 and 3, 1.3e-14 through a whole pair traversal,
+7.8e-15 on the W/M2P pair and 1.8e-15 on the X pair; end to end through the
+operator 9.3e-16, 13 s against 817 s. Two entry points per kernel per the tree's
+rule against a `parallel=True` kernel on a Python thread.
+
+**So the shared table's price has to be re-asked, and the answer is that it only
+pays key-major.** Measured per V pair at p = 8 T on an IDLE machine (a first
+pass under load understated the table's peak rate by 2.3x and must not be
+quoted), against the matrix-free numba kernel at 0.399 ms per V pair when seven
+source boxes ride one call, 0.551 ms alone:
+
+    batch m      1       8      32     114     512   ms per V pair
+    table f64  0.499   0.182   0.092   0.064   0.061   (56.7 -> 461.3 Gflop/s)
+    table f32  0.263   0.105   0.042   0.035   0.029  (107.7 -> 968.0 Gflop/s)
+
+So the table crosses over between m = 1 and m = 8 and saturates by m ~ 114,
+where it is worth 6.2x in f64 and 11.4x in f32 over the numba kernel. A
+memoizing cache dropped into the existing per-pair loop would buy almost
+nothing, because the measured batch width there is 1.60 V entries per (pair key,
+offset) -- the loss-making end of that table. Key-major
+batching is not an optimisation on top of the table, it is the precondition for
+the table being worth any bytes at all -- and it needs ONE traversal over the
+shared tree rather than one per pair. At the operator level scale 3 has 148,548
+V box pairs over 316 offsets, 470 per offset on average, which is the regime the
+table wants. Lifting the traversal above the pair is C's real next increment.
+
+Table bytes re-derived from the shapes that run: T is (3p^3, 9p^3) = (1536, 4608)
+per eps pass = 54.0 MiB, 108.0 MiB per transfer key, 33.3 GiB f64 / 16.7 GiB f32
+over the 316 offsets, plus U's 2.0 GiB f64.
+
+**THE TRAVERSAL IS LIFTED ABOVE THE PAIR** (`la/fmm.FarGroups`, `PairFMM` now
+taking a sequence in either role, `AssembledH(..., _groups=)`). One traversal per
+(region, kernel) replaces one per pair key: 6 traversals against 91 on the
+fault-zone model, measured 66.6 s -> 16.6 s, **4.00x**, with the grouped operator
+agreeing with the per-term sum to **8.7e-16**.
+
+Why the grouping is exactly (region, kernel) and why it is exact:
+`generate_system` couples a region's patches COMPLETELY -- `for q in
+region.patches: for p in region.patches` -- and the term's scale is
+`sigma(R, p)`, a function of the SOURCE patch alone, while the material is the
+region's and one kernel takes one slot type (T reads u_p, U reads t_p). So sigma
+folds into the source charge and one traversal computes every pair of the group.
+That is a property of the equation generator, not of the FMM, so `FarGroups`
+REFUSES a group whose coupling is incomplete or whose source patch carries two
+scales rather than assuming it -- and the gate prints `complete True one_scale
+True` for all six groups rather than trusting the refusal to be unreachable.
+
+The win is two independent redundancies, not one: a per-pair traversal repeats
+the upward pass once for every field mesh sharing a source mesh, and it leaves
+the M2L with a batch of 1.6 V entries per transfer offset. On the fault zone the
+batch moves 1.61-1.79 -> 2.25-3.11, which is still under the m ~ 8 crossover
+where a shared table starts to beat the matrix-free kernel, so the table is not worth building on the
+GATE model. On the target model it is, and the distribution -- not the mean --
+says so. topo_inclusion, canonical, grouped traversal, V entries per transfer
+offset:
+
+    scale  unknowns  V entries  offsets  mean  V-weighted  median  p10  max
+      1      31,098     27,479      218   126       404      58     15   823
+      2     117,120    129,293      316   409     1,717     145     37 3,425
+      3     260,598    293,243      316   928     2,292     471    147 5,484
+
+    share of V pairs in keys with m >= 114:  72.7 % / 94.0 % / 99.6 %
+
+The V-weighted mean is the cost-relevant one (sum m^2 / sum m) and it is 2-6x
+the plain mean, so the pairs concentrate in the WIDE keys -- the opposite of the
+heavy tail that would have made a table pay on a handful of offsets only. At
+scale 3 the tenth percentile is 147, an order of magnitude above the m ~ 8
+crossover, so a table is worth building on **316 of 316 keys** and a best-of
+policy degenerates to the table everywhere. Projected M2L time against the numba
+kernel: 5.91x / 6.41x / 6.52x. The win grows with N and has not saturated.
+
+Gated in `verify_fmm` [d] against the PER-TERM operator at
+`FMM_M2L_VARIANT_PARITY`, never against the dense operator: a grouped traversal
+that silently dropped a whole patch pair would still pass `FMM_OPERATOR_PARITY`.
+
+**The block-Jacobi price: 193 GiB at the shipping chunk, not 268, and it still
+busts the machine.** The storage model is an identity -- stored bytes
+= 8 x N x wmean with wmean = sum c^2 / sum c, reproduced at ratio 1.0000 at all
+15 (scale, chunk) points -- but its constant was wrong: `build_cluster_tree`
+halves a super-block until the leaf is under the cap, so the realised chunk lands
+in (cap/2, cap] and never at cap, measured 0.617-0.738 of nominal on this mesh
+family. 268 GiB was the f = 1 ceiling. Measured and projected:
+
+    chunk  iters 31k/117k/261k  LU GiB @261k  precond GiB @4M  iters @4M  fits?
+     9000        27 / 37 /  42        12.90            193.4   65/74/125  BUSTS
+     4000        30 / 43 /  51         5.30             78.1  91/101/152  BUSTS
+     2000        34 / 48 /  61         2.65             39.1 129/129/182  BUSTS
+     1000        37 / 58 /  69         1.33             19.6 125/154/206  FITS
+      500        42 / 63 /  89         0.66              9.8 234/234/265  FITS
+
+Chunk 9000 can never fit, and that is provable rather than sampled: splitting any
+n > cap yields children > cap/2, so every chunk exceeds 4500 DOF and the floor is
+8 x 4e6 x 4500 = 134.1 GiB, geometry-independent. Chunk 2000 misses by 0.4 GiB
+once C's own terms are counted, so **chunk 1000 is the first setting that fits**,
+with 19.1 GiB spare, and it is also the flattest point on wall time -- the trade
+is already non-monotone at 260,598, where chunk 500 is SLOWER than chunk 1000
+(89 iterations and 29.2 s against 69 and 20.6 s). Do not treat 1000 as tuned:
+nothing was measured above 260,598, the 4M iteration counts are three-point fits
+extrapolated 15.3x with a 1.6x spread, and varying the slot mix at fixed N moves
+the chunk-9000 figure over 140-260 GiB.
+
+Two consequences that are in no budget. The preconditioner APPLY becomes a
+first-class per-iteration cost at chunk 1000 -- 2.14 s projected at 4M, a serial
+Python loop over 6,336 independent `lu_solve` calls, embarrassingly parallel --
+so below ~2 s per matvec the preconditioner and not the FMM sets the iteration
+cost. And the iteration count and the FGMRES workspace are coupled: 12.0 GiB
+assumes `GMRES_RESTART = 200` while the chunk-1000 projection is 125-206
+iterations, so the pessimistic end restarts and raising the restart to 300 costs
+~6 GiB of the 19.1 GiB of headroom.
+
+**A landmine in any chunk sweep**: `bj_chunk` is not a kwarg of
+`AssembledH.solve`, and `BlockGaussSeidel.__init__` binds
+`defaults.PRECOND_BJ_CHUNK_DOF` at def time, so rebinding the default after
+import is a silent no-op -- a sweep done that way reports "chunk 500" while
+measuring 9000, and is invisible at the 9000 point because 9000 is the default.
+Related: the shipping ladder at 31,098 is 23 iterations, not 27, because all six
+super-blocks sit under the 30,000 dense cap and none reaches block-Jacobi; 27 is
+the FORCED arm. `defaults.py`'s block-Jacobi comparison column labels that forced
+31k row as "dense cap then block-Jacobi", which it is not.
 
 **Re-measured with the rule as implemented** (real re-partitioned matvecs, all
 rows, p = 6/8, worst over the test vectors; iso on a FIXED denominator, the

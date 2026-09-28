@@ -267,8 +267,8 @@ def check_transposes() -> bool:
 
 
 def check_adjacency() -> bool:
-    """[d] The integer adjacency test against brute-force geometry, and
-    [e] no V-list pair touches."""
+    """[d] The integer adjacency test against brute-force geometry,
+    [e] no V-list pair touches, and [g] the M2L transfer key is bounded."""
     cen, siz, verts, _ = _geometry()
     tree = Octree(cen, siz, verts, placement_safety=SAFETY)
     rng = np.random.default_rng(0)
@@ -291,14 +291,33 @@ def check_adjacency() -> bool:
 
     lists = InteractionLists(tree)
     touching = 0
+    # [g] The M2L transfer key, which is what a shared table is keyed on.
+    # V entries are same-level by construction and their parents adjacent,
+    # so max|offset| is in [2, 3] and the distinct offsets cannot exceed
+    # 7^3 - 3^3. That CEILING is the table count -- the level folds out of
+    # the key, each far pass being homogeneous -- so it is gated as an
+    # identity here rather than fitted from a count that grows with N.
+    ceiling = 7 ** 3 - 3 ** 3
+    offsets, cross_level, out_of_range = set(), 0, 0
     for b, lst in lists.V.items():
         lb, qb = tree.boxes[b]
         for t in lst:
             lt, qt = tree.boxes[t]
             if cubes_adjacent(lb, qb, lt, qt):
                 touching += 1
+            if lt != lb:
+                cross_level += 1
+                continue
+            d = tree.transfer_offset(b, t)
+            offsets.add(d)
+            if not 2 <= max(abs(c) for c in d) <= 3:
+                out_of_range += 1
     print(f"    V-list entries whose cubes touch: {touching}")
-    return bad == 0 and touching == 0
+    print(f"    V transfer keys: {len(offsets)} distinct offsets of "
+          f"{ceiling} possible; {cross_level} cross-level, "
+          f"{out_of_range} outside 2 <= max|d| <= 3")
+    return (bad == 0 and touching == 0 and cross_level == 0
+            and out_of_range == 0 and len(offsets) <= ceiling)
 
 
 def check_extents() -> bool:

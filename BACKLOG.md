@@ -412,6 +412,89 @@ fails 10/10; protrusion leaves nothing residual once the margin is accounted
 for. Safety only ever worked by moving that margin -- at 2.75 it is 2.178 at
 scale 1, 1.400 at scale 2 and 1.000 at scale 3.
 
+**The X rule, LANDED** (`la/octree.XMargin`, `defaults.FMM_X_MARGIN = 2.0`,
+gated by `verify_octree` [g]). The test travels as one object because its three
+parts -- source geometry, target interpolation domain, threshold -- have to;
+`InteractionLists(tree)` with no margin still gives the domain-blind lists, so
+no existing caller changed, and `FmmTree` now builds its domains BEFORE its
+lists and hands over its own `tgt_dom`. One difference from the table below,
+which substituted the WHOLE entry: the traversal descends, so a refused entry
+comes back as deeper X entries wherever the smaller target domain clears the
+threshold and only what cannot descend goes direct -- at scale 3 extent safety
+2.75, 5 refusals release 8,685 element pairs of which 6,660 reach U and the
+rest return as 6 deeper entries. The operator error is the same to five digits
+either way (8.6754e-05 at x1 extent 1.5, against the sweep's 8.6754e-05), so
+the descent is the cheaper form of the same fix. Endpoints gated: threshold 0
+reproduces the domain-blind lists entry for entry and the operator BITWISE
+(max|difference| 0.000e+00 on the fault zone at cube x1.7, where the rule
+otherwise moves 89 of 144 entries); threshold infinity empties X into U over
+exactly the element pairs X held. The conservation identity `U + V + 2W = N^2`
+is exact with the rule on, off, and at both endpoints, on three refinements and
+three domains. The rule is one-sided, so U/W/X stop being exact transposes as
+soon as it bites -- W is M2P, whose target is a field point with no domain to
+be inside.
+
+The specification as measured:
+
+**B IS CLOSED** (`octree.py`, `fmm.py`, `verify_octree.py`, `verify_fmm.py`).
+Settled parameters, each measured not chosen: `OCTREE_NCRIT = 32`,
+`OCTREE_PLACEMENT_SAFETY = 2.0`, `FMM_X_MARGIN = 2.0`. Both interpolation
+domains pass at 260,598 unknowns with the X rule on, at ~1e-4 iso and ~7e-6
+naive, so the domain is C's to choose on the shared-M2L-table count alone
+(cube 486 / 1,010 / 1,450 distinct transfer keys across the three scales
+against the extent's 8,316 / 37,303 / 58,518).
+
+Placement was settled on 64 full FMM matvecs over ~9 h: safety {1.0, 1.5, 2.0,
+2.5} x {cube, extent} x all three vectors at scales 1 and 2, and 2.0 x both
+domains x all three at scale 3. Worst margin over both limits and both domains:
+
+  safety   scale 1      scale 2      scale 3
+  1.0      FAIL 0.22x   FAIL 0.36x   --
+  1.5      pass 2.6x    FAIL 0.55x   FAIL 0.62x (cube; extent passes 1.08x)
+  2.0      pass 2.7x    pass 1.3x    pass 1.1x
+  2.5      pass 2.8x    pass 1.8x    pass 1.1x
+
+**1.5 is exactly the trap this program keeps falling into**: it passes scale 1
+by 2.6x and fails scale 2, and the failure is NOT monotone in N -- at scale 3
+the cube fails while the extent passes. No single mesh, and no extrapolation
+from two, would have caught it. Scale 2 also needs BOTH limits: safety 1.5 cube
+reads iso 5.5362e-05 (passing) against naive 6.9074e-05 (failing), which is the
+dual limit earning its place. And the binding vector is the TRANSLATION, not a
+Gaussian -- its far field is 1.25x its own ||A v||, so it is the only one that
+stresses the naive limit.
+
+2.0 is a bound rather than another fit because protrusion bounds it: the cube's
+failure is ordered by protrusion alone (passes 0.329, fails 0.372 and 0.405,
+so its extrapolation limit is in (0.33, 0.37)), and `prot <= c/safety` with
+c <= 0.67 is a THEOREM, not a measurement -- placement is by centroid and size
+is the longest edge, so |v - g| = |(v - b) + (v - c)|/3 <= 2L/3 with equality
+only for a degenerate triangle. Worst c measured over safety 1.0-3.0 at three
+scales is 0.608. Safety 1.5 guarantees only 0.447, outside the bracket; 2.0
+guarantees 0.335, inside it. `OCTREE_PROTRUSION_C` is gated over a sweep that
+includes the shipping default, so a default chosen on one mesh cannot quietly
+stop controlling protrusion on another.
+
+**The scale-3 margin is 1.1x and placement cannot widen it.** Safety 2.0 and
+2.5 have the same absolute error to four digits there (3.4743e-05 against
+3.4740e-05). What is left at 260,598 unknowns is the interpolation ORDER:
+`FMM_OPERATOR_PARITY = 2e-4` is nearly saturated by it. **C inherits 1.1x of
+room, not 2x.**
+
+Near field at safety 2.0: 127.0 / 113.6 / 106.0 element pairs per unknown at
+the three scales, projecting to 424.0 M pairs and 28.4 GiB at 4M unknowns
+against safety 1.0's 266.6 M / 17.9 GiB (+59 %) and 2.5's 780.6 M / 52.3 GiB
+(+84 % for no accuracy). The rate FALLS with N at 2.0 (127 -> 114 -> 106) while
+1.0's rises (52.8 -> 54.0 -> 66.6), so the penalty shrinks with scale.
+
+Verification, stronger than the sum identity the gate runs: the full ordered
+element-pair COVERAGE-COUNT matrix, every entry exactly 1, over 100 list builds
+(5 meshes x 3 domains x 5 thresholds x 2 safeties), sums exact to 904,265,041
+and 13,853,760,804 at scale 4. Plus two properties the gate does not check --
+V and W entry sets are bit-identical to the domain-blind traversal, so the rule
+cannot leak into M2L/M2P, and the diagonal and every AABB-overlapping pair stay
+in U, so a singular pair can never reach a P2L entry. The no-op endpoint is
+bitwise against a pristine `git archive` of the pre-rule commit.
+
 **The X rule, located.** When forming an X entry, take
 `rho = min over the vertices of the source box's resident elements of
 max_d |v_d - c_d| / h_d` against the TARGET box's interpolation domain
@@ -453,9 +536,9 @@ saf 2.50, where the failure is X-caused and `rho < 1.65` cures it
 The rule is NECESSARY, NOT SUFFICIENT. At x1 cube safety 1.0 (protrusion
 0.527) no threshold passes -- even all-X-exact leaves 1.243e-03 -- so placement
 still has to control protrusion independently. Only ONE configuration passes at
-scale 3: cube at safety 2.0. Nothing is implemented yet; `domain="extent"` and
-`OCTREE_PLACEMENT_SAFETY = 1.0` remain the measured baseline, not a passing
-configuration.
+scale 3: cube at safety 2.0. With the rule in, `OCTREE_PLACEMENT_SAFETY = 1.0`
+is what is left of B: what is wrong at safety 1.0 on the cube is 0.527 box
+edges of protrusion at P2M, which no X threshold touches.
 
 **The gate's own metric was penalising the fix, and is corrected.** The
 far-isolated error divides by `||A_far v||` of the CURRENT partition -- which
@@ -503,11 +586,96 @@ safety 2.0 is 424M and 28 GiB, safety 2.75 is 876M and 59 GiB. An X-exact
 policy adds up to +54 % on top, though a real criterion moves only the pairs
 below its threshold.
 
+**Re-measured with the rule as implemented** (real re-partitioned matvecs, all
+rows, p = 6/8, worst over the test vectors; iso on a FIXED denominator, the
+rule-off partition's `||A_far v||`):
+
+  config                    iso: no rule   with rule   naive: no rule  with rule
+  x1 extent saf 1.0 (3v)      7.2011e-04  1.7488e-04 ok    3.0749e-04  1.2537e-04 OVER
+  x1 extent saf 1.5 (3v)      1.1479e-03  8.6754e-05 ok    4.4787e-04  1.6352e-05 ok
+  x1 cube   saf 1.0 (3v)      4.2074e-03  8.9874e-04 OVER  1.8211e-03  1.6884e-04 OVER
+  x2 extent saf 1.0 (1v)      8.8662e-04  1.3254e-04 ok    1.3058e-04  1.9519e-05 ok
+  x3 extent saf 2.75 (1v)     1.0380e-03  1.2074e-04 ok    7.0441e-05  8.1939e-06 ok
+  x3 cube   saf 2.75 (1v)     3.0614e-03  9.4206e-05 ok    2.0775e-04  6.3930e-06 ok
+
+So **extent + the rule passes at scale 3** and the cube-vs-extent question does
+collapse into the X rule: both domains land at 1e-04 iso and ~7e-06 naive at
+260,598 unknowns, 8.6x and 32.5x better than without it, and every value
+reproduces the sweep's whole-entry substitution to five digits (1.3327e-04,
+1.0398e-04, 8.6754e-05). The price is 0.01-0.3 % of the U list against all-X-
+direct's +37 to +68 % (x1 extent 1.5: 4.1292 -> 4.1346 % with the rule,
+6.9428 % all-direct, at the same absolute error).
+
+**The placement constant is settled: `OCTREE_PLACEMENT_SAFETY = 2.0`, the same
+for both domains.** Swept 1.0 / 1.5 / 2.0 / 2.5 with the X rule active, on
+topo_inclusion at all three scales and both domains, iso against ONE fixed
+reference partition (safety 1.0, rule off) because safety is what moves the
+partition. Worst margin over both limits and both domains, 1.0x being the
+limit itself:
+
+  safety   scale 1      scale 2      scale 3
+  1.0      FAIL 0.22x   FAIL 0.36x   --
+  1.5      pass 2.6x    FAIL 0.55x   FAIL 0.62x (cube; the extent passes)
+  2.0      pass 2.7x    pass 1.3x    pass 1.1x
+  2.5      pass 2.8x    pass 1.8x    pass 1.1x
+
+**1.5 is the trap, and it is exactly the shape the record warned about.** It
+passes at scale 1 by 2.6x, fails at scale 2, and the failure is NOT monotone
+in N -- at scale 3 the cube fails (naive 7.9e-05, iso 3.2e-04) while the
+extent passes (3.6e-05 / 1.9e-04) -- so no single mesh, and no extrapolation
+from two, would have found it. What makes 2.0 a bound rather than another fit
+is the CUBE, whose failure IS ordered by protrusion: it passes at 0.329 and
+fails at 0.372 and 0.405, bracketing its extrapolation limit in (0.33, 0.37),
+and the sawtooth guarantee prot <= 0.67/safety puts safety 1.5 at 0.447 --
+outside the bracket -- against 0.335 at 2.0, inside it. Measured protrusion at
+2.0 is 0.273 / 0.286 / 0.285, i.e. c = 0.545 / 0.571 / 0.569, and
+`verify_octree` [a] now gates the bound over a sweep including the shipping
+default so it cannot quietly stop holding on another mesh. The EXTENT has no
+such predictor: it fails at protrusion 0.372 (scale 2) and passes at 0.405
+(scale 3), and its worst V-list node gap (0.674 against 0.628) does not order
+the two either -- on that domain 2.0 rests on the three-scale measurement
+alone, which is a reason to prefer the cube now that both pass.
+
+Both metrics were needed and so were all three vectors. At scale 2 safety 1.5
+reads iso 5.5e-05, PASSING, against naive 6.9e-05, FAILING, and the vector
+that fails is the unit TRANSLATION (far field 1.25x its own `||A v||`), which
+the earlier scale-2 and scale-3 runs never used.
+
+Price, at 72 B per near element pair: safety 2.0 is 424 M pairs / 28 GiB at 4M
+unknowns against 1.0's 267 M / 18 GiB (+59 %), 1.5's 304 M / 20 GiB and 2.5's
+781 M / 52 GiB (+84 % over 2.0 at the same error). Measured near element pairs
+1.64 M / 6.33 M / 17.37 M at safety 1.0 and 3.97 M / 13.30 M / 27.62 M at 2.0,
+i.e. 52.8 / 54.0 / 66.6 against 127.0 / 113.6 / 106.0 pairs per unknown -- the
+2.0 rate FALLS with N while 1.0's rises, so the ratio is 2.4x at scale 1 and
+1.6x at scale 3, and the projection uses scale 3's.
+
+**The scale-3 margin is 1.1x and placement cannot widen it.** Safety 2.0 and
+2.5 have the same absolute error to four digits there (3.4743e-05 against
+3.4740e-05, gaussian 1, extent), so what remains at 260,598 unknowns is the
+interpolation ORDER and `FMM_OPERATOR_PARITY` is nearly saturated by it. C
+inherits 1.1x of room, not 2x.
+
+**The default no longer suits the gates' own models, and they now say so.**
+On the 2,592-unknown fault zone, safety 1.5 empties the W and X lists
+outright, 2.0 cuts V from 2588 to 384 box pairs, and 2.5 and 3.0 leave U at
+100 % -- no far field at all, the operator clause dividing roundoff by
+roundoff. `verify_fmm` and `verify_octree` therefore PIN `SAFETY = 1.0` with
+that measurement beside it; every gate number is unchanged (19/19, clause [d]
+iso 4.283e-05 / 8.007e-05 / 6.278e-06 and [g]'s margins bit for bit).
+
+The denominator caution is now demonstrated rather than argued: at x1 extent
+1.5, all-X-direct has 0.3 % LOWER absolute error than the rule and reads
+1.1721e-04 against 8.6754e-05 because its own `||A_far v||` is 26 % smaller;
+on the fault zone at cube x1.7, demoting 89 entries leaves the absolute error
+bit-identical and moves iso from 7.6266e-04 to 1.3094e-03.
+
 Also still open: demote W/V box pairs whose effective gap after protrusion is
-<= 0 to direct (4-7 % of W box pairs, +5 % on U). And extent + X-exact at scale
-3 was never run -- if the X rule rescues the incumbent domain too, the whole
-cube-vs-extent question collapses into the X rule and the domain stops
-mattering.
+<= 0 to direct (4-7 % of W box pairs, +5 % on U). Cost of running these: the
+reference bbFMM matvec is single-core numpy -- 924-1836 s at 31,098 unknowns,
+5518-6069 s at 117,120, 4545-4760 s at 260,598 (the largest is CHEAPER than the
+middle because its U fraction is 1.21 % against 0.66 %) -- and the exact
+matrix-free reference is 20 s / 191 s / 393 s beside it. Six configurations run
+concurrently is the way to afford a table like the one above.
 
 Two facts about this model that the earlier record got wrong: the size grading
 is driven by the FINE end (host_top at 0.177 km; the max edge at scale 3 is

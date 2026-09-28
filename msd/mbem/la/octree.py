@@ -36,11 +36,27 @@ the cube lattice is translation-invariant, so only the cube gives the shared
 M2L table a bbFMM exists for, while only the extent contains a protruding
 source. Nothing here picks for the caller.
 
-The lists are formed on the nominal cubes and are NOT repaired afterwards: a
-protruding element can leave a V or W entry less separated than its cubes
-suggest (measured, the worst V node separation falls from 1.02 to 0.68 box
-edges under the extent domain), and demoting those entries to direct is an
-open item, not something this module does.
+The lists are formed on the nominal cubes and are otherwise DOMAIN-BLIND, and
+the one place that is not good enough is the X list. X is P2L: exact source
+integrals evaluated at the target box's interpolation nodes and then
+interpolated over that box's domain, which converges only where the source is
+outside the domain -- and whether it is depends on which domain the caller
+picked, the same box pair reporting a margin of 1.000 against a cube and 1.450
+against the contents extent. So a caller that will interpolate states its
+target domain as an :class:`XMargin`, an X entry whose nearest source vertex
+sits closer to that domain's CENTRE than ``FMM_X_MARGIN`` half-widths is not
+emitted, and the traversal descends the target box and re-tests instead;
+residents that cannot descend go direct. ``InteractionLists(tree)`` with no margin keeps the
+domain-blind lists, which is what the tree-only gates check.
+
+V and W are left alone. W evaluates a multipole at a FIELD POINT and has no
+target-side domain to be inside, and no V entry was ever implicated; the cost
+of the rule is that U, W and X are then no longer exact transposes of each
+other, which is a property of the domain-blind traversal and is gated as one.
+A protruding element can still leave a V or W entry less separated than its
+cubes suggest (measured, the worst V node separation falls from 1.02 to 0.68
+box edges under the extent domain); that is priced in ``la/fmm.py``, not
+repaired here.
 
 Lists follow the standard adaptive-FMM definitions, with adjacency meaning that
 two closed cubes touch (face, edge, corner or containment) even at different
@@ -330,6 +346,63 @@ class _Neighbourhood:
         return out
 
 
+class XMargin:
+    """The X-list (P2L) admissibility test, and the domain it is stated on.
+
+    ``rho(a, b)`` is the nearest vertex of source box ``b``'s RESIDENT
+    elements, measured from target box ``a``'s interpolation domain centre
+    per axis in units of that axis' half-width and combined with max --
+    L-infinity in the domain's own anisotropic scaling. ``rho = 1`` is a
+    source vertex ON the domain boundary, so ``rho > 1`` is the condition
+    for the interpolant X builds to be well posed at all, and the threshold
+    is how far past that the entry must sit (``defaults.FMM_X_MARGIN``, whose
+    measured basis is beside it).
+
+    It is a separate object because the three things it needs -- the source
+    geometry, the target domain and the threshold -- have to travel together
+    and none of them is the tree's. The alternative, three keywords on
+    :class:`InteractionLists`, makes "no domain stated" three Nones instead
+    of one, and the domain-blind case is the one every existing caller uses.
+
+    The vertices are the ELEMENT's, not the box's: a source element protrudes
+    from its box by up to 0.53 box edges under the placement rule, so a test
+    on the box would pass entries whose geometry is inside the target domain.
+    """
+
+    def __init__(self, verts: np.ndarray, center: np.ndarray,
+                 half: np.ndarray,
+                 threshold: float = defaults.FMM_X_MARGIN):
+        self.verts = np.asarray(verts, dtype=float).reshape(-1, 3, 3)
+        self.center = np.asarray(center, dtype=float)
+        self.half = np.asarray(half, dtype=float)
+        self.threshold = float(threshold)
+        self._box: dict = {}
+
+    def _source_verts(self, tree: "Octree", b: int) -> np.ndarray:
+        v = self._box.get(b)
+        if v is None:
+            v = self.verts[tree.elements_of(b)].reshape(-1, 3)
+            self._box[b] = v
+        return v
+
+    def rho(self, tree: "Octree", a: int, b: int) -> float:
+        """Source box ``b``'s nearest vertex, in target box ``a``'s domain.
+
+        A zero half-width is a degenerate domain, which
+        ``FMM_MIN_HALF_OVER_EDGE`` exists to prevent and ``verify_fmm`` [g]
+        reaches only by removing that floor: a vertex off the centre is then
+        infinitely separated, one ON it is inside, and 0/0 has to read as the
+        latter rather than as a NaN that would silently refuse the entry.
+        """
+        v = self._source_verts(tree, b)
+        if not v.size:
+            return np.inf
+        with np.errstate(divide="ignore", invalid="ignore"):
+            u = np.abs(v - self.center[a]) / self.half[a]
+        return float(np.nan_to_num(u, nan=0.0, posinf=np.inf
+                                   ).max(axis=1).min())
+
+
 class InteractionLists:
     """U, V, W, X over an :class:`Octree`, from a dual-tree traversal.
 
@@ -355,14 +428,27 @@ class InteractionLists:
     what pinned oversized elements need: they cannot descend, so their
     interaction with a neighbour's subtree separates at a level they are not
     at. ``verify_octree`` gates the resulting identity U + V + 2W = N^2.
+
+    ``x_margin``, an :class:`XMargin`, turns on the X-list admissibility rule
+    described in this module's docstring. It only ever moves work from X into
+    the same traversal's deeper X entries and into U, so the identity is
+    unchanged and stays the check that a rejected entry was not lost or
+    double-counted; what it does break is the W/X transpose, X being the only
+    list tested.
     """
 
-    def __init__(self, tree: Octree):
+    def __init__(self, tree: Octree, x_margin: XMargin | None = None):
         self.tree = tree
+        self.x_margin = x_margin
         self.U = defaultdict(list)
         self.V = defaultdict(list)
         self.W = defaultdict(list)
         self.X = defaultdict(list)
+        # Entries the X rule refused, in the same (target, source) shape as
+        # X: the two together are the domain-blind X list's own entries plus
+        # the deeper ones the refusals produced, which is what lets a caller
+        # measure the PRE-rule margin it was tuned against.
+        self.X_demoted = defaultdict(list)
         root = tree.box_id[0][_key(0, 0, 0)]
         self._descend(root, root)
 
@@ -415,13 +501,22 @@ class InteractionLists:
             self._descend_res_sub(a, child)
 
     def _descend_sub_res(self, a: int, b: int) -> None:
-        """subtree(a) x res(b) -- the transpose direction."""
+        """subtree(a) x res(b) -- the transpose direction.
+
+        The one list with an admissibility test of its own. A separated pair
+        that fails it falls through to the SAME split the adjacent case uses
+        -- res(a) x res(b) direct, the children re-tested -- so the pair
+        decomposition is untouched and only where the work lands changes.
+        """
         t = self.tree
         if not t.n_subtree[a] or not t.n_resident[b]:
             return
         if not self._adjacent(a, b):
-            self.X[a].append(b)
-            return
+            m = self.x_margin
+            if m is None or m.rho(t, a, b) >= m.threshold:
+                self.X[a].append(b)
+                return
+            self.X_demoted[a].append(b)
         if t.n_resident[a]:
             self.U[a].append(b)
         for child in t.children[a]:
@@ -432,3 +527,25 @@ class InteractionLists:
                 "V": sum(len(v) for v in self.V.values()),
                 "W": sum(len(v) for v in self.W.values()),
                 "X": sum(len(v) for v in self.X.values())}
+
+    def demotions(self) -> dict:
+        """What the X rule moved, in entries and in ELEMENT pairs.
+
+        ``entries`` counts every refused test, cascades included; ``top`` the
+        subset a domain-blind traversal would have emitted as X entries (a
+        refusal whose own parent was not refused), and ``top_pairs`` their
+        element-pair weight -- what left the X list. ``direct`` is the
+        element-pair weight that reached U, which is the near-field price and
+        is smaller than ``top_pairs`` by whatever the deeper X entries
+        recovered.
+        """
+        t = self.tree
+        refused = {(a, b) for a, lst in self.X_demoted.items() for b in lst}
+        top = [(a, b) for (a, b) in refused
+               if (int(t.parent[a]), b) not in refused]
+        return {"entries": len(refused),
+                "top": len(top),
+                "top_pairs": sum(int(t.n_subtree[a]) * int(t.n_resident[b])
+                                 for a, b in top),
+                "direct": sum(int(t.n_resident[a]) * int(t.n_resident[b])
+                              for a, b in refused)}

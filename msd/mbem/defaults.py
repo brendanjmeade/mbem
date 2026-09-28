@@ -315,13 +315,74 @@ FLATVIEW_STORAGE_PARITY = 1e-6
 # occupancy reaching 52. At 32 the tree is depth 9 with mean occupancy 14.4.
 OCTREE_NCRIT = 32
 # An element may go no deeper than the level whose cube edge is this multiple
-# of its own size. 1.0 is the loosest rule that keeps an element comparable to
-# its box; it leaves a protrusion of up to 0.53 box edges, which is why the
-# interpolation domain is the box's CONTENTS (Octree.extents) and not its cube.
-# Tightening it instead is worse on both counts: strict containment pins 52 %
-# of elements at 284 KiB/unknown (~250 GiB at 4M), and 2.0 pins 16 % and makes
-# the placement rule rather than OCTREE_NCRIT set the near-field floor.
-OCTREE_PLACEMENT_SAFETY = 1.0
+# of its own size. It is the FAR FIELD's accuracy constant, not a tree-shape
+# preference, because what it controls is PROTRUSION -- how far an element
+# hangs outside its own box, in box edges -- and protrusion breaks both
+# interpolation domains at once. On the nominal cube a protruding source makes
+# P2M an EXTRAPOLATION; on the box's contents extent, the only domain that
+# contains it, the source domain grows to f_source ~ 2 box edges, and since two
+# non-adjacent boxes are 2 edges apart centre to centre their M2L node sets
+# then nearly touch (worst measured V-list gap 0.55 box edges at safety 1.0
+# against 0.83 at 2.75, while the cube's stays 1.02 at every safety).
+# Protrusion obeys a sawtooth bound prot <= c / safety, c being an element's
+# own reach past its centroid over its longest edge: measured c = 0.49-0.61
+# over topo_inclusion's three scales, under the 0.67 a sliver can reach.
+#
+# 2.0 is the smallest value meeting BOTH FMM_OPERATOR_PARITY and
+# FMM_OPERATOR_PARITY_NAIVE at EVERY scale and on BOTH domains with the X rule
+# (FMM_X_MARGIN) active. Measured on topo_inclusion at 31,098 / 117,120 /
+# 260,598 unknowns, p = 6/8, all rows against the matrix-free exact operator,
+# worst over the three test vectors, iso divided by ONE fixed reference
+# partition (safety 1.0, rule off) because safety is what moves the partition.
+# Worst margin over both limits and both domains, so 1.0x IS the limit:
+#
+#   safety   scale 1      scale 2      scale 3
+#   1.0      FAIL 0.22x   FAIL 0.36x   --
+#   1.5      pass 2.6x    FAIL 0.55x   FAIL 0.62x (cube; the extent passes)
+#   2.0      pass 2.7x    pass 1.3x    pass 1.1x
+#   2.5      pass 2.8x    pass 1.8x    pass 1.1x
+#
+# 1.5 is the trap and the reason the value is stated per scale: it passes at
+# scale 1 by 2.6x, fails at scale 2, and the failure is NOT monotone in N --
+# at scale 3 the cube fails (naive 7.9e-05, iso 3.2e-04) while the extent
+# passes -- so no single mesh would have found it. The binding vector is the
+# unit TRANSLATION, whose far field is 1.25x its own ||A v||, and at scale 2
+# the binding limit is the NAIVE one: safety 1.5 there reads iso 5.5e-05,
+# passing, against naive 6.9e-05, failing. What makes 2.0 a bound and not
+# another fit is the CUBE, whose failure is ordered by protrusion alone: it
+# passes at 0.329 and fails at 0.372 and 0.405, so its extrapolation limit is
+# bracketed in (0.33, 0.37), and the sawtooth GUARANTEE 0.67 / safety is
+# 0.447 box edges at safety 1.5 -- outside the bracket -- against 0.335 at
+# 2.0, inside it. Measured protrusion at 2.0 is 0.273 / 0.286 / 0.285 at the
+# three scales, i.e. c = 0.545 / 0.571 / 0.569. The EXTENT has no such single
+# predictor -- it fails at protrusion 0.372 (scale 2) and passes at 0.405
+# (scale 3), and its V-list node gap does not order the scales either -- so on
+# that domain 2.0 rests on the measurement at three scales, not on a bound.
+#
+# The scale-3 margin is 1.1x and it is NOT the placement rule's to widen:
+# 2.0 and 2.5 there have the same absolute error to four digits (3.4743e-05
+# against 3.4740e-05 on gaussian 1, extent), so what is left at 260,598
+# unknowns is the interpolation ORDER, and FMM_OPERATOR_PARITY is nearly
+# saturated by it. Anything built on this tree has that 1.1x, not 2x, of room.
+#
+# The price is the near field at 72 B per near element pair: 424 M pairs and
+# 28 GiB at 4M unknowns, against safety 1.0's 267 M / 18 GiB (+59 %) and
+# 1.5's 304 M / 20 GiB. Going past 2.0 buys nothing and costs a lot -- 2.5 is
+# 781 M / 52 GiB (+84 %) at the same error. Strict containment, the other way
+# to kill protrusion, pins 52 % of elements at 284 KiB/unknown (~250 GiB).
+# 2.5 is also a ceiling on small models: it leaves the fault-zone model at
+# 100 % U list, no far field at all (3.0 likewise), which is why the gates
+# pin their own placement safety instead of reading this one.
+OCTREE_PLACEMENT_SAFETY = 2.0
+# The sawtooth constant of the bound above, prot <= OCTREE_PROTRUSION_C /
+# safety, so the guarantee is stated once and policed (verify_octree [a])
+# rather than only asserted in a comment. It is a triangle's own reach past
+# its centroid over its longest edge, which is 0.47 for a right isoceles
+# triangle and tends to 0.67 for a sliver -- geometry, not a dial; placement
+# can only divide it by the safety factor. Measured 0.49-0.61 on
+# topo_inclusion over safety 1.0-3.0 at three scales, and 0.33-0.39 on the
+# fault zone.
+OCTREE_PROTRUSION_C = 0.67
 # Hard depth limit, so a degenerate cloud cannot recurse without end. The
 # 1e6-element target reaches ~10 levels; 21 is what three packed integer box
 # coordinates fit in a 64-bit key.
@@ -415,6 +476,35 @@ FMM_EPS_TERM_GAIN = 1e1
 # p = 4 one, where two passes are no better than one (x0.92, measured) and
 # the comparison says nothing about the expansion.
 FMM_EPS_TERM_GAIN_OPERATOR = 1.5
+# X-list (P2L) admissibility, applied by la/octree.InteractionLists whenever
+# the caller states which interpolation domain it will use. An X entry
+# evaluates exact source integrals AT the target box's Chebyshev nodes and then
+# interpolates over that box's domain, so it converges only if the source lies
+# OUTSIDE the domain: rho -- the nearest source vertex's distance from the
+# domain centre, per axis in units of that axis' half-width, combined with max
+# -- must exceed 1 for the interpolant to be well posed at all. Below this
+# multiple the entry is not emitted; the traversal descends the target box and
+# re-tests, and the residents that cannot descend go direct.
+#
+# WHY IT EXISTS: without it the operator is 15-30x over FMM_OPERATOR_PARITY at
+# 260,598 unknowns and this far field is unusable at any size. With it, 3
+# entries and 540 element pairs -- 0.0009 % of the near field on
+# topo_inclusion at scale 3 -- take the far-isolated error from 1.223e-03 to
+# 3.315e-04 (extent) and 5.953e-03 to 1.866e-04 (cube, placement safety 2.0).
+# Moving the WHOLE X list direct instead costs +54.3 % near field and STILL
+# fails, so this is a selection, not a retreat from P2L.
+#
+# WHY 2.0: the located value moved 1.45 -> 1.90 -> 1.65 once per newly
+# measured configuration, and 1.65 clears the entry it must catch (rho 1.6437)
+# by 0.4 %. 2.0 is a superset everywhere and sits on the plateau the sweep
+# found -- the error is unchanged from 1.65 to 4.0 in all six instrumented
+# configurations -- while rho > 1 is the well-posedness condition it has to
+# respect. The admissibility ratio eta >= 0.30 is NOT an equivalent form: at
+# scale 2, extent, safety 2.50, where the failure IS X-caused and rho < 1.65
+# cures it (3.215e-04 -> 8.631e-05), eta >= 0.30 selects ZERO entries, because
+# rho is dominated by the domain's thinnest axis and a Euclidean gap over the
+# half-diagonal is not.
+FMM_X_MARGIN = 2.0
 # Floor on an interpolation domain's half-width, in units of the box's own
 # cube edge. A flat patch leaves its boxes zero extent across the plane, and
 # a zero width divides the rounding of a quadrature point by itself; the

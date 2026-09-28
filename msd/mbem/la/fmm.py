@@ -118,9 +118,20 @@ list's. Over the 15 topo configurations with operator numbers, an X margin
 residual once the margin is accounted for. The safety factor only ever
 worked by moving that margin: at safety 2.75 it is 2.178 at scale 1 but 1.400
 at scale 2 and 1.000 at scale 3, which is why a value tuned on one mesh did
-not transfer. The fix is an X-list admissibility rule -- the criterion is
-bracketed between 1.487 and 2.026 and has not been located, so it is not
-written here yet.
+not transfer. THE FIX IS THE X RULE, and it now lives in the traversal
+(``la/octree.XMargin``, ``defaults.FMM_X_MARGIN``): an X entry whose nearest
+source vertex sits closer to the CENTRE of the target box's own interpolation
+domain than that many half-widths is not emitted, the target box is descended
+and the entry re-tested, and what cannot descend goes direct. Because the domain is
+:attr:`FmmTree.tgt_dom`, the rule reads the caller's choice of domain rather
+than the cube, which is the whole point -- the same pair measures 1.000 on
+the cube and 1.450 on the extent.
+
+The rule is one-sided on purpose. W is M2P: its target is a field point with
+no domain to be inside, and no W or V entry is implicated in any measured
+failure. So U, W and X stop being exact transposes of one another the moment
+the rule bites, which is a property of the domain-blind traversal that
+``verify_octree`` gates as one, not a symmetry the operator needs.
 
 With X exact so nothing else is in it, the cube's own extrapolation limit is
 protrusion 0.33-0.35 box edges (f_src 1.66-1.71): 9.6e-05 at 0.329, 3.0e-04
@@ -147,7 +158,7 @@ from .. import defaults
 from ..kernels import KERNEL_T, KERNEL_U, kernel_n_basis
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
-from .octree import InteractionLists, Octree
+from .octree import InteractionLists, Octree, XMargin
 
 
 # ---------------------------------------------------------------------
@@ -447,6 +458,7 @@ class FmmTree:
     def __init__(self, meshes, ncrit: int = defaults.OCTREE_NCRIT,
                  placement_safety: float = defaults.OCTREE_PLACEMENT_SAFETY,
                  domain: str = "extent", inflate=1.0,
+                 x_margin: float = defaults.FMM_X_MARGIN,
                  arrays: kb.MeshArrays | None = None):
         if domain not in ("extent", "cube", "canonical"):
             raise ValueError(f"unknown interpolation domain {domain!r}")
@@ -478,11 +490,17 @@ class FmmTree:
         self.areas = np.concatenate(areas)
         self.tree = Octree(self.centroids, np.concatenate(siz), self.verts,
                            ncrit=ncrit, placement_safety=placement_safety)
-        self.lists = InteractionLists(self.tree)
         self._cube = np.array([np.concatenate(self.tree.cube(b))
                                for b in range(len(self.tree.boxes))])
         self.src_dom = self._domains(self.verts, f[0])
         self.tgt_dom = self._domains(self.centroids, f[1])
+        # The domains are built BEFORE the lists because the X rule is stated
+        # against the target domain, and which domain that is (cube, inflated
+        # cube, contents extent) is this class's choice, not the tree's. The
+        # rest of the traversal is domain-blind and does not care.
+        self.x_margin = float(x_margin)
+        self.lists = InteractionLists(
+            self.tree, XMargin(self.verts, *self.tgt_dom, self.x_margin))
         # The lattice M2L is stated on when it is not the role's own:
         # translation-invariant, hence shared, hence the canonical frame.
         # Always the nominal cube -- ``inflate`` scales the extents P2M and
@@ -569,10 +587,13 @@ class FmmTree:
 
     def summary(self) -> str:
         c = self.lists.counts()
+        d = self.lists.demotions()
         f = (f" inflate {self.inflate[0]:g}/{self.inflate[1]:g}"
              if self.inflate != (1.0, 1.0) else "")
+        x = (f", X rule {self.x_margin:g} refused {d['top']} "
+             f"({d['direct']} element pairs direct)" if d["entries"] else "")
         return (f"FmmTree {self.domain!r}{f}: {self.tree.summary()}; "
-                f"U {c['U']} V {c['V']} W {c['W']} X {c['X']} box pairs")
+                f"U {c['U']} V {c['V']} W {c['W']} X {c['X']} box pairs{x}")
 
 
 # ---------------------------------------------------------------------
@@ -607,6 +628,7 @@ class PairFMM:
                  eps_terms: int = defaults.FMM_EPS_TERMS,
                  ncrit: int = defaults.OCTREE_NCRIT,
                  domain: str = "extent", inflate=1.0,
+                 x_margin: float = defaults.FMM_X_MARGIN,
                  arrays: kb.MeshArrays | None = None):
         self.kernel = kernel
         self.n_basis = kernel_n_basis(kernel)          # raises on a bad tag
@@ -621,7 +643,7 @@ class PairFMM:
         arrays = arrays if arrays is not None else kb.MeshArrays()
         self.geom = geom if geom is not None else FmmTree(
             [field_mesh, source_mesh], ncrit=ncrit, domain=domain,
-            inflate=inflate, arrays=arrays)
+            inflate=inflate, x_margin=x_margin, arrays=arrays)
         self.st = self.geom.stencil(self.p)
 
         f0, f1 = self.geom.range_of(field_mesh)

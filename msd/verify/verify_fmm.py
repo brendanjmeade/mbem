@@ -88,6 +88,16 @@ PAIR_TOL = defaults.FMM_PAIR_PARITY
 OP_TOL = defaults.FMM_OPERATOR_PARITY
 NAIVE_TOL = defaults.FMM_OPERATOR_PARITY_NAIVE
 ORDER = {KERNEL_U: defaults.FMM_ORDER_U, KERNEL_T: defaults.FMM_ORDER_T}
+# Placement safety this gate's trees are built at, PINNED rather than read
+# from OCTREE_PLACEMENT_SAFETY, because the shipping value is chosen for a
+# 4M-unknown mesh and this model has 2,592 unknowns. Measured on it: safety
+# 1.0 leaves U at 60.3 % with V 2588, W 758, X 437 box pairs; 1.5 empties W
+# and X entirely; 2.0 cuts V to 384; and 2.5 and above leave U at 100 %, no
+# far field at all, so the operator clause would divide roundoff by roundoff.
+# A gate that follows the default would therefore stop exercising the very
+# lists it exists to check. What the default is measured against is
+# topo_inclusion at three scales, recorded beside the constant.
+SAFETY = 1.0
 
 
 # ---------------------------------------------------------------------
@@ -140,7 +150,8 @@ def _zone():
     system = generate_system(model)
     dense = AssembledDense(system, EPS, "direct", jump="half")
     arrays = kb.MeshArrays()
-    geom = FmmTree(_zone_meshes(model), arrays=arrays)
+    geom = FmmTree(_zone_meshes(model), arrays=arrays,
+                   placement_safety=SAFETY)
     _CACHE["zone"] = (model, system, dense, geom, arrays)
     return _CACHE["zone"]
 
@@ -678,6 +689,12 @@ def _wx_margin(gm) -> tuple:
     exceed 1, and neither is implied by max|xhat|, which is about a box's
     own contents. A domain inflation spends them: the X margin is the
     target domain's to lose, so a source-only inflation leaves it alone.
+
+    The X margin is read off the DOMAIN-BLIND list -- the entries emitted
+    plus the entries ``FMM_X_MARGIN`` refused -- because it is a statement
+    about what the domain does to the geometry, and the rule's own job is to
+    keep the bad ones out of the list. Measuring the surviving entries would
+    report the threshold back at every domain that has any.
     """
     tree = gm.tree
     sc, sh = gm.src_dom
@@ -689,8 +706,8 @@ def _wx_margin(gm) -> tuple:
             for b in lst:
                 w = min(w, float(np.abs((pts - sc[b]) / sh[b]
                                         ).max(axis=1).min()))
-    for a, lst in gm.lists.X.items():
-        for b in lst:
+    for a in set(gm.lists.X) | set(gm.lists.X_demoted):
+        for b in gm.lists.X.get(a, []) + gm.lists.X_demoted.get(a, []):
             held = tree.elements_of(b)
             if held.size:
                 v = gm.verts[held].reshape(-1, 3)
@@ -711,7 +728,7 @@ def _floor_is_load_bearing(meshes, arrays) -> tuple:
     keep = defaults.FMM_MIN_HALF_OVER_EDGE
     defaults.FMM_MIN_HALF_OVER_EDGE = 0.0
     try:
-        gm = FmmTree(meshes, arrays=arrays)
+        gm = FmmTree(meshes, arrays=arrays, placement_safety=SAFETY)
         flat = int((gm.src_dom[1] == 0.0).any(axis=1).sum())
         with np.errstate(divide="ignore", invalid="ignore"):
             p2m = gm.stencil(4).p2m
@@ -800,10 +817,15 @@ def check_domain() -> bool:
 
     meshes = _zone_meshes(model)
     trees = {"extent": geom,
-             "cube": FmmTree(meshes, domain="cube"),
-             f"cube f={f:g}": FmmTree(meshes, domain="cube", inflate=f),
-             f"src f={f:g}": FmmTree(meshes, domain="cube", inflate=(f, 1.0)),
-             "canonical": FmmTree(meshes, domain="canonical")}
+             "cube": FmmTree(meshes, domain="cube",
+                             placement_safety=SAFETY),
+             f"cube f={f:g}": FmmTree(meshes, domain="cube", inflate=f,
+                                      placement_safety=SAFETY),
+             f"src f={f:g}": FmmTree(meshes, domain="cube",
+                                     inflate=(f, 1.0),
+                                     placement_safety=SAFETY),
+             "canonical": FmmTree(meshes, domain="canonical",
+                                  placement_safety=SAFETY)}
     flat, nan_rows = _floor_is_load_bearing(meshes, _arrays)
     print(f"    half-width floor {defaults.FMM_MIN_HALF_OVER_EDGE:g} of the "
           f"cube edge: without it {flat} boxes get a zero source half-width "

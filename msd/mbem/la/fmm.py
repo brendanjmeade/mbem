@@ -600,6 +600,12 @@ class FmmTree:
 # The pair operator
 # ---------------------------------------------------------------------
 
+def kernel_n_basis_charge(kernel: str) -> int:
+    """Charge components a box's multipole carries: 3 for U's traction, 9
+    for T's ``b_j n_m``."""
+    return 3 if kernel == KERNEL_U else 9
+
+
 def _order_for(kernel: str) -> int:
     return defaults.FMM_ORDER_T if kernel == KERNEL_T else defaults.FMM_ORDER_U
 
@@ -650,14 +656,15 @@ class PairFMM:
         # The far kernel's evaluator. "evaluated" is the reference every
         # other value is gated against; it stays the default so a gate that
         # names none compares against the reference by construction.
-        if m2l not in ("evaluated", "numba"):
-            raise ValueError('m2l is "evaluated" or "numba"')
+        if m2l not in ("evaluated", "numba", "table"):
+            raise ValueError('m2l is "evaluated", "numba" or "table"')
         self.m2l = m2l
-        if m2l == "numba":
+        if m2l in ("numba", "table"):
             from . import fmm_numba
             self._apply = fmm_numba.far_apply
         else:
             self._apply = _far_apply
+        self._table = None
         self.p = int(p) if p is not None else _order_for(kernel)
         # A sequence in either role is several meshes; eps and scales are then
         # one per SOURCE mesh. Keyed off the argument's own type and not off
@@ -855,6 +862,91 @@ class PairFMM:
                        else q.reshape(q.shape[0], 3, 3, k))
         return out
 
+    def _m2l_table(self, Mc: list, Lc: list, params: list, k: int) -> set:
+        """M2L key-major: one GEMM per (transfer offset, eps pass).
+
+        Returns the (target, source) pairs it handled; the caller evaluates
+        the rest matrix-free, which is what happens for an offset past
+        ``FMM_M2L_TABLE_MAX_BYTES`` and for every pair when the domain has
+        no shared lattice at all.
+
+        The BATCH is the point. A transfer offset is worth a table only
+        above m ~ 8 pairs (measured: 0.499 ms per V pair at m = 1 against
+        the matrix-free kernel's 0.399, 0.064 at m = 114), which is why
+        this is grouped over one traversal of the whole operator and not
+        per pair, where the batch is 1.60.
+        """
+        from .fmm_table import M2LTable
+
+        tree = self.geom.tree
+        p3, nc = self.p ** 3, kernel_n_basis_charge(self.kernel)
+        if self._table is None:
+            u = self._unit_lattice()
+            self._table = False if u is None else M2LTable(
+                self.kernel, self.p, params, u)
+        if self._table is False:
+            return set()
+        table = self._table
+        done: set = set()
+        for off, prs in self._m2l_by_offset().items():
+            B = table.block(off)
+            if B is None:                      # past the cap: stay exact
+                continue
+            m = len(prs)
+            half = np.array([0.5 * float(tree.cube(b)[1][0] - tree.cube(b)[0][0])
+                             for _a, b in prs])
+            for ip, Bi in enumerate(B):
+                s = half ** (-table.degree[ip])
+                cols = np.empty((nc * p3, m * k))
+                for j, (_a, b) in enumerate(prs):
+                    q = Mc[b][:, :, ip * k:(ip + 1) * k]
+                    cols[:, j * k:(j + 1) * k] = s[j] * q.reshape(nc * p3, k)
+                res = Bi @ cols
+                for j, (a, _b) in enumerate(prs):
+                    val = res[:, j * k:(j + 1) * k].reshape(p3, 3, k)
+                    Lc[a] = val if Lc[a] is None else Lc[a] + val
+            done.update(prs)
+        return done
+
+    def _unit_lattice(self):
+        """The lattice every box's M2L nodes are a translate and scaling of,
+        in units of the half-width -- or None if they are not.
+
+        A shared table exists only on a translation-invariant lattice, which
+        is what ``domain="cube"`` and ``"canonical"`` give and the extent's
+        per-box bounding boxes do not. Checked rather than assumed: a table
+        built on a domain that does not have one would be silently wrong,
+        where falling back to the matrix-free kernel is merely slower.
+        """
+        tree = self.geom.tree
+        ref = None
+        for a, _rows, bs, _n in self._m2l:
+            for bi in (a, *bs):
+                lo, hi = tree.cube(bi)
+                h = 0.5 * float(hi[0] - lo[0])
+                if h <= 0.0:
+                    return None
+                u = (self.st.src_m2l_nodes[bi] - 0.5 * (lo + hi)) / h
+                if ref is None:
+                    ref = u
+                elif not np.allclose(u, ref, rtol=0.0, atol=1e-9):
+                    return None
+        return ref
+
+    def _m2l_by_offset(self) -> dict:
+        """``{integer offset: [(target box, source box)]}`` over the V list.
+
+        The key is integer box coordinates, never float geometry: per-box
+        lattices differ from an exact translate in the last bits, so a float
+        key would miss and two pairs that must share a block would build two.
+        """
+        tree = self.geom.tree
+        out: dict = {}
+        for a, _rows, bs, _n in self._m2l:
+            for b in bs:
+                out.setdefault(tree.transfer_offset(a, b), []).append((a, b))
+        return out
+
     def _canonical(self, boxes: list, which: str, only=None) -> list:
         """One box list carried between its own domain and the cube lattice.
 
@@ -923,10 +1015,15 @@ class PairFMM:
         used = {b for _a, _r, bs, _n in self._m2l for b in bs}
         Mc = self._canonical(M, "e2c_src", used)
         Lc = [None] * len(tree.boxes) if Mc is not M else Lx
+        done = self._m2l_table(Mc, Lc, params, k) if self.m2l == "table" \
+            else set()
         for a, _rows, bs, _n in self._m2l:
+            rest = [b for b in bs if (a, b) not in done]
+            if not rest:
+                continue
             xt = self.st.tgt_m2l_nodes[a]
-            for i0 in range(0, len(bs), step):
-                chunk = bs[i0:i0 + step]
+            for i0 in range(0, len(rest), step):
+                chunk = rest[i0:i0 + step]
                 ys = np.concatenate([self.st.src_m2l_nodes[b] for b in chunk])
                 qs = self._split(np.concatenate([Mc[b] for b in chunk]), k)
                 val = self._apply(self.kernel, xt, ys, qs, params)

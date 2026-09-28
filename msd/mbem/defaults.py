@@ -513,6 +513,13 @@ FMM_EPS_TERM_GAIN_OPERATOR = 1.5
 # rho is dominated by the domain's thinnest axis and a Euclidean gap over the
 # half-diagonal is not.
 FMM_X_MARGIN = 2.0
+# Resident bytes of shared M2L blocks. A T key at p = 8 is 108 MiB (two eps
+# passes of (3p^3, 9p^3) float64), so the full 316-offset table is 33.3 GiB --
+# affordable at the 4M target, not while a gate runs. Offsets past the cap
+# fall back to the matrix-free kernel, which is exact and only slower, so this
+# trades speed for memory and never accuracy. 2 GiB holds every offset at
+# p <= 5 and the hottest few at the shipping orders.
+FMM_M2L_TABLE_MAX_BYTES = 2 * 1024**3
 # Floor on an interpolation domain's half-width, in units of the box's own
 # cube edge. A flat patch leaves its boxes zero extent across the plane, and
 # a zero width divides the rounding of a quadrature point by itself; the

@@ -73,6 +73,7 @@ from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
 from mbem.la.fmm import (FarGroups, FmmTree, PairFMM, _cheb_nodes,  # noqa: E402
                          _far_apply, _far_params)
+from mbem.la.fmm_table import pass_degree                         # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 from mbem.model.equations import (add_block_diagonal,            # noqa: E402
                                   term_diagonal)
@@ -315,6 +316,14 @@ def _pair_report(name, pair, exact, coeffs, rng, far=None) -> tuple:
     return e2, emax
 
 
+def _panel_lattice(p: int) -> np.ndarray:
+    """The Chebyshev lattice at unit half-width, in the node order
+    ``_Stencil`` uses -- the one every box's M2L nodes translate."""
+    c = _cheb_nodes(p)
+    return np.stack(np.meshgrid(c, c, c, indexing="ij"),
+                    axis=-1).reshape(-1, 3)
+
+
 def check_pair() -> bool:
     """[b] matvec and the matrix itself against the exact dense pair."""
     field, source = _panels()
@@ -351,14 +360,46 @@ def check_pair() -> bool:
         # and not against the exact kernel: the same arithmetic in a different
         # summation order, so the limit is roundoff. Against PAIR_TOL a
         # variant could regress by four orders and still pass.
-        t0 = time.time()
-        var = PairFMM(field, source, kernel, eps, p=ORDER[kernel],
-                      m2l="numba")
         xv = rng.standard_normal(pair.shape[1])
-        v2, vmax = _errs(var.matvec(c, xv), pair.matvec(c, xv))
-        print(f"    [{kernel}] m2l=numba vs the reference evaluator: 2-norm "
-              f"{v2:.3e}  max-entry {vmax:.3e}   ({time.time() - t0:.1f}s)")
-        ok &= max(v2, vmax) < VARIANT_TOL
+        ref_v = pair.matvec(c, xv)
+        for variant in ("numba", "table"):
+            t0 = time.time()
+            # "table" needs a translation-invariant lattice, which the
+            # default extent domain does not have -- it would silently fall
+            # back and gate nothing, so it is named here.
+            kw = {} if variant == "numba" else {"domain": "canonical"}
+            var = PairFMM(field, source, kernel, eps, p=ORDER[kernel],
+                          m2l=variant, **kw)
+            base = ref_v if not kw else PairFMM(
+                field, source, kernel, eps, p=ORDER[kernel], **kw).matvec(c, xv)
+            v2, vmax = _errs(var.matvec(c, xv), base)
+            print(f"    [{kernel}] m2l={variant} vs the reference evaluator: "
+                  f"2-norm {v2:.3e}  max-entry {vmax:.3e}   "
+                  f"({time.time() - t0:.1f}s)")
+            ok &= max(v2, vmax) < VARIANT_TOL
+
+        # THE LEVEL FOLD, which is what makes the table O(1) in N: halving
+        # every length multiplies a pass by exactly 2**degree, and the
+        # degree is the radial power for U but power - 1 for T, every T term
+        # carrying one more factor of d upstairs. Gated with array_equal
+        # because the ratio is a power of two and there is nothing to round
+        # -- and because using the power for T is a factor of 2 per level of
+        # reuse, which a tolerance on the far field would swallow.
+        prm = _far_params(kernel, c)
+        u = _panel_lattice(ORDER[kernel])
+        d = np.array([2.0, 0.0, 0.0])
+        nc = 3 if kernel == KERNEL_U else 9
+        q = rng.standard_normal((u.shape[0],) + ((3,) if nc == 3 else (3, 3))
+                                + (1,))
+        exact = True
+        for p_i in prm:
+            deg = pass_degree(kernel, p_i[0])
+            one = _far_apply(kernel, u, u + 2 * d, [q], [p_i])
+            half = _far_apply(kernel, 0.5 * u, 0.5 * (u + 2 * d), [q], [p_i])
+            exact &= np.array_equal(half, (2.0 ** deg) * one)
+        print(f"    [{kernel}] level fold exact at degree "
+              f"{[pass_degree(kernel, p_i[0]) for p_i in prm]}: {exact}")
+        ok &= exact
     t0 = time.time()
     pair = PairFMM(field, source, KERNEL_U, eps, p=ORDER[KERNEL_U])
     c = np.asarray(kernel_coeffs(KERNEL_U, MAT))

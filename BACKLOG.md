@@ -837,6 +837,51 @@ assumes `GMRES_RESTART = 200` while the chunk-1000 projection is 125-206
 iterations, so the pessimistic end restarts and raising the restart to 300 costs
 ~6 GiB of the 19.1 GiB of headroom.
 
+**THE SHARED M2L TABLE IS BUILT, CORRECT, AND WORTH 1.5-1.7x -- NOT THE 6.5x
+THIS FILE PROJECTED** (`la/fmm_table.py`, `PairFMM(m2l="table")`). Tenth entry
+for the table of collapsed claims, and the same shape as the others: a phase
+measured in isolation, projected end to end.
+
+What is right. The block is `K(H (u_t - u_s - 2d))` at unit half-width, one per
+transfer OFFSET, and it reproduces `_far_apply` to **4.1e-15** over two kernels x
+three Poisson ratios x p in {4,5} x four offsets x three half-widths. The level
+folds out **BITWISE** -- halving every length multiplies a pass by exactly
+`2**degree`, measured rel 0.000e+00 -- and the degree is the radial power for U
+(1, 3) but **power - 1 for T** (2, 4), every T term carrying one more factor of d
+upstairs. Using the power for T is exactly 2x per level of reuse; `verify_fmm`
+[b] gates it with `np.array_equal`, which is the only limit that catches it.
+At the operator the table agrees with the matrix-free kernel to 1.1e-15/2.2e-15.
+
+What is wrong is the projected speed-up. Measured end to end on topo_inclusion,
+canonical, whole far-field matvec, the ENTIRE table resident:
+
+    scale 1 (31,098)  p=6/6  numba  3.24 s -> table 2.22 s   1.46x
+    scale 2 (117,120) p=6/6  numba 12.58 s -> table  7.49 s   1.68x
+
+Two reasons the 6.5x was never available. **Amdahl**: profiled after the numba
+kernel landed, M2L is 73 % of the far field (`far_apply` 7.46 s of 10.26 s) and
+the X list's exact triangle kernels are 22 % (`_exact` 2.21 s), so even a free
+M2L caps the far field at ~3.7x. And the **batch spread**: the 6.2x per-pair
+figure came from a uniform m = 114-512, while the real offsets have a median of
+58 at scale 1 against a V-weighted mean of 404 -- the mean is carried by a few
+wide keys, and the many narrow ones run at the skinny-GEMM end. The projection
+used the V-weighted mean as if every key had it.
+
+So the table is a real 1.5-1.7x that grows slowly with N, bought for ~8 GiB per
+(material, kernel) at p = 6 and 33 GiB at p = 8. **It is per material**, because
+`_far_params` folds the coefficient vector into the kernel, and a model with a
+host and a few inclusions therefore builds one table per region: at the gate
+model six tables compete for the cap and only 75 of 361 T offsets stay resident.
+Before this is worth its memory at 4M it wants the material-free geometry basis
+(14 U + 26 T scalar p^3 x p^3 tables, 57 MiB per key and ONE copy for every
+region), which is measured but unwritten. Until then `FMM_M2L_TABLE_MAX_BYTES`
+caps it and anything past the cap falls back to the matrix-free kernel, which is
+exact and merely slower -- the table trades speed for memory, never accuracy.
+
+**The next far-field target is the X list, not M2L.** 22 % of the far field is
+`_exact` re-running the analytic triangle kernels every matvec, with no cached
+form; that is now the largest single item after M2L and it is untouched.
+
 **The block-Jacobi APPLY is threaded, and the knob that sets its chunk now
 works.** Two separate defects, both silent.
 

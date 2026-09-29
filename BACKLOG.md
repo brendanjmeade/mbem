@@ -851,11 +851,22 @@ Fitted over all four: **build N^1.39**, ACA N^1.40, **matvec N^0.97**, bytes
 N^1.18, iterations N^0.28.
 
 **The matvec is O(N); ASSEMBLY is what scales badly.** 84-87 % of the build is
-the ACA phase at every rung, so the fold fix (2.8x on that phase, still
-unscheduled) is worth 2.3x on the whole build -- the single highest-value flat-H
-item, and larger than every partition constant and the kernel put together.
-Extrapolated to 1M elements the build is ~3.8 h and the fold fix takes it to
-~1.7 h.
+the ACA phase at every rung and 68.9 % of that is the fold, so the fold is the
+single highest-value flat-H item -- larger than every partition constant and the
+kernel put together. Extrapolated to 1M elements the build is ~3.8 h.
+
+**And the fix is the WRAPPER, not the QR** -- which this session's own summary
+got wrong before re-reading the profile above. `np.linalg.qr` already releases
+the GIL and is 86.8 % of a large fold, so replacing it attacks the part that
+already scales. What is GIL-held is `_unit_gram` x2, `_principal` x2 and the core
+products: ~5.7 ms per fold at ANY block size, because they work on (K, K)
+matrices with K ~ 102 independent of the block. That is 13 % of a 1024-element
+block but 55 % of a 128-element one, and the production partition is dominated by
+the small end -- which is why the measured scaling is worse than Amdahl and the
+shape is convoy rather than plain serialization. The fix is the WHOLE fold in one
+nogil kernel, whose one hard piece is a hand-rolled cyclic Jacobi for the (K, K)
+symmetric eigenproblem, numba's LAPACK having returned freed memory here
+(`c480c75`). Projected 2.1x on assembly.
 
 **The in-core ceiling is ~225-250k elements, not 1M.** Peak RSS is still 2.5x
 the operator bytes at the largest rung (6.0x, 5.7x, 2.9x, 2.5x -- the transient
@@ -891,8 +902,50 @@ itself wrong, because it compared against a ladder run that ALREADY had
 threading on -- measuring the fix and concluding the problem never existed. Never
 take a reference from a run the change under test has already moved.
 
-**The dense-LU rung's apply is NOT threaded and is now the binding cost below the
-dense cap.** At 117,120 unknowns threading buys 1.08x, because those
+**THE APPLY WAS NOT BANDWIDTH-BOUND, IT WAS THE WRONG BLAS CALL.** `getrs` with
+ONE right-hand side is `laswp` plus two `trsm` on a single column, and `trsm` on
+one column IS `trsv` -- but the `trsm` path reads the factor at 17-23 GB/s where
+the same factor read by `trsv` runs at 79-83, which is this machine's single-core
+streaming ceiling (74.5 GB/s measured). The apply is 0.25 flop/byte, so that
+ratio is the whole story: it was **4.4x off the bound it was assumed to be at.**
+
+Two changes, both EXACT -- nothing refactorized, nothing approximated. The dense
+rung precomputes LAPACK's swap sequence into one gather at build, fuses it with
+the layout permutation, and calls two TRSV (agrees with `lu_solve` entrywise to
+2e-14 at n up to 27,921, identical iterations and true residual). The chunked
+rung cannot use it, because scipy's TRSV wrapper HOLDS the GIL (70.4 ms at one
+worker, 70.9 at eight, cpu/wall 1.01) and would serialize the pool it depends
+on, so it gets a hand-written nogil triangular solve instead -- 2.5x slower
+serially, which is why the rung keeps scipy on its serial path. And
+`PRECOND_APPLY_MIN_CHUNKS` drops 8 -> 2: at chunk 9000 the six super-blocks at
+117,120 unknowns hold 4, 1, 4, 8, 1, 4 chunks, so five of six never reached the
+pool, which is the whole reason threading had bought 1.08x there.
+
+    N          apply before   apply now    ratio to matvec
+    117,120       653.1 ms     156.0 ms    8.50:1 -> 2.20:1   (4.19x)
+    260,598       659.1 ms     116.6 ms    3.96:1 -> 0.69:1   (5.65x)
+
+**At 260,598 the preconditioner apply is now CHEAPER than the matvec**, which
+was the point: it had been the per-iteration cost.
+
+float32 factors were measured and DEMOTED: 1.47x on top of this, and inside the
+noise once the apply is already at one matvec. Worth taking later for the memory
+(it halves the preconditioner's bytes at the target), not for the speed.
+
+**Two things measured here and deliberately NOT done.** Lowering the dense cap
+30,000 -> ~10,000 sends the big patch blocks to the threaded rung and measures
+free at 117,120 (37 iterations either way, relres 7.02e-09 against 7.63e-09),
+taking the apply to 68.0 ms and the preconditioner build 35.4 -> 10.4 s. But it
+is a policy reversal measured at ONE scale, it costs +4 iterations at 31k where
+the dense rung covers 100 % of the DOF, and the chunked rung is the one whose
+iteration count grows with N. Confirm at 260,598 first. And a blocked triangular
+solve with threaded off-diagonal updates was measured BOTH ways and is not
+worth it -- with one right-hand side the update is a GEMV, not a GEMM, so it
+moves the same bytes and only gains cores: 134.8 ms at 8 threads in one numba
+parallel kernel against 89.4 ms for the serial two-TRSV.
+
+**Superseded, kept for the shape of the error: the dense-LU rung's apply is NOT
+threaded and is the binding cost below the dense cap.** At 117,120 unknowns threading buys 1.08x, because those
 super-blocks sit under `dense_rung_max_dof` (~30,000) and take the dense rung,
 whose apply is ONE `lu_solve` per super-block (`_permuted_lu_solve`) rather than
 the chunked loop. That apply is ~600 ms, single-threaded (nrhs = 1 is level 2),

@@ -642,9 +642,18 @@ PRECOND_BJ_CHUNK_DOF = 9000
 # numba parallel=True. That is Amdahl, not a threading defect, and it is why
 # more threads buy nothing here.
 PRECOND_APPLY_THREADS = 8
-# Below this many chunks a super-block applies serially: the dispatch is not
-# free and a 4-chunk block measured 1.1-2.3x with visible jitter.
-PRECOND_APPLY_MIN_CHUNKS = 8
+# Below this many chunks a super-block applies serially, on scipy's lu_solve
+# rather than the nogil kernel. 8 was measured on the dispatch cost alone and
+# was too high to be useful: at chunk 9000 the six super-blocks of
+# topo_inclusion at 117,120 unknowns hold 4, 1, 4, 8, 1, 4 chunks, so five of
+# six never reached the pool and threading bought 1.08x there against 3.84x at
+# 260,598. 2 is the smallest count that can be split at all.
+PRECOND_APPLY_MIN_CHUNKS = 2
+# The nogil chunk solve against scipy's lu_solve on the same factor. Two
+# kernels for the same triangular solve, summing in different orders, so this
+# is roundoff and not an identity -- unlike the worker count, which cannot
+# move the answer at all and is gated with array_equal. Measured 5e-15.
+PRECOND_APPLY_PARITY = 1e-12
 
 # --- HODLR ladder rung ------------------------------------------------
 # Loose tolerance of the rung's approximate inverse. It cannot move the

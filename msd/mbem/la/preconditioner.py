@@ -61,7 +61,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from scipy.linalg import lu_factor, lu_solve
+from numba import njit
+from scipy.linalg import get_blas_funcs, lu_factor, lu_solve
 
 from .. import defaults
 from ..kernels import KERNEL_T, kernel_coeffs
@@ -384,9 +385,14 @@ class BlockGaussSeidel:
                 # holds its own copy of it.
                 del D_inter
                 perm = ev.concat_perm
+                # The pivot swaps become one gather, fused with the layout
+                # permutation, and the BLAS entry point is resolved once.
+                gather = perm[_pivot_gather(lu[1], perm.size)]
+                trsv = get_blas_funcs("trsv", (lu[0],))
 
-                def solve_fn(r, lu=lu, perm=perm):
-                    return _permuted_lu_solve(lu, r, perm)
+                def solve_fn(r, LU=lu[0], gather=gather, perm=perm,
+                             trsv=trsv):
+                    return _permuted_trsv_solve(LU, r, gather, perm, trsv)
 
                 sb.solve_fn = solve_fn
                 sb.rung = "dense_lu"
@@ -436,7 +442,12 @@ class BlockGaussSeidel:
                     D = ev.eval_block(ch, ch)
                     dof = (ev.d * ch[:, None]
                            + np.arange(ev.d)[None, :]).ravel()
-                    lus.append((dof, lu_factor(D)))
+                    lu = lu_factor(D)
+                    # (scatter rows, factor, gather rows): the pivot swaps
+                    # precomputed once so the pooled apply is one gather,
+                    # one in-place solve, one scatter.
+                    lus.append((dof, lu,
+                                dof[_pivot_gather(lu[1], dof.size)]))
                 perm = ev.concat_perm
 
                 def solve_fn(r, lus=lus, perm=perm):
@@ -537,6 +548,33 @@ def _apply_pool():
     return _APPLY_POOL
 
 
+@njit(nogil=True, cache=True)
+def _tri_solve(LU, x) -> None:
+    """``x <- U^-1 L^-1 x`` in place, for a Fortran-ordered LAPACK LU.
+
+    Hand-written because the pooled rung needs the GIL RELEASED and
+    scipy's TRSV wrapper holds it (measured 70.4 ms at one worker and
+    70.9 at eight, cpu/wall 1.01) -- dropping the dense rung's TRSV in
+    here by analogy would serialize the pool and make this rung slower
+    than it was. No LAPACK inside the kernel, so the read-after-free that
+    bit ``np.linalg.qr`` (`c480c75`) does not apply either.
+
+    Serially this is 2.5x slower than Accelerate's TRSV, so it only pays
+    where there are chunks to spread; below
+    ``PRECOND_APPLY_MIN_CHUNKS`` the caller stays on the serial path.
+    """
+    n = x.shape[0]
+    for j in range(n):
+        xj = x[j]
+        for i in range(j + 1, n):
+            x[i] -= LU[i, j] * xj
+    for j in range(n - 1, -1, -1):
+        x[j] /= LU[j, j]
+        xj = x[j]
+        for i in range(j):
+            x[i] -= LU[i, j] * xj
+
+
 def _bj_solve(lus, r_inter, z_inter) -> None:
     """``z_inter[dof] = lu_solve(lu, r_inter[dof])`` over every chunk.
 
@@ -544,35 +582,63 @@ def _bj_solve(lus, r_inter, z_inter) -> None:
     reduction and threading it is bitwise identical to the loop -- which
     is what ``check_bj_rung`` pins, and why the partition is STATIC and
     CONTIGUOUS: each worker runs its own chunks in the serial order.
-    ``scipy``'s ``lu_solve`` releases the GIL (measured against a
-    GIL-bound control through the same harness), and with one right-hand
-    side it is a level-2 solve that LAPACK never threads itself, so there
-    is nothing to oversubscribe. Several right-hand sides would make it
-    level 3 and that would stop being true.
+    Pooled, it runs the nogil ``_tri_solve``; serial, it stays on
+    scipy's ``lu_solve``, which is 2.5x faster per chunk but holds the
+    GIL through its TRSV. The two paths agree to 5e-15, not bitwise --
+    the kernel sums in a different order -- so a gate comparing them
+    wants a tolerance, while the property ``check_bj_rung`` actually
+    pins, threaded == serial through the SAME path, stays exact.
     """
     pool = _apply_pool() if len(lus) >= defaults.PRECOND_APPLY_MIN_CHUNKS \
         else None
     if pool is None:
-        for dof, lu in lus:
+        for dof, lu, _g in lus:
             z_inter[dof] = lu_solve(lu, r_inter[dof])
         return
 
     def run(rng):
-        for dof, lu in lus[rng[0]:rng[1]]:
-            z_inter[dof] = lu_solve(lu, r_inter[dof])
+        for dof, lu, g in lus[rng[0]:rng[1]]:
+            x = r_inter[g].copy()
+            _tri_solve(lu[0], x)
+            z_inter[dof] = x
 
     w = min(pool._max_workers, len(lus))
     cut = [len(lus) * i // w for i in range(w + 1)]
     list(pool.map(run, list(zip(cut[:-1], cut[1:]))))   # joins before return
 
 
-def _permuted_lu_solve(lu, r_concat, perm):
-    """Solve the interleaved-layout LU for a concat-layout RHS."""
-    r_inter = np.empty_like(r_concat)
-    r_inter[np.arange(perm.size)] = r_concat[perm]
-    x_inter = lu_solve(lu, r_inter)
-    x_concat = np.empty_like(x_inter)
-    x_concat[perm] = x_inter
+def _pivot_gather(piv: np.ndarray, n: int) -> np.ndarray:
+    """LAPACK's swap sequence as one gather, applied once at build."""
+    p = np.arange(n)
+    for i, j in enumerate(piv):
+        if j != i:
+            p[i], p[j] = p[j], p[i]
+    return p
+
+
+def _permuted_trsv_solve(LU, r_concat, gather, perm, trsv):
+    """Solve the interleaved-layout LU for a concat-layout RHS.
+
+    TWO TRSV, NOT ``lu_solve``, and the difference is a factor of 4.
+    ``getrs`` with ONE right-hand side is `laswp` plus two `trsm` on a
+    single column, and `trsm` on one column IS `trsv` -- but the `trsm`
+    path reads the factor at 17-23 GB/s where `trsv` reads it at 79-83,
+    which is this machine's single-core streaming ceiling (74.5 GB/s
+    measured). The apply is 0.25 flop/byte, so that ratio is the whole
+    story. Nothing is refactorized and nothing is approximated: the
+    pivot swaps are precomputed into ``gather`` at build and fused with
+    the layout permutation, and the result agrees with ``lu_solve``
+    entrywise to 2e-14 at n up to 27,921, at identical FGMRES iteration
+    counts and true residuals.
+
+    This is the rung that runs on the MAIN thread, so a GIL-holding BLAS
+    wrapper is free here. The chunked rung is pooled and must not use it
+    (see ``_bj_solve``).
+    """
+    y = trsv(LU, r_concat[gather], lower=1, diag=1)      # unit-diagonal L
+    y = trsv(LU, y, lower=0)                             # U
+    x_concat = np.empty_like(y)
+    x_concat[perm] = y
     return x_concat
 
 

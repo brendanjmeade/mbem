@@ -646,10 +646,14 @@ def check_bj_rung():
     ok &= narrow[1] >= 2 * wide[1] and rebound == narrow
     ok &= (wide[0], narrow[0]) == (1500, 750)
 
-    # THE THREADED APPLY IS BITWISE. Its chunks own disjoint index sets, so
-    # there is no reduction to reassociate and nothing may move: threads are
-    # a scheduling change, not an arithmetic one. Gated with array_equal and
-    # not a tolerance -- a tolerance would accept a real reordering.
+    # THE APPLY, two properties that are NOT the same and must not be
+    # conflated. The chunks own disjoint index sets, so the WORKER COUNT
+    # cannot change the answer at all: that is gated with array_equal,
+    # because a tolerance there would accept a real reordering. But the
+    # pooled path runs the nogil `_tri_solve` while the serial path runs
+    # scipy's `lu_solve` -- two kernels summing in different orders, which
+    # agree to roundoff and not bitwise. Gating THAT with array_equal would
+    # be a false identity.
     M = BlockGaussSeidel(hasm, max_dense=200, above_dense="block_jacobi",
                          hodlr_max=0, bj_chunk=200, grouping="patch")
     nch = sum(sb.get("chunks", 0) for sb in M.summary()["super_blocks"]
@@ -658,15 +662,20 @@ def check_bj_rung():
     held = defaults.PRECOND_APPLY_THREADS
     try:
         defaults.PRECOND_APPLY_THREADS = 1
-        serial = M(r)
-        defaults.PRECOND_APPLY_THREADS = max(2, held)
-        threaded = M(r)
+        serial = M(r)                      # scipy, no pool
+        defaults.PRECOND_APPLY_THREADS = 2
+        narrow = M(r)                      # nogil kernel, 2-way partition
+        defaults.PRECOND_APPLY_THREADS = max(3, held)
+        wide = M(r)                        # nogil kernel, wider partition
     finally:
         defaults.PRECOND_APPLY_THREADS = held
-    same = np.array_equal(serial, threaded)
-    print(f"    threaded apply over {nch} chunks on "
-          f"{max(2, held)} threads, bitwise vs serial: {same}")
-    return ok and same
+    same = np.array_equal(narrow, wide)
+    rel = float(np.max(np.abs(wide - serial))
+                / max(float(np.max(np.abs(serial))), 1e-300))
+    print(f"    apply over {nch} chunks: partition-independent "
+          f"(2 vs {max(3, held)} threads) bitwise {same}; "
+          f"nogil kernel vs scipy {rel:.3e}")
+    return ok and same and rel < defaults.PRECOND_APPLY_PARITY
 
 
 def _flat_view_parity(hasm, label, with_dense: bool):

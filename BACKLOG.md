@@ -848,7 +848,8 @@ topo_inclusion, hmat, float32 storage, `37c2ff8`:
    107,790   459,516  581.8 s   84   39.7 s  33.5 s  49 349.1 ms  23.90 GB  59.5  5.9e-05
 
 Fitted over all four: **build N^1.39**, ACA N^1.40, **matvec N^0.97**, bytes
-N^1.18, iterations N^0.28.
+N^1.18, iterations N^0.28. (The build and ACA columns are PRE-FOLD; the fold
+commit below takes them to 7.6 / 48.2 / 144.0 / 314.1 s at the same exponent.)
 
 **The matvec is O(N); ASSEMBLY is what scales badly.** 84-87 % of the build is
 the ACA phase at every rung and 68.9 % of that is the fold, so the fold is the
@@ -859,14 +860,25 @@ kernel put together. Extrapolated to 1M elements the build is ~3.8 h.
 (`la/fold_numba.py`, `PendingLR.fold`, `hop._compress_all`). Measured on the
 same ladder, everything else held:
 
-    unknowns    build before   build now   bytes/unk   iters   op error
-      31,098        13.5 s        7.6 s      34586      23     4.2e-05
-     117,120        90.8 s       48.2 s      40744      37     2.8e-05
-     260,598       265.6 s      144.0 s      48345      42     1.6e-05
-                                 1.78-1.88x   SAME      SAME     SAME
+    unknowns    build before   build now   speedup   aca before   aca now
+      31,098        13.5 s        7.6 s      1.79x      11.4 s     5.5 s
+     117,120        90.8 s       48.2 s      1.88x      78.7 s    36.1 s
+     260,598       265.6 s      144.0 s      1.84x     228.0 s   106.2 s
+     459,516       581.8 s      314.1 s      1.85x     488.6 s   222.1 s
 
-Same operator to the digit -- same bytes per unknown, same iteration counts,
-same operator errors -- so the speed-up is free. Against the projected 2.1x.
+**The speed-up is UNIFORM across the ladder** (spread 1.06x), so the scaling is
+untouched: build stays N^1.38 against N^1.39, ACA N^1.37 against N^1.40, matvec
+N^0.97 and bytes N^1.18 unchanged to two digits. That was an assumption worth
+measuring rather than stating -- a fold speed-up concentrated at one end would
+have moved the exponent, which is the number the whole flat-H-vs-bbFMM
+comparison turns on.
+
+And the operator is the same to 7 digits, not bitwise: iteration counts are
+IDENTICAL at all four rungs, stored bytes are byte-identical at three of them,
+and scale 4 differs by 6,384 bytes in 25.66 GB (2.5e-7) -- one block of ~100,000
+keeping one extra column, which is the +1 on kv the prototype measured on 1 of
+45 blocks. Operator error moves in the fifth digit (5.8830e-05 -> 5.8864e-05).
+Against the projected 2.1x.
 
 Two measurements forced the algorithm, and the OBVIOUS version of this kernel is
 1.05x, i.e. nothing. A column-at-a-time Gram-Schmidt is 3.7x numpy's QR because

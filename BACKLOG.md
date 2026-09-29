@@ -992,6 +992,62 @@ the chunked loop. That apply is ~600 ms, single-threaded (nrhs = 1 is level 2),
 and it is 8.5x the matvec there -- which is also what makes 117k the anomalous
 row above, at 36 s of preconditioner build and 617 ms per iteration.
 
+**THE X LIST IS THE ONLY W/X ITEM WORTH TAKING, AND IT IS WORTH 1.2-1.3x --
+NOT "the largest single item".** Node-pair counts by list, with the per-group
+p^3 (U runs p = 6, T p = 8; a first pass that used one p^3 for both, and the
+tree's total subtree rather than the pair's own, inflated the case):
+
+    U 0.1 %    V 97.7 %    W 1.1 %    X 1.1 %
+
+So the recorded "M2P/P2L are 9.4-16.9x more work than direct" is a ratio WITHIN
+those lists, not their share of the operator. Re-measured with the two traps
+fixed it is 8.8-16.9x for W and 12.0-24.4x for X.
+
+**W is noise and X is not, and the reason is the kernel.** X carries 1.1 % of
+the node-pairs at ~22 % of the time, because `_exact` integrates each source
+triangle ANALYTICALLY to p^3 target nodes, ~25x the cost of a point evaluation;
+W goes through the point kernel and is ~1 %. Demoting W would add 13.3 M near
+pairs at scale 3 for under 1 %. Only X is demoted.
+
+**The quadrature alternative was measured and LOSES.** Replacing the analytic
+P2L with an n x n Duffy rule through the point kernel, on real X entries:
+
+    kernel  rule        worst rel   median     speed-up
+    U       n=2 (4 pt)   8.1e-04    2.4e-04      1.7x
+    U       n=3 (9 pt)   1.1e-05    1.9e-06      1.4x
+    T       n=2          3.5e-02    2.4e-03      4.0x
+    T       n=3          2.8e-03    1.0e-04      2.5x
+
+T at nine points is still 2.8e-03 worst case, **14x over FMM_OPERATOR_PARITY**,
+for 2.5x. The "6-point rule, 5.8x cheaper" recorded from the H path is the right
+order per evaluation and does not survive T's accuracy requirement here.
+
+**Demotion is better than "cheaper": it makes X FREE.** An X entry re-evaluates
+the analytic kernel EVERY matvec with no cache, while the U list it lands in is
+cached per material. Caching X as it stands is the trap -- its blocks are
+(3p^3, 3 res), 16.9 GB at scale 3 against demotion's 0.8 GB, which is the
+"~1.6 TB at 4M" recorded elsewhere. Demotion is cheap precisely BECAUSE the
+subtree is small, the same fact that made the expansion wasteful.
+
+Measured (`FMM_X_MIN_SUBTREE = 216`, the smaller of the two lattices, so no
+entry is demoted that the U kernel would still have won on):
+
+    scale  N          matvec              X entries      near pairs        delta
+      1    31,098     10.05 -> 7.79 s     6,041 -> 82    5.67 -> 7.40 M    4.9e-06
+      2   117,120     42.94 -> 35.83 s   18,535 -> 602  20.0 -> 24.9 M    3.4e-06
+
+1.29x and 1.20x, for +31 % / +24 % of near field. The delta is against a 2e-4
+limit and is in the direction of EXACTNESS, which is worth something on its own
+where the scale-3 margin is 1.1x.
+
+The rule lives on `FmmTree`, not `InteractionLists`, and the default there is
+OFF: whether an expansion beats direct depends on p^3, which the tree does not
+know. `verify_octree` [g] pins the MARGIN rule with the size rule off -- on the
+gate's small model the size rule refuses everything, which would have made the
+selectivity checks vacuous -- and [h] pins the size rule's own endpoints: no-op
+at 0, drains X at infinity, `U + V + W + X = N^2` EXACT at both and at the
+shipping limit.
+
 **THE SHARED M2L TABLE IS BUILT, CORRECT, AND WORTH 1.5-1.7x -- NOT THE 6.5x
 THIS FILE PROJECTED** (`la/fmm_table.py`, `PairFMM(m2l="table")`). Tenth entry
 for the table of collapsed claims, and the same shape as the others: a phase

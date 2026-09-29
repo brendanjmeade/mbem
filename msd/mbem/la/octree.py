@@ -466,9 +466,14 @@ class InteractionLists:
     list tested.
     """
 
-    def __init__(self, tree: Octree, x_margin: XMargin | None = None):
+    def __init__(self, tree: Octree, x_margin: XMargin | None = None,
+                 x_min_subtree: int = 0):
         self.tree = tree
         self.x_margin = x_margin
+        # OFF by default: this is a COST policy, not a geometric property.
+        # Whether an expansion beats direct depends on p^3, which the tree
+        # does not know, so the caller that knows it (``FmmTree``) sets it.
+        self.x_min_subtree = int(x_min_subtree)
         self.U = defaultdict(list)
         self.V = defaultdict(list)
         self.W = defaultdict(list)
@@ -542,7 +547,19 @@ class InteractionLists:
             return
         if not self._adjacent(a, b):
             m = self.x_margin
-            if m is None or m.rho(t, a, b) >= m.threshold:
+            clears = m is None or m.rho(t, a, b) >= m.threshold
+            # AND the subtree has to be worth an expansion at all. P2L costs
+            # p^3 x res(b) whatever the subtree holds, against subtree x
+            # res(b) direct, so an entry whose subtree is smaller than the
+            # interpolation lattice is pure loss -- and the median one holds
+            # 9 elements against p^3 = 216 (U) or 512 (T), which is why the
+            # list measures 8.8-24x more work than doing it directly.
+            # Demotion is also the only route that makes it FREE rather than
+            # cheaper: an X entry re-evaluates the analytic triangle kernel
+            # every matvec, while the U list it lands in is cached per
+            # material.
+            worth = t.n_subtree[a] >= self.x_min_subtree
+            if clears and worth:
                 self.X[a].append(b)
                 return
             self.X_demoted[a].append(b)

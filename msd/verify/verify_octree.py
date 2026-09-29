@@ -201,8 +201,12 @@ def _list_sets(refine: float) -> list:
     between lists, never a box."""
     arrays = kb.MeshArrays()
     meshes = _meshes(_zone_model(refine))
-    trees = [(label, FmmTree(meshes, arrays=arrays,
-                             placement_safety=SAFETY, **kw))
+    # x_min_subtree=0 ISOLATES the margin rule: the size rule refuses on a
+    # cost criterion that has nothing to do with the margin, and on a model
+    # this small it refuses everything, so leaving it on would make the
+    # selectivity checks below vacuous. It gets its own clause.
+    trees = [(label, FmmTree(meshes, arrays=arrays, placement_safety=SAFETY,
+                             x_min_subtree=0, **kw))
              for label, kw in DOMAINS]
     out = [("no rule", trees[0][1], InteractionLists(trees[0][1].tree))]
     out += [(f"rule {defaults.FMM_X_MARGIN:g} / {label}", gm, gm.lists)
@@ -392,8 +396,8 @@ def check_x_rule() -> bool:
         arrays = kb.MeshArrays()
         meshes = _meshes(_zone_model(refine))
         for label, kw in DOMAINS:
-            gm = FmmTree(meshes, arrays=arrays,
-                         placement_safety=SAFETY, **kw)
+            gm = FmmTree(meshes, arrays=arrays, placement_safety=SAFETY,
+                         x_min_subtree=0, **kw)     # the MARGIN rule alone
             tree, on = gm.tree, gm.lists
             m = XMargin(gm.verts, *gm.tgt_dom, tau)
             base = InteractionLists(tree)
@@ -448,6 +452,35 @@ def check_x_rule() -> bool:
                   f"{selection}, tau=0 no-op {no_op}, tau=inf drains X "
                   f"{drained}, identity exact at both {all(ends.values())}")
             ok &= selection and no_op and drained and all(ends.values())
+
+    # [h] The X SIZE rule, which is a cost criterion and not a margin one:
+    # a P2L costs p^3 x res(b) whatever the subtree holds, so an entry whose
+    # subtree is smaller than the lattice is pure loss. Its endpoints are the
+    # same shape as the margin rule's -- 0 is a no-op, a huge limit drains X
+    # -- and conservation must stay EXACT at both, because a refused entry
+    # falls through to the same split the adjacent case uses.
+    arrays = kb.MeshArrays()
+    meshes = _meshes(_zone_model(REFINES[-1]))
+    base = FmmTree(meshes, arrays=arrays, placement_safety=SAFETY,
+                   x_min_subtree=0, **DOMAINS[0][1])
+    n_elem = base.tree.n
+    for lim, want in ((0, "no-op"), (defaults.FMM_X_MIN_SUBTREE, "shipping"),
+                      (10 ** 9, "drains")):
+        gm = FmmTree(meshes, arrays=arrays, placement_safety=SAFETY,
+                     x_min_subtree=lim, **DOMAINS[0][1])
+        c = gm.lists.counts()
+        pairs = _pair_totals(gm.tree, gm.lists)
+        exact = pairs["total"] == n_elem ** 2
+        small = all(gm.tree.n_subtree[a] >= lim
+                    for a, bs in gm.lists.X.items() for _b in bs)
+        print(f"    size rule {lim:>10} ({want:>8}): X {c['X']:>5} "
+              f"U {c['U']:>6}, every kept subtree >= limit {small}, "
+              f"U + V + W + X = N^2 {exact}")
+        ok &= exact and small
+        if lim == 0:
+            ok &= c["X"] == base.lists.counts()["X"]
+        if lim == 10 ** 9:
+            ok &= c["X"] == 0
     return ok
 
 

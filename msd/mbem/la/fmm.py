@@ -459,6 +459,7 @@ class FmmTree:
                  placement_safety: float = defaults.OCTREE_PLACEMENT_SAFETY,
                  domain: str = "extent", inflate=1.0,
                  x_margin: float = defaults.FMM_X_MARGIN,
+                 x_min_subtree: int | None = None,
                  arrays: kb.MeshArrays | None = None):
         if domain not in ("extent", "cube", "canonical"):
             raise ValueError(f"unknown interpolation domain {domain!r}")
@@ -499,8 +500,11 @@ class FmmTree:
         # cube, contents extent) is this class's choice, not the tree's. The
         # rest of the traversal is domain-blind and does not care.
         self.x_margin = float(x_margin)
+        self.x_min_subtree = (defaults.FMM_X_MIN_SUBTREE
+                              if x_min_subtree is None else int(x_min_subtree))
         self.lists = InteractionLists(
-            self.tree, XMargin(self.verts, *self.tgt_dom, self.x_margin))
+            self.tree, XMargin(self.verts, *self.tgt_dom, self.x_margin),
+            x_min_subtree=self.x_min_subtree)
         # The lattice M2L is stated on when it is not the role's own:
         # translation-invariant, hence shared, hence the canonical frame.
         # Always the nominal cube -- ``inflate`` scales the extents P2M and

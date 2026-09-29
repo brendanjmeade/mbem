@@ -527,6 +527,19 @@ FMM_EPS_TERM_GAIN_OPERATOR = 1.5
 # rho is dominated by the domain's thinnest axis and a Euclidean gap over the
 # half-diagonal is not.
 FMM_X_MARGIN = 2.0
+# Smallest subtree worth a P2L expansion, in elements. An X entry costs
+# p^3 x res(b) whatever its subtree holds, against subtree x res(b) done
+# directly, so anything under the interpolation lattice is pure loss -- and
+# the median X subtree holds 9-11 elements against p^3 = 216 (U) / 512 (T).
+# Measured on topo_inclusion, the list does 12.0-24.4x more work than direct.
+# 216 is the SMALLER of the two lattices, so no entry is demoted that the U
+# kernel would still have won on. Demotion is the only route that makes X
+# free rather than cheaper: an X entry re-evaluates the analytic triangle
+# kernel every matvec while the U list it lands in is cached per material,
+# and it is EXACT where a quadrature P2L is not (a 9-point rule measured
+# 2.8e-03 worst case on T, 14x over FMM_OPERATOR_PARITY, for 2.5x).
+# It is not free in memory: the demoted pairs are stored near field.
+FMM_X_MIN_SUBTREE = 216
 # Resident bytes of shared M2L blocks. A T key at p = 8 is 108 MiB (two eps
 # passes of (3p^3, 9p^3) float64), so the full 316-offset table is 33.3 GiB --
 # affordable at the 4M target, not while a gate runs. Offsets past the cap

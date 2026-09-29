@@ -855,6 +855,34 @@ the ACA phase at every rung and 68.9 % of that is the fold, so the fold is the
 single highest-value flat-H item -- larger than every partition constant and the
 kernel put together. Extrapolated to 1M elements the build is ~3.8 h.
 
+**THE FOLD IS ONE NOGIL KERNEL AND RUNS ON THE POOL: 1.84x ON THE BUILD**
+(`la/fold_numba.py`, `PendingLR.fold`, `hop._compress_all`). Measured on the
+same ladder, everything else held:
+
+    unknowns    build before   build now   bytes/unk   iters   op error
+      31,098        13.5 s        7.6 s      34586      23     4.2e-05
+     117,120        90.8 s       48.2 s      40744      37     2.8e-05
+     260,598       265.6 s      144.0 s      48345      42     1.6e-05
+                                 1.78-1.88x   SAME      SAME     SAME
+
+Same operator to the digit -- same bytes per unknown, same iteration counts,
+same operator errors -- so the speed-up is free. Against the projected 2.1x.
+
+Two measurements forced the algorithm, and the OBVIOUS version of this kernel is
+1.05x, i.e. nothing. A column-at-a-time Gram-Schmidt is 3.7x numpy's QR because
+it is BLAS-2, so the QR is blocked into panels whose two orthogonalization
+passes are four GEMMs. And a full (K, K) cyclic Jacobi is **23x `eigh`, not the
+~3x this file projected**, and it is O(n^3) -- so the eigenproblem is DEFLATED by
+a pivoted Cholesky first, which cuts n by ~1.3x per side. The deflation's error
+bookkeeping is exact rather than heuristic: with `G = A A^T` the Schur-complement
+trace bounds the discarded energy, and carrying it as already-spent budget makes
+the truncation decision the reference's -- measured EQUAL keep counts on all 90
+real Gram matrices of 45 blocks x 2 sides.
+
+No LAPACK factorization anywhere, which is forced rather than stylistic: numba's
+`np.linalg.qr` returned memory read after free (`c480c75`) and scipy's economic
+QR silently corrupts 2-6 stored blocks per model. Only `np.dot` is borrowed.
+
 **And the fix is the WRAPPER, not the QR** -- which this session's own summary
 got wrong before re-reading the profile above. `np.linalg.qr` already releases
 the GIL and is 86.8 % of a large fold, so replacing it attacks the part that

@@ -188,6 +188,20 @@ ACA_RETRY_TOL_FACTOR = 10.0
 # multiplied by -- measured 1.5 over those blocks, so 0.1 holds to a
 # cancellation factor of 10.
 ACA_JOINT_TOL_FACTOR = 0.1
+# Panel width of the fold's block Gram-Schmidt (la/fold_numba). The point of
+# blocking is BLAS-3: a panel's two orthogonalization passes are four GEMMs,
+# where the same algorithm one column at a time is BLAS-2 and measured 3.7x
+# numpy's QR on production shapes.
+ACA_FOLD_PANEL = 48
+# Residual Schur-complement trace the fold's pivoted Cholesky deflation stops
+# at, as a fraction of the truncation budget delta^2. The deflation exists
+# because a hand-rolled cyclic Jacobi is 23x eigh and O(n^3), so the kernel
+# stands or falls on the eigenproblem's SIZE; it cuts n by ~1.3x per side.
+# The residual trace is carried as already-spent budget, so the truncation
+# decision is the reference's -- measured EQUAL keep counts on all 90 real
+# Gram matrices of 45 blocks x 2 sides. 1e-2 is small enough for that and
+# large enough to deflate.
+ACA_FOLD_CHOL_SLACK = 1e-2
 # rcond of the ACA pivot block's pseudo-inverse (aca._pinv3, mirrored in
 # aca_numba): a singular value below this fraction of the leading one is
 # treated as zero, and a 3x3 pivot block with |det| <= rcond x ||P||_F^3

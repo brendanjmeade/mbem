@@ -240,14 +240,16 @@ class PairCompressed:
         self.n_fallback = 0
         self.n_retry = 0
         self.n_capped = 0
-        # One CHUNK of blocks compresses on the pool, then the main
-        # thread folds that chunk's factors into their shared subspaces
-        # (``aca.PendingLR.fold``) while nothing else runs: the fold is
-        # numpy LAPACK, which a pool only serializes on OpenBLAS's buffer
-        # lock (0.6x of one thread, measured). Chunking rather than one
-        # pass at the end is what keeps the UNFOLDED per-basis factors --
-        # the B-fold form the fold exists to shrink -- down to one
-        # chunk's worth of the pair at any moment.
+        # One CHUNK of blocks compresses on the pool, then that chunk's
+        # factors are folded into their shared subspaces
+        # (``aca.PendingLR.fold``) -- ON THE POOL as well, now that the fold
+        # is one nogil kernel (``la/fold_numba``). It used to be main-thread
+        # because a pool of the NUMPY fold measured 0.6x of one thread,
+        # recorded here as OpenBLAS's buffer lock; that was the GIL, held by
+        # the wrapper around the (K, K) Gram matrices rather than by the QR.
+        # Chunking rather than one pass at the end is what keeps the
+        # UNFOLDED per-basis factors -- the B-fold form the fold exists to
+        # shrink -- down to one chunk's worth of the pair at any moment.
         chunk = max(4 * n_workers, 1)
         with threadpool_limits(limits=1):
             for start in range(0, len(part.admissible), chunk):
@@ -257,18 +259,23 @@ class PairCompressed:
                         futs = [ex.submit(_compress, i, rows, cols)
                                 for i, (rows, cols) in items]
                         res_list = [f.result() for f in futs]
+                        folds = list(ex.map(
+                            lambda r: (r.payload.fold(tol)
+                                       if r.payload is not None else None),
+                            res_list))
                 else:
                     res_list = [_compress(i, rows, cols) for i, (rows, cols)
                                 in items]
-                for (_i, (rows, cols)), res in zip(items, res_list):
+                    folds = [r.payload.fold(tol) if r.payload is not None
+                             else None for r in res_list]
+                for ((_i, (rows, cols)), res, folded) in zip(items, res_list,
+                                                             folds):
                     self.n_fallback += 1 if res.fallback else 0
                     self.n_retry += 1 if res.retried else 0
                     self.n_capped += 1 if res.capped else 0
                     self.max_verified_err = max(self.max_verified_err,
                                                 res.max_err)
-                    payload = res.payload
-                    blocks.append((rows, cols, payload.fold(tol)
-                                   if payload is not None else None))
+                    blocks.append((rows, cols, folded))
         return blocks
 
     # -- material views -----------------------------------------------

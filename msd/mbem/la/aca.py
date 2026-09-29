@@ -64,6 +64,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .. import defaults
+from . import fold_numba
 
 
 # Factorization counters, in the two sizes that matter: "subspace" is a
@@ -81,13 +82,20 @@ FACTORIZATIONS = {"subspace": 0, "core": 0}
 class PendingLR:
     """A block's per-basis factors, not yet folded into a subspace --
     what ``compress_block(fold=False)`` returns so the caller can choose
-    the thread the fold runs on (``hop`` runs it on the main thread: the
-    fold is dense numpy algebra, and a pool of it contends on OpenBLAS's
-    buffer lock, measured 0.6x of one thread)."""
+    the thread the fold runs on.
+
+    It now runs ON the pool. The fold used to be main-thread because a pool
+    of the NUMPY fold measured 0.6x of one thread -- recorded here as
+    OpenBLAS's buffer lock, which was wrong: it is the GIL, held by the
+    wrapper around the (K, K) Gram matrices and truncations rather than by
+    the QR, which already releases it. ``la/fold_numba`` puts the whole fold
+    in one nogil kernel, which is what makes pooling it worth anything.
+    """
     U: list
     V: list
     cert_rows: np.ndarray
     cert_cols: np.ndarray
+    flat: tuple | None = None
 
     def fold(self, tol: float):
         """This block's ``SharedLR``."""
@@ -96,8 +104,14 @@ class PendingLR:
         if len(self.U) == 1:   # nothing to share: the basis IS the subspace
             Qu, Qv, cores = self.U[0], self.V[0], None
         else:
-            Qu, Qv, cores = shared_subspace(
-                self.U, self.V, defaults.ACA_JOINT_TOL_FACTOR * tol)
+            delta = defaults.ACA_JOINT_TOL_FACTOR * tol
+            # The numba ACA already holds the ragged flat buffers; the
+            # Python reference ACA does not, and concatenating is ~0.4 % of
+            # a fold.
+            fu, fv, rk = self.flat if self.flat is not None \
+                else fold_numba.flatten(self.U, self.V)
+            Qu, Qv, cores = fold_numba.shared_subspace_flat(
+                fu, fv, rk, self.U[0].shape[0], self.V[0].shape[0], delta)
         return SharedLR(Qu=Qu, Qv=Qv, cores=cores, basis_ranks=ranks,
                         cert_rows=self.cert_rows, cert_cols=self.cert_cols)
 

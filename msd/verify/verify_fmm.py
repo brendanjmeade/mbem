@@ -87,6 +87,9 @@ MAT = mb.ElasticMaterial(mu=30.0, lam=45.0)
 EPS = "auto"                      # eps_j = 0.1 h_j; see defaults.FMM_EPS_TERMS
 PAIR_TOL = defaults.FMM_PAIR_PARITY
 VARIANT_TOL = defaults.FMM_M2L_VARIANT_PARITY
+# A truncated M2L is an approximation, so its parity limit is its own
+# truncation with room for the accumulation through a whole traversal.
+RANK_SLACK = 50.0
 OP_TOL = defaults.FMM_OPERATOR_PARITY
 NAIVE_TOL = defaults.FMM_OPERATOR_PARITY_NAIVE
 ORDER = {KERNEL_U: defaults.FMM_ORDER_U, KERNEL_T: defaults.FMM_ORDER_T}
@@ -362,21 +365,50 @@ def check_pair() -> bool:
         # variant could regress by four orders and still pass.
         xv = rng.standard_normal(pair.shape[1])
         ref_v = pair.matvec(c, xv)
-        for variant in ("numba", "table"):
-            t0 = time.time()
-            # "table" needs a translation-invariant lattice, which the
-            # default extent domain does not have -- it would silently fall
-            # back and gate nothing, so it is named here.
-            kw = {} if variant == "numba" else {"domain": "canonical"}
-            var = PairFMM(field, source, kernel, eps, p=ORDER[kernel],
-                          m2l=variant, **kw)
-            base = ref_v if not kw else PairFMM(
-                field, source, kernel, eps, p=ORDER[kernel], **kw).matvec(c, xv)
-            v2, vmax = _errs(var.matvec(c, xv), base)
-            print(f"    [{kernel}] m2l={variant} vs the reference evaluator: "
-                  f"2-norm {v2:.3e}  max-entry {vmax:.3e}   "
-                  f"({time.time() - t0:.1f}s)")
-            ok &= max(v2, vmax) < VARIANT_TOL
+        # The numba kernel is a REARRANGEMENT of the reference and is held to
+        # roundoff. The table is too when it is dense -- but compressed it is
+        # an APPROXIMATION, so it gets its own limit, against the dense table
+        # rather than against the reference: that isolates the truncation
+        # from the rearrangement, and holding it at VARIANT_TOL would simply
+        # assert that the compression does nothing.
+        held = defaults.FMM_M2L_RANK_TOL
+        try:
+            for variant, tol, ref_kind in (
+                    ("numba", VARIANT_TOL, "reference"),
+                    ("table", VARIANT_TOL, "reference"),      # rank_tol 0
+                    ("table", defaults.FMM_M2L_RANK_TOL * RANK_SLACK,
+                     "dense table")):
+                t0 = time.time()
+                # "table" needs a translation-invariant lattice, which the
+                # default extent domain does not have -- it would silently
+                # fall back and gate nothing, so it is named here.
+                kw = {} if variant == "numba" else {"domain": "canonical"}
+                defaults.FMM_M2L_RANK_TOL = (held if ref_kind == "dense table"
+                                             else 0.0)
+                var = PairFMM(field, source, kernel, eps, p=ORDER[kernel],
+                              m2l=variant, **kw)
+                got = var.matvec(c, xv)
+                if ref_kind == "reference":
+                    base = ref_v if not kw else PairFMM(
+                        field, source, kernel, eps,
+                        p=ORDER[kernel], **kw).matvec(c, xv)
+                else:
+                    defaults.FMM_M2L_RANK_TOL = 0.0
+                    base = PairFMM(field, source, kernel, eps,
+                                   p=ORDER[kernel], m2l="table",
+                                   **kw).matvec(c, xv)
+                v2, vmax = _errs(got, base)
+                rk = var._table.ranks if getattr(var, "_table", None) else []
+                tag = f"m2l={variant}" + (" (rank)" if ref_kind ==
+                                          "dense table" else "")
+                print(f"    [{kernel}] {tag} vs the {ref_kind}: 2-norm "
+                      f"{v2:.3e}  max-entry {vmax:.3e}"
+                      + (f"  rank {min(rk)}-{max(rk)} of {3*ORDER[kernel]**3}"
+                         if rk and ref_kind == "dense table" else "")
+                      + f"   ({time.time() - t0:.1f}s)")
+                ok &= max(v2, vmax) < tol
+        finally:
+            defaults.FMM_M2L_RANK_TOL = held
 
         # THE LEVEL FOLD, which is what makes the table O(1) in N: halving
         # every length multiplies a pass by exactly 2**degree, and the

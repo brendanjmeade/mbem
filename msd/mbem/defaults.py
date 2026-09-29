@@ -547,6 +547,25 @@ FMM_X_MIN_SUBTREE = 216
 # trades speed for memory and never accuracy. 2 GiB holds every offset at
 # p <= 5 and the hottest few at the shipping orders.
 FMM_M2L_TABLE_MAX_BYTES = 2 * 1024**3
+# Relative singular-value floor the shared M2L blocks are truncated at. An
+# M2L block is smooth, so it is 2-5 % rank: measured over ALL 316 offsets,
+# weighted by the V pairs that use them, the T block at p = 8 has weighted
+# rank 48 / 100 / 170 at 1e-4 / 1e-6 / 1e-8 of 1536, and the U block at p = 6
+# 29 / 66 / 118 of 648. Factored, a pair costs r (nr + nc) instead of nr nc:
+# 11.5x on T at 1e-6 and 4.9x on U, with the stored table smaller by the same
+# factor. This is the largest lever left in the far field, because M2L is
+# ~95 % of the matvec once the X list is demoted.
+# 1e-6 and not 1e-4: the truncation error adds to the interpolation error,
+# and FMM_OPERATOR_PARITY is 2e-4 with the scale-3 margin already at 1.1x, so
+# 1e-4 would spend the whole budget twice. 1e-6 sits 200x under it.
+# These ranks do NOT depend on the mesh -- a block is the kernel on the
+# lattice at one offset -- so unlike a partition constant they carry.
+FMM_M2L_RANK_TOL = 1e-6
+# Sketch width of the randomized range finder that factors an M2L block. It
+# caps the rank that can be found, so it must clear the measured worst: 160
+# for T at p = 8 and 102 for U at p = 6, both at 1e-6. A block whose rank
+# reaches the sketch is kept DENSE rather than silently truncated.
+FMM_M2L_SKETCH = 256
 # Floor on an interpolation domain's half-width, in units of the box's own
 # cube edge. A flat patch leaves its boxes zero extent across the plane, and
 # a zero width divides the rounding of a quadrature point by itself; the

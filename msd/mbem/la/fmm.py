@@ -899,13 +899,15 @@ class PairFMM:
             m = len(prs)
             half = np.array([0.5 * float(tree.cube(b)[1][0] - tree.cube(b)[0][0])
                              for _a, b in prs])
-            for ip, Bi in enumerate(B):
+            for ip, (Bi, Bt) in enumerate(B):
                 s = half ** (-table.degree[ip])
                 cols = np.empty((nc * p3, m * k))
                 for j, (_a, b) in enumerate(prs):
                     q = Mc[b][:, :, ip * k:(ip + 1) * k]
                     cols[:, j * k:(j + 1) * k] = s[j] * q.reshape(nc * p3, k)
-                res = Bi @ cols
+                # Factored: the block is 2-5 % rank, so r (nr + nc) beats
+                # nr nc by an order of magnitude and the GEMM stays wide.
+                res = Bi @ cols if Bt is None else Bi @ (Bt @ cols)
                 for j, (a, _b) in enumerate(prs):
                     val = res[:, j * k:(j + 1) * k].reshape(p3, 3, k)
                     Lc[a] = val if Lc[a] is None else Lc[a] + val

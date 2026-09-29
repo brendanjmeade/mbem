@@ -992,6 +992,65 @@ the chunked loop. That apply is ~600 ms, single-threaded (nrhs = 1 is level 2),
 and it is 8.5x the matvec there -- which is also what makes 117k the anomalous
 row above, at 36 s of preconditioner build and 617 ms per iteration.
 
+**M2L COMPRESSION: 6.9-7.6x ON THE WHOLE FAR-FIELD MATVEC, AND 18x ON THE
+TABLE.** The largest single result in the far field, and it comes from the one
+standard bbFMM technique this implementation never had (`fmm.py`'s own SCOPE
+docstring listed it as absent).
+
+**Why it had to be this and not more engineering.** Measured at 117,120
+unknowns, M2L is **2.33 Tflop per matvec = 19.9 Mflop per unknown**, against
+flat H + ACA's ~9.5 **K**flop per unknown -- **2,100x the arithmetic**. Even at
+this machine's measured f64 GEMM peak (460 Gflop/s) the M2L floor was 5.1 s
+against flat H's 71 ms ACTUAL. bbFMM was never short of implementation; it was
+carrying three orders of magnitude more work, and nobody had looked at the rank.
+
+**The blocks are 2-5 % rank.** Measured over ALL 316 offsets, weighted by the
+V pairs that use them, pass 0:
+
+    kernel      tol      per-offset rank (min/med/max/weighted)   speed-up
+    T p=8      1e-4          26 /  32 /  76 /  48                  24.2x
+    T p=8      1e-6          49 /  66 / 160 / 100                  11.5x
+    T p=8      1e-8          79 / 112 / 273 / 170                   6.8x
+    U p=6      1e-6          34 /  46 / 102 /  66                   4.9x
+
+1e-6 and not 1e-4: the truncation adds to the interpolation error and
+`FMM_OPERATOR_PARITY` is 2e-4 with the scale-3 margin at 1.1x, so 1e-4 would
+spend the budget twice. **These ranks do not depend on the mesh** -- a block is
+the kernel on the lattice at one offset -- which makes them the one set of
+numbers in this file that carries without an extrapolation argument.
+
+**The common basis (Fong-Darve) was measured and is NOT taken yet.** It inflates
+rank 100 -> 526/620 on T, the same failure mode that killed algebraic H^2
+(17 -> 175), but still wins on flops because a pair costs ru x rv rather than
+r (nr + nc): 21.7x against the per-offset 11.5x at 1e-6. On U at 1e-6 it LOSES
+(4.5x against 4.9x). Worth ~1.9x more on T and left for later.
+
+End to end, per-offset, canonical, X demoted:
+
+    scale  N          numba      compressed    speed-up   vs numba
+      1    31,098     7.81 s       1.14 s        6.85x    7.07e-07
+      2   117,120    36.07 s       4.76 s        7.58x    8.42e-07
+
+The table is **1840 MiB for all 316 T offsets** against 33 GiB dense (18x) and
+is N-INDEPENDENT, so the per-material problem recorded above largely dissolves:
+six groups cost ~6.4 GiB, not ~200.
+
+**The factorization is randomized, and it had to be.** An exact `eigh` of the
+(3p^3, 3p^3) Gram spends ~9 n^3 to find ~100 directions: measured, the table
+took LONGER TO FACTOR than the operator took to run, 25 min and still going at
+scale 1. A sketched range finder with one subspace iteration is all GEMM and
+brought it to 180 s, which is also N-independent. `FMM_M2L_SKETCH = 256` caps
+the rank it can find and clears the measured worst (160 for T, 102 for U); a
+block that reaches the sketch is kept DENSE rather than silently truncated.
+
+**The gate distinguishes two things it would have been easy to conflate.** The
+numba kernel and the DENSE table are rearrangements of the reference and are
+held at `FMM_M2L_VARIANT_PARITY` (measured 1e-15). The COMPRESSED table is an
+approximation, so it is gated against the dense table -- isolating truncation
+from rearrangement -- at its own tolerance with slack for accumulation through a
+traversal. Holding it at 1e-12 would have asserted that the compression does
+nothing.
+
 **THE X LIST IS THE ONLY W/X ITEM WORTH TAKING, AND IT IS WORTH 1.2-1.3x --
 NOT "the largest single item".** Node-pair counts by list, with the per-group
 p^3 (U runs p = 6, T p = 8; a first pass that used one p^3 for both, and the

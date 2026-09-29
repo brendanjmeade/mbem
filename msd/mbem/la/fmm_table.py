@@ -129,7 +129,7 @@ class M2LTable:
     """
 
     def __init__(self, kernel: str, p: int, params: list, nodes: np.ndarray,
-                 max_bytes: int | None = None):
+                 max_bytes: int | None = None, rank_tol: float | None = None):
         self.kernel = kernel
         self.p = int(p)
         self.params = params
@@ -140,9 +140,47 @@ class M2LTable:
         self.degree = [pass_degree(kernel, prm[0]) for prm in params]
         self.max_bytes = int(defaults.FMM_M2L_TABLE_MAX_BYTES
                              if max_bytes is None else max_bytes)
+        self.rank_tol = float(defaults.FMM_M2L_RANK_TOL
+                              if rank_tol is None else rank_tol)
+        self.sketch = int(defaults.FMM_M2L_SKETCH)
         self._blocks: OrderedDict = OrderedDict()
         self._bytes = 0
+        self.ranks: list = []
         self.hits = self.misses = 0
+
+    def _factor(self, B):
+        """``(A, Bt)`` with ``A @ Bt ~ B`` to ``rank_tol``, or ``(B, None)``
+        when truncation is off.
+
+        Through the Gram rather than a full SVD: the rank is 2-5 % of the
+        block, so ``eigh(B B^T)`` at (3p^3, 3p^3) is several times cheaper
+        than an SVD of (3p^3, nc p^3) and this is paid once per offset.
+        """
+        if self.rank_tol <= 0.0:
+            return B, None
+        nr, nc = B.shape
+        # A RANDOMIZED range finder, not a Gram eigendecomposition. The rank
+        # is a few per cent, so an exact (3p^3, 3p^3) `eigh` spends ~9 n^3 to
+        # find ~100 directions and is the whole build: measured, it made the
+        # table take longer to FACTOR than the operator took to run. The
+        # sketch below is all GEMM and ~6x fewer flops at much better rate.
+        # One subspace iteration, because the spectrum decays fast but not
+        # instantly. The seed is FIXED so a table is reproducible: the gates
+        # compare a compressed apply against a dense one entrywise.
+        sk = min(nr, self.sketch)
+        rs = np.random.default_rng(0)
+        Q, _ = np.linalg.qr(B @ rs.standard_normal((nc, sk)))
+        Q, _ = np.linalg.qr(B @ (B.T @ Q))
+        Bp = Q.T @ B                                     # (sk, nc)
+        ev, W = np.linalg.eigh(Bp @ Bp.T)                # (sk, sk), cheap
+        ev = np.clip(ev[::-1], 0.0, None)
+        W = W[:, ::-1]
+        s = np.sqrt(ev)
+        r = max(int((s > self.rank_tol * max(s[0], 1e-300)).sum()), 1)
+        if r >= sk or r * (nr + nc) >= nr * nc:
+            return B, None      # sketch too narrow, or no saving: stay dense
+        A = Q @ W[:, :r]
+        return np.ascontiguousarray(A), np.ascontiguousarray(A.T @ B)
 
     def _build(self, off) -> list:
         p3 = self.p ** 3
@@ -154,7 +192,7 @@ class M2LTable:
                 _u_block(self.u, o, int(prm[0]), prm[1], prm[2], B)
             else:
                 _t_block(self.u, o, int(prm[0]), prm[1], prm[2], prm[3], B)
-            out.append(B)
+            out.append(self._factor(B))
         return out
 
     def block(self, off) -> list | None:
@@ -163,18 +201,25 @@ class M2LTable:
             self.hits += 1
             self._blocks.move_to_end(off)
             return got
-        p3 = self.p ** 3
-        need = len(self.params) * 3 * p3 * self.nc * p3 * 8
-        if self._bytes + need > self.max_bytes:
+        if self._bytes >= self.max_bytes:
             self.misses += 1
             return None
-        got = self._build(off)
+        got = self._build(off)              # size is known only once factored
+        need = sum(a.nbytes + (0 if b is None else b.nbytes) for a, b in got)
+        if self._bytes + need > self.max_bytes and self._blocks:
+            self.misses += 1
+            return None
         self._blocks[off] = got
         self._bytes += need
+        self.ranks.append(got[0][0].shape[1] if got[0][1] is not None
+                          else min(got[0][0].shape))
         self.misses += 1
         return got
 
     def summary(self) -> str:
+        r = np.array(self.ranks) if self.ranks else np.zeros(1)
+        full = min(3 * self.p ** 3, self.nc * self.p ** 3)
         return (f"M2LTable[{self.kernel}] p={self.p}: {len(self._blocks)} "
-                f"offsets, {self._bytes / 2**20:.0f} MiB, "
-                f"{self.hits} hits / {self.misses} builds")
+                f"offsets, {self._bytes / 2**20:.0f} MiB, rank "
+                f"{r.min():.0f}-{r.max():.0f} (med {np.median(r):.0f}) of "
+                f"{full}, {self.hits} hits / {self.misses} builds")

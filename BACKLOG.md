@@ -837,6 +837,68 @@ assumes `GMRES_RESTART = 200` while the chunk-1000 projection is 125-206
 iterations, so the pessimistic end restarts and raising the restart to 300 costs
 ~6 GiB of the 19.1 GiB of headroom.
 
+**A FOURTH RUNG, AND FLAT H's REAL SHAPE: THE BUILD IS THE WALL.** The 459,516
+unknown rung (107,790 elements) was planned as M2 and never run. Run now,
+topo_inclusion, hmat, float32 storage, `37c2ff8`:
+
+  elements  unknowns   build  ACA%  precond  solve  it   matvec  operator   RSS   op err
+     7,483    31,098   13.5 s   84    3.9 s   3.0 s  23  24.8 ms   1.00 GB   6.0  4.2e-05
+    27,659   117,120   90.8 s   87   35.9 s  25.5 s  37  71.3 ms   4.44 GB  25.3  2.8e-05
+    61,286   260,598  265.6 s   86   26.3 s  15.0 s  42 167.1 ms  11.73 GB  34.1  1.6e-05
+   107,790   459,516  581.8 s   84   39.7 s  33.5 s  49 349.1 ms  23.90 GB  59.5  5.9e-05
+
+Fitted over all four: **build N^1.39**, ACA N^1.40, **matvec N^0.97**, bytes
+N^1.18, iterations N^0.28.
+
+**The matvec is O(N); ASSEMBLY is what scales badly.** 84-87 % of the build is
+the ACA phase at every rung, so the fold fix (2.8x on that phase, still
+unscheduled) is worth 2.3x on the whole build -- the single highest-value flat-H
+item, and larger than every partition constant and the kernel put together.
+Extrapolated to 1M elements the build is ~3.8 h and the fold fix takes it to
+~1.7 h.
+
+**The in-core ceiling is ~225-250k elements, not 1M.** Peak RSS is still 2.5x
+the operator bytes at the largest rung (6.0x, 5.7x, 2.9x, 2.5x -- the transient
+shrinks relatively but does not vanish), so 128 GiB is reached near 1M unknowns.
+Extrapolated: 50k elements ~200 s build and ~13 s solve, 100k ~525 s and ~31 s,
+250k ~33 min and ~1.6 min at the edge of core, 500k and 1M out of core.
+
+**The operator error trend REVERSED at the fourth rung, and it was this file's
+own claim.** Recorded: "the operator error IMPROVES with size, 4.2e-5 / 2.8e-5 /
+1.6e-5". The fourth rung is **5.9e-05** -- a 3.7x jump back up, cutting the
+margin against `BENCH_OPERATOR_ERROR_MAX = 1e-4` from 6.4x to 1.7x. Three rungs
+of a monotone trend did not survive the fourth, which is the same shape as every
+other collapsed claim here. Do not carry "improves with size" any further.
+
+**And the argument for bbFMM is not the memory, it is the BUILD.** bbFMM has no
+ACA and no compression -- a tree, a stencil and the near-field blocks, all O(N),
+measured ~30 s at 260,598 unknowns against flat H's 265.6 s, and scaling N^1.0
+against N^1.39. End to end at 1M elements: flat H ~3.8 h build + ~3.4 h
+out-of-core solve; bbFMM ~8 min build + a solve set by its matvec constant.
+5x memory was never the case; 28x on build is.
+
+**THE PRECONDITIONER APPLY, AND A CORRECTION THIS FILE SHOULD KEEP.** Measured
+at the shipping ladder, one apply and one matvec:
+
+    N          threads 1                       threads 8
+    117,120    apply 653.1 ms  ratio 9.15:1    606.1 ms  8.55:1   (1.08x)
+    260,598    apply 659.1 ms  ratio 3.96:1    171.8 ms  1.02:1   (3.84x)
+
+So the solve at 260,598 IS preconditioner-dominated ~4:1 unthreaded, and the
+threaded apply takes it to parity: the iteration phase goes 34.8 s -> 13.9 s,
+**2.5x**. An earlier note in this session said the 4:1 was wrong; that note was
+itself wrong, because it compared against a ladder run that ALREADY had
+threading on -- measuring the fix and concluding the problem never existed. Never
+take a reference from a run the change under test has already moved.
+
+**The dense-LU rung's apply is NOT threaded and is now the binding cost below the
+dense cap.** At 117,120 unknowns threading buys 1.08x, because those
+super-blocks sit under `dense_rung_max_dof` (~30,000) and take the dense rung,
+whose apply is ONE `lu_solve` per super-block (`_permuted_lu_solve`) rather than
+the chunked loop. That apply is ~600 ms, single-threaded (nrhs = 1 is level 2),
+and it is 8.5x the matvec there -- which is also what makes 117k the anomalous
+row above, at 36 s of preconditioner build and 617 ms per iteration.
+
 **THE SHARED M2L TABLE IS BUILT, CORRECT, AND WORTH 1.5-1.7x -- NOT THE 6.5x
 THIS FILE PROJECTED** (`la/fmm_table.py`, `PairFMM(m2l="table")`). Tenth entry
 for the table of collapsed claims, and the same shape as the others: a phase

@@ -466,6 +466,17 @@ class BlockGaussSeidel:
                           f"block-Jacobi ({sb.size} DOFs, "
                           f"{len(chunks)} chunks)")
             sb.build_s = time.perf_counter() - t_sb
+        # One grouped applier per super-block for its strictly-lower
+        # couplings, where the operator offers one. Built once, not per
+        # apply: the traversal's geometry is material-free, so it survives
+        # the 100-200 applies of a solve.
+        self._lower = {}
+        getter = getattr(assembled, "lower_applier", None)
+        if getter is not None:
+            for sb in self.sbs:
+                ap = getter(sb.lower_terms)
+                if ap is not None:
+                    self._lower[id(sb)] = ap
         self.build_s = time.perf_counter() - t_start
 
     def diagonal_block(self, k: int) -> np.ndarray:
@@ -508,14 +519,23 @@ class BlockGaussSeidel:
         z = np.zeros_like(r)
         for sb in self.sbs:
             rk = r[sb.global_idx].astype(z.dtype, copy=True)
-            for term in sb.lower_terms:
-                pair = self.asm.pair_for(term)
-                coeffs = kernel_coeffs(term.kernel,
-                                       self.asm.materials[term.region.name])
-                xseg = z[term.col.offset:term.col.stop]
-                contrib = term.scale * pair.matvec(coeffs, xseg)
-                r0 = sb.local_offset[term.row.name]
-                rk[r0:r0 + term.row.size] -= contrib
+            # The operator decides HOW to apply this super-block's
+            # strictly-lower couplings: term by term, or grouped into one
+            # traversal per (region, kernel). For an FMM the per-term route
+            # is a full traversal EACH -- ~45 per apply on the bench model,
+            # and most of the solve -- so it is worth asking.
+            applier = self._lower.get(id(sb))
+            if applier is not None:
+                applier(z, rk, sb.local_offset)
+            else:
+                for term in sb.lower_terms:
+                    pair = self.asm.pair_for(term)
+                    coeffs = kernel_coeffs(
+                        term.kernel, self.asm.materials[term.region.name])
+                    xseg = z[term.col.offset:term.col.stop]
+                    contrib = term.scale * pair.matvec(coeffs, xseg)
+                    r0 = sb.local_offset[term.row.name]
+                    rk[r0:r0 + term.row.size] -= contrib
             z[sb.global_idx] = sb.solve_fn(rk)
         return z
 

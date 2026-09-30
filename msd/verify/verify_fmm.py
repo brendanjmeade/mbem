@@ -663,6 +663,37 @@ def check_operator() -> bool:
     print(f"    grouped ({len(hg._groups.groups)} traversals) vs per-term "
           f"({len(_pair_keys(system))} pairs): {worst:.3e}   "
           f"({time.time() - t0:.0f}s)")
+
+    # The PRECONDITIONER's strictly-lower couplings, grouped against the
+    # per-term loop they replace. Gated because the failure is SILENT: an
+    # applier that scatters to the wrong key subtracts nothing, the sweep
+    # quietly degrades to block-Jacobi, and the solve still converges --
+    # just slower. That is exactly what happened (37 iterations became 52,
+    # because `local_offset` is keyed by SLOT name and the group was
+    # indexed by PATCH name), and no residual or error limit would show it.
+    from mbem.la.preconditioner import BlockGaussSeidel
+
+    t0 = time.time()
+    Mg = BlockGaussSeidel(hg, grouping="patch")     # grouped lower couplings
+    Mp = BlockGaussSeidel(hp, grouping="patch")     # the per-term loop
+    grouped_sbs = len(Mg._lower)
+    r = np.random.default_rng(5).standard_normal(system.layout.n_unknowns)
+    zg, zp = Mg(r), Mp(r)
+    rel = float(np.max(np.abs(zg - zp))
+                / max(float(np.max(np.abs(zp))), 1e-300))
+    # The sweep must also be doing SOMETHING lower-triangular, or the two
+    # agree trivially: compare against the same preconditioner with every
+    # lower coupling dropped, which is what the silent bug produced.
+    held = {k: v for k, v in Mp._lower.items()}
+    for sb in Mp.sbs:
+        sb.lower_terms = []
+    zj = Mp(r)
+    Mp._lower = held
+    jac = float(np.max(np.abs(zj - zp)) / max(float(np.max(np.abs(zp))), 1e-300))
+    print(f"    preconditioner: grouped lower couplings on {grouped_sbs} of "
+          f"{len(Mg.sbs)} super-blocks vs the per-term loop {rel:.3e}; "
+          f"block-Jacobi differs by {jac:.3e}   ({time.time() - t0:.0f}s)")
+    ok &= rel < VARIANT_TOL and grouped_sbs > 0 and jac > 1e-6
     return ok and worst < VARIANT_TOL
 
 

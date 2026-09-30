@@ -1095,10 +1095,33 @@ Extrapolated end to end at 4.26M, both paths land in the same place: flat H
 build (N^0.43) plus ~4.2 h of solve. **~4.4 h against ~4.6 h -- a tie**, with the
 FMM's build advantage exactly cancelled by its solve.
 
-**And the preconditioner is still per-pair.** Of the 732.6 s solve at scale 3,
-42 x 10.4 s = 437 s is the matvec and ~295 s is preconditioner applies, which
-still call `pair.matvec` for every strictly-lower Gauss-Seidel coupling. The
-calibration was grouped; this was not.
+**THE PRECONDITIONER'S LOWER COUPLINGS ARE GROUPED NOW, AND IT IS WORTH 1.03x.**
+`AssembledH.lower_applier` hands the preconditioner one traversal per (region,
+kernel) for a super-block's strictly-lower couplings instead of one per term,
+and `FarGroups` takes a `terms=` subset for it. Correct -- 6.385e-16 against the
+per-term loop on 12 of 13 super-blocks -- and measured at scale 2: solve
+354.4 -> 343.2 s, iterations back to 37. The cost analysis was right (the
+preconditioner IS ~45 restricted traversals per apply) and the fix was not: each
+super-block holds only a handful of lower terms, so merging them into a union
+traversal is a wash against the restricted ones.
+
+**It cost a SILENT bug on the way, and the gate now pins what would have caught
+it.** The first version scattered by PATCH name where `sb.local_offset` is keyed
+by SLOT name, so every lookup missed, nothing was subtracted, and the sweep
+quietly degraded to block-Jacobi -- 37 iterations became 52 and the solve still
+converged. No residual or error limit would have shown that. The clause now
+compares the grouped applier against the per-term loop in situ AND against the
+same preconditioner with every lower coupling dropped, requiring the second to
+differ (measured 1.5e-01): a gate that only checked agreement would have passed
+the broken version, both sides being zero.
+
+**What is left of the solve is the traversals themselves.** At scale 2, 343.2 s
+over 37 iterations is 9.3 s per iteration against a 4.81 s matvec, so ~4.5 s is
+preconditioner and orthogonalization. The idea worth measuring next is that a
+preconditioner is an APPROXIMATION: its off-diagonal couplings could use the
+near field alone and skip the far field entirely, which changes the
+preconditioner and not the operator -- only the iteration count moves. That
+would make the couplings nearly free, since near blocks are cached.
 
 **THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
 FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1

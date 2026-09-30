@@ -240,6 +240,52 @@ class AssembledH:
 
     # -- calibrated jump ------------------------------------------------
 
+    def lower_applier(self, terms):
+        """A callable ``(z, rk, local_offset)`` subtracting every term's
+        ``scale * A_term @ z[col]``, or None to use the per-pair loop.
+
+        The preconditioner's Gauss-Seidel sweep applies its strictly-lower
+        couplings term by term, which for an FMM is one full traversal per
+        TERM -- ~45 of them per apply on the bench model, and most of the
+        solve. Grouped they share an upward pass and batch their M2L, the
+        same win the operator matvec got.
+
+        Returns None when the terms do not group (no FMM, or a subset whose
+        coupling is incomplete, which ``FarGroups`` refuses): the caller
+        then keeps the loop it had, which is always correct.
+        """
+        if self._groups is None or not terms:
+            return None
+        from ..la.fmm import FarGroups
+
+        geom = self._groups.groups[0].pair.geom
+        order = {g.kernel: g.pair.p for g in self._groups.groups}
+        try:
+            sub = FarGroups(self.system, self.materials, geom, order,
+                            self.eps, terms=list(terms),
+                            domain=geom.domain, m2l="table")
+        except ValueError:
+            return None                 # incomplete subset: keep the loop
+
+        def apply(z, rk, local_offset):
+            for g in sub.groups:
+                c = np.asarray(kernel_coeffs(g.kernel,
+                                             self.materials[g.region]))
+                y = g.pair.matvec(c, np.concatenate(
+                    [z[a:b] for a, b in g.cols]))
+                off = 0
+                for name, (a, b) in zip(g.row_names, g.rows):
+                    m = b - a
+                    # by SLOT name: local_offset is keyed by slot, and a
+                    # patch name is not a slot name. Getting this wrong
+                    # subtracts NOTHING and the solve still converges, just
+                    # slower -- 37 iterations became 52.
+                    r0 = local_offset.get(name)
+                    if r0 is not None:
+                        rk[r0:r0 + m] -= y[off:off + m]
+                    off += m
+        return apply
+
     def _calibration_grouped(self) -> dict:
         """The calibrated diagonal from the GROUPED traversal.
 

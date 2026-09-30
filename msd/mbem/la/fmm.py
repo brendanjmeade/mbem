@@ -1155,6 +1155,7 @@ class FarGroup(NamedTuple):
     field_patches: list
     source_patches: list
     scales: list
+    row_names: list          # SLOT names, which is what a caller indexes by
 
 
 class FarGroups:
@@ -1182,11 +1183,16 @@ class FarGroups:
     """
 
     def __init__(self, system, materials, geom, order: dict, eps,
-                 arrays: kb.MeshArrays | None = None, **kw):
+                 arrays: kb.MeshArrays | None = None, terms=None, **kw):
         arrays = arrays if arrays is not None else kb.MeshArrays()
         self.materials = materials
         by_key: dict = {}
-        for t in system.terms:
+        # ``terms`` narrows the grouping to a SUBSET of the system's terms --
+        # the preconditioner's strictly-lower Gauss-Seidel couplings are one.
+        # The completeness check below is what makes that safe: a subset that
+        # does not couple its patches completely cannot fold sigma into the
+        # source, and is refused rather than silently mis-summed.
+        for t in (system.terms if terms is None else terms):
             by_key.setdefault((t.region.name, t.kernel), []).append(t)
         self.groups = []
         for (rname, kernel), terms in sorted(by_key.items()):
@@ -1217,7 +1223,8 @@ class FarGroups:
                 [(r.offset, r.stop) for _f, r in fps.values()],
                 [(c.offset, c.stop) for _sp, c, _s in sps.values()],
                 [fp for fp, _r in fps.values()], srcs,
-                [s for _sp, _c, s in sps.values()]))
+                [s for _sp, _c, s in sps.values()],
+                [r.name for _f, r in fps.values()]))
 
     def matvec(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Accumulate every term's ``scale * A_term @ x[col]`` into ``y``."""

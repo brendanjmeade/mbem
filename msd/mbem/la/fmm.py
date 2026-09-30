@@ -151,6 +151,7 @@ the pair. Which of the two was used is part of any number reported from here.
 from __future__ import annotations
 
 from collections import OrderedDict
+from typing import NamedTuple
 
 import numpy as np
 
@@ -502,6 +503,10 @@ class FmmTree:
         self.x_margin = float(x_margin)
         self.x_min_subtree = (defaults.FMM_X_MIN_SUBTREE
                               if x_min_subtree is None else int(x_min_subtree))
+        # Shared M2L tables, keyed by (kernel, order, material coefficients).
+        # On the tree because that is what the lattice belongs to, and what
+        # every pair and group of one operator has in common.
+        self._tables: dict = {}
         self.lists = InteractionLists(
             self.tree, XMargin(self.verts, *self.tgt_dom, self.x_margin),
             x_min_subtree=self.x_min_subtree)
@@ -884,13 +889,25 @@ class PairFMM:
 
         tree = self.geom.tree
         p3, nc = self.p ** 3, kernel_n_basis_charge(self.kernel)
-        if self._table is None:
-            u = self._unit_lattice()
-            self._table = False if u is None else M2LTable(
-                self.kernel, self.p, params, u)
-        if self._table is False:
+        if not self._m2l:
             return set()
-        table = self._table
+        # The table belongs to the TREE, not to the pair. A block is the
+        # kernel on the lattice at one offset -- (kernel, order, material)
+        # and nothing else -- so every pair and every group with the same
+        # three share one. Held per pair it was rebuilt once per pair key:
+        # 91 redundant copies of a multi-GiB object on the bench model,
+        # which is what made peak RSS 6.2x the accounted bytes.
+        key = (self.kernel, self.p,
+               tuple(tuple(float(v) for v in prm) for prm in params))
+        table = self.geom._tables.get(key)
+        if table is None:
+            u = self._unit_lattice()
+            table = False if u is None else M2LTable(
+                self.kernel, self.p, params, u)
+            self.geom._tables[key] = table
+        if table is False:
+            return set()
+        self._table = table
         done: set = set()
         for off, prs in self._m2l_by_offset().items():
             B = table.block(off)
@@ -1114,6 +1131,27 @@ class PairFMM:
                 f"X {c['X']} entries, max|xhat| {self.st.max_xhat:.3f}")
 
 
+class FarGroup(NamedTuple):
+    """One (region, kernel) traversal and the slots it spans.
+
+    ``field_patches`` / ``source_patches`` are what the CALIBRATION needs:
+    its row sum is ``sum_p sigma(R, p) H_qp e_k`` over a region's patches,
+    which is exactly this group's matvec on a constant -- sigma is already
+    folded into the source -- so it costs 3 traversals per region rather
+    than 3 per pair. The patch lists say which p are covered; a prescribed
+    patch the system built no term for is not, and the caller adds it
+    exactly.
+    """
+    region: str
+    kernel: str
+    pair: "PairFMM"
+    rows: list
+    cols: list
+    field_patches: list
+    source_patches: list
+    scales: list
+
+
 class FarGroups:
     """The whole operator's FMM, as one traversal per (region, kernel).
 
@@ -1169,14 +1207,18 @@ class FarGroups:
                            [kb.resolve_patch_eps(eps, sp) for sp in srcs],
                            p=order[kernel], geom=geom, arrays=arrays,
                            scales=[s for _sp, _c, s in sps.values()], **kw)
-            self.groups.append((
+            self.groups.append(FarGroup(
                 rname, kernel, pair,
                 [(r.offset, r.stop) for _f, r in fps.values()],
-                [(c.offset, c.stop) for _sp, c, _s in sps.values()]))
+                [(c.offset, c.stop) for _sp, c, _s in sps.values()],
+                [fp for fp, _r in fps.values()], srcs,
+                [s for _sp, _c, s in sps.values()]))
 
     def matvec(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Accumulate every term's ``scale * A_term @ x[col]`` into ``y``."""
-        for rname, kernel, pair, rows, cols in self.groups:
+        for g in self.groups:
+            rname, kernel = g.region, g.kernel
+            pair, rows, cols = g.pair, g.rows, g.cols
             c = np.asarray(kernel_coeffs(kernel, self.materials[rname]))
             yg = pair.matvec(c, np.concatenate([x[a:b] for a, b in cols]))
             off = 0
@@ -1186,8 +1228,8 @@ class FarGroups:
         return y
 
     def summary(self) -> str:
-        return "; ".join(f"{r}/{k}: {p.shape}" for r, k, p, _w, _c
-                         in self.groups)
+        return "; ".join(f"{g.region}/{g.kernel}: {g.pair.shape}"
+                         for g in self.groups)
 
 
 def _dof_rows(X: np.ndarray, cols: np.ndarray) -> np.ndarray:

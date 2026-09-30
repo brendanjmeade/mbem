@@ -66,6 +66,7 @@ sys.path.insert(0, str(HERE))
 import mollified_bem as mb                                        # noqa: E402
 from mbem import defaults                                         # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
+from mbem.backends.hmat import AssembledH                         # noqa: E402
 from mbem.backends.dense import AssembledDense, translation_basis # noqa: E402
 from mbem.estimate import total_ram_bytes                         # noqa: E402
 from mbem.kernels import KERNEL_T                                 # noqa: E402
@@ -73,7 +74,12 @@ from mbem.la import hop                                           # noqa: E402
 from mbem.model import generate_system                            # noqa: E402
 
 MODELS = ("fault_box", "topo_inclusion")
-BACKENDS = ("dense", "hmat")
+BACKENDS = ("dense", "hmat", "fmm")
+# Interpolation domain the fmm backend runs on. "canonical" is the only one
+# that both shares the M2L table (316 offsets, N-independent) and keeps the
+# extents for P2M/L2P/W/X; measured most accurate of the three at every
+# scale with the X rule on (BACKLOG).
+FMM_DOMAIN = "canonical"
 DEFAULT_SCALES = {"fault_box": [1.0, 1.6, 2.6], "topo_inclusion": [1.0]}
 DEFAULT_MESH_CACHE = pathlib.Path("~/.cache/msd_bench_meshes").expanduser()
 EPS = "auto"
@@ -418,6 +424,44 @@ def median_matvec_ms(matvec, n: int, rng) -> float:
 # one rung
 # ---------------------------------------------------------------------
 
+def fmm_stats(groups, n: int) -> tuple:
+    """``(bytes, ranks, fallbacks)`` for an FMM operator, in the shape the
+    compressed backend reports so the two are comparable.
+
+    The FMM's three resident terms are the cached exact NEAR blocks, the
+    shared M2L TABLES (N-independent: one block per transfer offset), and
+    the per-element Chebyshev STENCIL. Nothing here is a compressed block,
+    so the rank statistics report the M2L ranks instead -- the quantity the
+    far field's cost actually turns on.
+    """
+    near = 0
+    ranks: list = []
+    for pair in (g.pair for g in groups.groups):
+        for blocks in pair._near_cache.values():
+            near += sum(b.nbytes for _rows, _cols, b in blocks)
+    # The tables live on the TREE and are shared by every pair and group, so
+    # they are counted there once -- not per pair, which is what made this
+    # undercount while peak RSS carried the duplicates.
+    geom = groups.groups[0].pair.geom
+    tables = 0
+    for tab in geom._tables.values():
+        if tab:
+            tables += tab._bytes
+            ranks.extend(tab.ranks)
+    st = {id(g.pair.st): g.pair.st for g in groups.groups}
+    stencil = sum(sum(v.nbytes for v in vars(s).values()
+                      if isinstance(v, np.ndarray)) for s in st.values())
+    total = near + tables + stencil
+    r = np.array(ranks) if ranks else np.zeros(1)
+    return ({"near": int(near), "lowrank": int(tables), "bases": int(stencil),
+             "total": int(total), "per_unknown": total / max(n, 1)},
+            {"mean": float(r.mean()), "max": int(r.max()),
+             "n_lowrank": len(ranks), "n_dense": 0, "n_capped": 0,
+             "n_retried": 0, "certified_error": 0.0,
+             "joint_over_summed": 0.0},
+            0)
+
+
 def run_rung(model: str, scale: float, backend: str, opts: dict,
              cache_dir: pathlib.Path, mu_inc: float) -> dict:
     rec: dict = {"model": model, "scale": scale, "backend": backend,
@@ -472,6 +516,82 @@ def run_rung(model: str, scale: float, backend: str, opts: dict,
         rec["peak_rss_gb"] = peak_rss_gb()
         rec["numba"] = numba_threads()
         rec["defaults"] = defaults_snapshot()
+        return rec
+
+    if backend == "fmm":
+        # The bbFMM far field on the SHARED tree: one traversal per
+        # (region, kernel) through FarGroups, with a PairFMM per pair key
+        # alongside because the preconditioner's Gauss-Seidel couplings and
+        # the calibration row sums still reach the operator pair by pair.
+        # storage="basis": the "combined" path warms views PairFMM has not.
+        from mbem.kernels import KERNEL_U, basis as kb
+        from mbem.la.fmm import FarGroups, FmmTree, PairFMM
+
+        order = {KERNEL_U: defaults.FMM_ORDER_U,
+                 KERNEL_T: defaults.FMM_ORDER_T}
+        arrays = kb.MeshArrays()
+        fmeshes, fseen = [], set()
+        for r in region_model.regions:
+            for p in list(r.patches) + list(r.faults):
+                if id(p.mesh) not in fseen:
+                    fseen.add(id(p.mesh))
+                    fmeshes.append(p.mesh)
+        keys = {}
+        for t in system.terms:
+            keys.setdefault((id(t.field_patch), id(t.source_patch), t.kernel),
+                            (t.field_patch, t.source_patch, t.kernel))
+        t0 = time.perf_counter()
+        geom = FmmTree(fmeshes, arrays=arrays, domain=FMM_DOMAIN)
+        phases["tree"] = time.perf_counter() - t0
+        t1 = time.perf_counter()
+        mats = {r.name: r.material for r in region_model.regions}
+        groups = FarGroups(system, mats, geom, order, EPS, arrays,
+                           domain=FMM_DOMAIN, m2l="table")
+        phases["groups"] = time.perf_counter() - t1
+        t1 = time.perf_counter()
+        pairs = {k: PairFMM(fp.mesh, sp.mesh, kern,
+                            kb.resolve_patch_eps(EPS, sp), p=order[kern],
+                            geom=geom, arrays=arrays, domain=FMM_DOMAIN,
+                            m2l="table")
+                 for k, (fp, sp, kern) in keys.items()}
+        phases["pairs"] = time.perf_counter() - t1
+        hasm = AssembledH(system, EPS, {}, False, jump=JUMP, storage="basis",
+                          _shared=(pairs, {}), _groups=groups)
+        phases["build"] = time.perf_counter() - t0
+        phases["other"] = phases["build"] - (phases["tree"] + phases["groups"]
+                                             + phases["pairs"])
+        rec["opts"]["storage"] = "basis"
+        rec["opts"]["domain"] = FMM_DOMAIN
+
+        t0 = time.perf_counter()
+        sol = hasm.solve()
+        wall = time.perf_counter() - t0
+        report = hasm.report
+        phases["precond"] = report.precond_summary["build_s"]
+        phases["solve"] = wall - phases["precond"]
+        rec["iterations"] = int(report.iterations)
+        rec["converged"] = bool(report.converged)
+        rec["stagnated"] = bool(report.stagnated)
+        rec["true_relres"] = float(report.true_relres)
+        rec["precond"] = report.precond_summary
+        rec["rungs"] = {"+".join(sb["slots"]): sb["rung"]
+                        for sb in report.precond_summary["super_blocks"]}
+        phases["matvec_ms"] = median_matvec_ms(hasm.matvec, n, rng)
+        rec["bytes"], rec["ranks"], rec["fallbacks"] = fmm_stats(groups, n)
+        rec["peak_rss_gb"] = peak_rss_gb()
+        rec["numba"] = numba_threads()
+        rec["defaults"] = defaults_snapshot()
+
+        t0 = time.perf_counter()
+        if dense_ok:
+            dense = AssembledDense(system, EPS, "direct", jump=JUMP)
+            rec["operator"] = operator_error(hasm, dense.A, rng)
+            rec["solution"] = solution_error(sol, dense.solve())
+            del dense
+        else:
+            rec["operator"] = operator_error(hasm, None, rng)
+            rec["solution"] = None
+        rec["reference_s"] = time.perf_counter() - t0
         return rec
 
     # ---- compressed backend ----

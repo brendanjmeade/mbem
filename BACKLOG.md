@@ -992,6 +992,56 @@ the chunked loop. That apply is ~600 ms, single-threaded (nrhs = 1 is level 2),
 and it is 8.5x the matvec there -- which is also what makes 117k the anomalous
 row above, at 36 s of preconditioner build and 617 ms per iteration.
 
+**THE FMM IS IN `bench_scaling` (`--backend fmm`), AND THE FIRST RUNG SHOWS THE
+INTEGRATION, NOT THE PHYSICS, IS WHAT COSTS.** topo_inclusion at 31,098
+unknowns, canonical, compressed M2L, against `hmat` on the same rung:
+
+                 hmat        fmm
+    build        7.6 s     338.1 s
+    matvec      25.2 ms   1175.3 ms
+    solve        1.5 s     254.2 s
+    iterations     23         25
+    op error   4.2e-05    1.6e-05
+    sol error  3.0e-04    8.7e-05
+    bytes       1.08 GB    4.00 GB
+
+Two things point opposite ways. The FMM is **more accurate than flat H on the
+same rung** (2.6x on the operator, 3.4x on the solution), and its 4.00 GB is
+mostly the 3.34 GB M2L table, which is N-INDEPENDENT and amortizes by scale 3.
+
+But the build and the solve are dominated by per-pair traversals that
+`FarGroups` was built to remove, and the phase split says so: `tree 0.08 s,
+groups 2.16 s, pairs 0.07 s, other 335.8 s`. Two call sites:
+
+* `AssembledH._calibration` takes the row sums as three constant-field
+  `pair.matvec` calls per T pair -- ~135 separate FMM traversals -- which is
+  the 335.8 s.
+* `BlockGaussSeidel.__call__` calls `pair.matvec` for every strictly-lower
+  Gauss-Seidel coupling, so each preconditioner APPLY runs more traversals:
+  254 s of solve for 25 iterations against a 1.175 s matvec is ~9 s per
+  iteration of preconditioner.
+
+**BOTH FIXED, AND THE DIAGNOSIS WAS HALF WRONG.** The expensive thing was not
+the traversals: each of the 91 `PairFMM` objects was building its OWN M2L
+table. A block is the kernel on the lattice at one offset -- (kernel, order,
+material) and nothing else -- so the table belongs to the TREE, and moving it
+there is most of the win. The calibration was also grouped (its row sum is
+`sum_p sigma(R,p) H_qp e_k`, which IS a group's matvec on a constant, three
+traversals per region instead of three per pair) and that bought ~1 % on top.
+
+    scale 1        original   shared table   + grouped calibration
+    build           335.9 s      131.6 s          129.9 s
+    solve           250.6 s          --           100.3 s
+    peak RSS        17.4 GB       8.93 GB          8.60 GB
+    iterations           25           23               23
+    op / sol err   1.6e-05 / 8.7e-05  ..  unchanged at both
+
+The redundant tables were half the resident set, which is also why `fmm_stats`
+undercounted by 6.2x: it walked the groups, and the duplicates were on the
+pairs. What is LEFT in the build (`other` 127.6 s of 129.9) is the one-time
+table factorization, which is N-INDEPENDENT -- a fixed cost, not a scaling
+problem.
+
 **M2L COMPRESSION: 6.9-7.6x ON THE WHOLE FAR-FIELD MATVEC, AND 18x ON THE
 TABLE.** The largest single result in the far field, and it comes from the one
 standard bbFMM technique this implementation never had (`fmm.py`'s own SCOPE

@@ -230,11 +230,72 @@ class AssembledH:
             combos = self._pair_combos()
             for key, pair in self._pairs.items():
                 pair.warm_views(combos.get(key, []))
-        self.calib = self._calibration() if self.jump == "calibrated" \
-            else None
+        if self.jump != "calibrated":
+            self.calib = None
+        elif self._groups is not None:
+            self.calib = self._calibration_grouped()
+        else:
+            self.calib = self._calibration()
         self.b = self._build_rhs()
 
     # -- calibrated jump ------------------------------------------------
+
+    def _calibration_grouped(self) -> dict:
+        """The calibrated diagonal from the GROUPED traversal.
+
+        ``calibrated_diagonal`` sums ``-sigma(R, p) rowsum(R, q, p)`` over a
+        region's patches, and a (region, T) group's matvec on a constant IS
+        that sum -- sigma is folded into its source. So this costs three
+        traversals per region where the per-pair route costs three per PAIR,
+        which on the bench model is ~135 traversals and most of the build.
+
+        A patch the system built no term for (a prescribed-displacement one)
+        is not in the group and is added here through the exact matrix-free
+        contraction, which is what the per-pair route does for it too.
+        """
+        from ..kernels import tri_kernels as tk
+
+        arrays = kb.MeshArrays()
+        model = self.system.model
+        by_region = {g.region: g for g in self._groups.groups
+                     if g.kernel == KERNEL_T}
+        calib: dict = {}
+        for region in model.regions:
+            g = by_region.get(region.name)
+            mat = self.materials[region.name]
+            coeffs = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
+            C = {id(q): np.zeros((q.n_nodes, 3, 3)) for q in region.patches}
+            if g is not None:
+                covered = {id(p) for p in g.source_patches}
+                for k in range(3):
+                    x = np.zeros(g.pair.shape[1])
+                    x[k::3] = 1.0
+                    y = g.pair.matvec(coeffs, x)       # sigma already in
+                    off = 0
+                    for q in g.field_patches:
+                        m = 3 * q.n_nodes
+                        if id(q) in C:
+                            C[id(q)][:, :, k] -= y[off:off + m].reshape(
+                                q.n_nodes, 3)
+                        off += m
+            else:
+                covered = set()
+            for p in region.patches:                   # the uncovered rest
+                if id(p) in covered:
+                    continue
+                sg = float(model.orientation(region, p))
+                tv, nrm = arrays.source_arrays(p.mesh)
+                for q in region.patches:
+                    xq = arrays.field_points(q.mesh)
+                    for k in range(3):
+                        dens = np.zeros((p.n_nodes, 3))
+                        dens[:, k] = 1.0
+                        col = tk.t_disp_contract(xq, tv, nrm, self.eps_for(p),
+                                                 dens, *coeffs).ravel()
+                        C[id(q)][:, :, k] -= sg * col.reshape(q.n_nodes, 3)
+            for q in region.patches:
+                calib[(id(region), id(q))] = C[id(q)]
+        return calib
 
     def _calibration(self) -> dict:
         """``calibrated_diagonal`` with the H row-sums taken as three

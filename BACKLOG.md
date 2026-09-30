@@ -1046,13 +1046,14 @@ problem.
 topo_inclusion, canonical, compressed M2L, against the flat-H ladder on the
 same rungs:
 
-      N           build   matvec     solve  it    B/unk   RSS GB    op err
-   31,098  hmat     7.6     24.8       1.5  23   34,586      6.0   4.2e-05
-  117,120  hmat    48.2     71.1       8.8  37   40,744     25.5   2.8e-05
-           fmm    201.8   4758.7     354.4  37   57,530     24.6   9.4e-06
-  260,598  hmat   144.0    168.6      12.8  42   48,345     34.3   1.6e-05
-           fmm    238.9  10398.2     732.6  42   34,254     30.1   8.6e-06
-  459,516  hmat   314.1    351.1      29.0  49   55,848     59.3   5.9e-05
+      N          build  precond   solve   TOTAL    matvec    B/unk   RSS   op err
+   31,098  hmat    7.6      3.8     1.5    13.0     24.8   34,586   6.0  4.2e-05
+  117,120  hmat   48.2     35.8     8.8    92.8     71.1   40,744  25.5  2.8e-05
+           fmm   201.8     36.8   354.4   593.1   4758.7   57,530  24.6  9.4e-06
+  260,598  hmat  144.0     26.4    12.8   183.3    168.6   48,345  34.3  1.6e-05
+           fmm   238.9     27.4   732.6   998.9  10398.2   34,254  30.1  8.6e-06
+  459,516  hmat  314.1     40.7    29.0   383.9    351.1   55,848  59.3  5.9e-05
+           fmm   304.2     40.5  1337.3  1682.1  18869.2   27,941  45.3  1.8e-05
 
 At 260,598 unknowns the FMM is **smaller (34,254 B/unknown against 48,345, and
 30.1 GB of RSS against 34.3), more accurate (8.6e-06 against 1.6e-05) and takes
@@ -1060,9 +1061,17 @@ the same 42 iterations**. Those are crossovers, not projections: flat H's bytes
 per unknown RISE with N and the FMM's FALL, because the M2L table is
 N-independent.
 
-The BUILD is about to cross too. The FMM's is N^0.21 over this range -- nearly
-flat, being mostly the one-time table factorization -- against flat H's N^1.38,
-so 238.9 s against 144.0 s at scale 3 becomes a win by scale 4.
+**THE BUILD CROSSED AT SCALE 4, MEASURED: 304.2 s against 314.1 s.** The FMM's
+build is N^0.43 over the last step -- mostly the one-time table factorization --
+against flat H's N^1.38. At 459,516 unknowns the FMM is also 2.0x smaller per
+unknown (27,941 against 55,848), 1.31x smaller in RSS and 3.2x more accurate
+(1.8e-05 against 5.9e-05), at the same 49 iterations.
+
+**BUT THE TOTAL IS STILL 4.4x WORSE, AND THAT IS THE NUMBER THAT MATTERS.**
+1682.1 s against 383.9 s. The ratio improves -- 6.4x, 5.5x, 4.4x over the three
+rungs -- only because the build crossed; the SOLVE ratio is flat at ~46x
+(40x / 57x / 46x). flat H's total is 82 % build; the FMM's is 79 % solve. Any
+claim that the FMM "wins" has to name which column it means.
 
 What has NOT crossed is the matvec: 10,398 ms against 168.6 ms, **62x**, at a
 clean N^0.98. That is the structural gap, and after compression it is no longer
@@ -1074,11 +1083,17 @@ The fixes moved the build and the solve a long way -- build 750.3 -> 201.8 s
 
 **THE OPEN QUESTION FOR 4M IS THE RSS/BYTES GAP, AND IT DECIDES EVERYTHING.**
 Peak RSS is still 3.4x the accounted bytes (down from 6.2x once the duplicate
-tables went). Fitting the ACCOUNTED bytes as fixed + B N over the last two rungs
-gives ~4.6 GiB + 15,200 B/unknown = **~65 GiB at 4.26M, which fits**; fitting
-PEAK RSS the same way gives ~20 GB + 38,300 B/unknown = **~183 GB, which does
-not**. Until that 3.4x is explained the 4M memory claim is unsettled in the
-direction that matters.
+tables went). Four rungs now, and it is NOT shrinking: 3.7x, 3.4x, 3.5x. Fitting the
+ACCOUNTED bytes as fixed + B N over the last two rungs gives ~3.8 GB +
+19,700 B/unknown = **~88 GB at 4.26M, which fits**; the same fit on PEAK RSS
+gives ~10 GB + 76,400 B/unknown = **~335 GB, which does not**, and a working set
+is not spillable the way a stored operator is. **This is now the single thing
+standing between the FMM and 1M elements.**
+
+Extrapolated end to end at 4.26M, both paths land in the same place: flat H
+~2.0 h of build (N^1.38) plus ~2.4 h of out-of-core solve, the FMM ~13 min of
+build (N^0.43) plus ~4.2 h of solve. **~4.4 h against ~4.6 h -- a tie**, with the
+FMM's build advantage exactly cancelled by its solve.
 
 **And the preconditioner is still per-pair.** Of the 732.6 s solve at scale 3,
 42 x 10.4 s = 437 s is the matvec and ~295 s is preconditioner applies, which

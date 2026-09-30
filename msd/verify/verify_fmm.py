@@ -674,26 +674,51 @@ def check_operator() -> bool:
     from mbem.la.preconditioner import BlockGaussSeidel
 
     t0 = time.time()
-    Mg = BlockGaussSeidel(hg, grouping="patch")     # grouped lower couplings
-    Mp = BlockGaussSeidel(hp, grouping="patch")     # the per-term loop
-    grouped_sbs = len(Mg._lower)
-    r = np.random.default_rng(5).standard_normal(system.layout.n_unknowns)
-    zg, zp = Mg(r), Mp(r)
-    rel = float(np.max(np.abs(zg - zp))
-                / max(float(np.max(np.abs(zp))), 1e-300))
-    # The sweep must also be doing SOMETHING lower-triangular, or the two
-    # agree trivially: compare against the same preconditioner with every
-    # lower coupling dropped, which is what the silent bug produced.
-    held = {k: v for k, v in Mp._lower.items()}
-    for sb in Mp.sbs:
-        sb.lower_terms = []
-    zj = Mp(r)
-    Mp._lower = held
-    jac = float(np.max(np.abs(zj - zp)) / max(float(np.max(np.abs(zp))), 1e-300))
+    # PINNED OFF for the equivalence check: with the near-only coupling on,
+    # the grouped applier deliberately computes something DIFFERENT from the
+    # per-term loop (a preconditioner, not the operator), so comparing them
+    # would be comparing two things that are not meant to agree. The flag's
+    # own effect is checked below.
+    held_near = defaults.PRECOND_LOWER_NEAR_ONLY
+    defaults.PRECOND_LOWER_NEAR_ONLY = False
+    try:
+        Mg = BlockGaussSeidel(hg, grouping="patch")  # grouped lower couplings
+        Mp = BlockGaussSeidel(hp, grouping="patch")  # the per-term loop
+        grouped_sbs = len(Mg._lower)
+        r = np.random.default_rng(5).standard_normal(system.layout.n_unknowns)
+        zg, zp = Mg(r), Mp(r)
+        rel = float(np.max(np.abs(zg - zp))
+                    / max(float(np.max(np.abs(zp))), 1e-300))
+        # The sweep must also be doing SOMETHING lower-triangular, or the two
+        # agree trivially: compare against the same preconditioner with every
+        # lower coupling dropped, which is what the silent bug produced.
+        keep = [sb.lower_terms for sb in Mp.sbs]
+        for sb in Mp.sbs:
+            sb.lower_terms = []
+        zj = Mp(r)
+        for sb, lt in zip(Mp.sbs, keep):
+            sb.lower_terms = lt
+        jac = float(np.max(np.abs(zj - zp))
+                    / max(float(np.max(np.abs(zp))), 1e-300))
+        # And the near-only coupling must be a REAL approximation: between
+        # the full coupling and none at all. Equal to either would mean the
+        # flag does nothing, or drops everything.
+        defaults.PRECOND_LOWER_NEAR_ONLY = True
+        Mn = BlockGaussSeidel(hg, grouping="patch")
+        zn = Mn(r)
+        d_full = float(np.max(np.abs(zn - zg))
+                       / max(float(np.max(np.abs(zg))), 1e-300))
+        d_none = float(np.max(np.abs(zn - zj))
+                       / max(float(np.max(np.abs(zj))), 1e-300))
+    finally:
+        defaults.PRECOND_LOWER_NEAR_ONLY = held_near
     print(f"    preconditioner: grouped lower couplings on {grouped_sbs} of "
           f"{len(Mg.sbs)} super-blocks vs the per-term loop {rel:.3e}; "
-          f"block-Jacobi differs by {jac:.3e}   ({time.time() - t0:.0f}s)")
-    ok &= rel < VARIANT_TOL and grouped_sbs > 0 and jac > 1e-6
+          f"none differs {jac:.3e}; near-only sits between "
+          f"({d_full:.3e} from full, {d_none:.3e} from none)   "
+          f"({time.time() - t0:.0f}s)")
+    ok &= (rel < VARIANT_TOL and grouped_sbs > 0 and jac > 1e-6
+           and d_full > 1e-9 and d_none > 1e-9)
     return ok and worst < VARIANT_TOL
 
 

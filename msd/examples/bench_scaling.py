@@ -424,7 +424,7 @@ def median_matvec_ms(matvec, n: int, rng) -> float:
 # one rung
 # ---------------------------------------------------------------------
 
-def fmm_stats(groups, n: int) -> tuple:
+def fmm_stats(groups, n: int, pairs=None) -> tuple:
     """``(bytes, ranks, fallbacks)`` for an FMM operator, in the shape the
     compressed backend reports so the two are comparable.
 
@@ -448,12 +448,41 @@ def fmm_stats(groups, n: int) -> tuple:
         if tab:
             tables += tab._bytes
             ranks.extend(tab.ranks)
+    # The PAIRS' own near caches, which the preconditioner and anything else
+    # reaching the operator per pair populates. Counted separately because
+    # they are the same exact blocks as the groups', restricted differently:
+    # duplication, not new information, and invisible if only groups are
+    # walked -- which is what left peak RSS at 6.2x the accounted bytes
+    # before the M2L tables were shared.
+    pair_near = 0
+    seen_pair = {id(g.pair) for g in groups.groups}
+    for pair in (pairs or {}).values():
+        if id(pair) in seen_pair:
+            continue
+        seen_pair.add(id(pair))
+        for blocks in pair._near_cache.values():
+            pair_near += sum(b.nbytes for _rows, _cols, b in blocks)
     st = {id(g.pair.st): g.pair.st for g in groups.groups}
     stencil = sum(sum(v.nbytes for v in vars(s).values()
                       if isinstance(v, np.ndarray)) for s in st.values())
-    total = near + tables + stencil
+    # The TRANSIENTS a matvec holds, which peak RSS sees and a byte count of
+    # the stored operator does not: one multipole and one local expansion per
+    # box per traversal, and the widest M2L gather.
+    expand = gather = 0
+    for g in groups.groups:
+        p = g.pair
+        p3, nc = p.p ** 3, 3 if p.kernel == "G" else 9
+        t = p.eps_terms
+        nb_src = int(np.count_nonzero(p._src_sub))
+        nb_tgt = int(np.count_nonzero(p._tgt_sub))
+        expand += (nb_src * p3 * nc * t + nb_tgt * p3 * 3 * t) * 8
+        widest = max((len(v) for v in p._m2l_by_offset().values()), default=0)
+        gather = max(gather, (nc * p3 + 3 * p3) * widest * 8)
+    total = near + pair_near + tables + stencil + expand + gather
     r = np.array(ranks) if ranks else np.zeros(1)
-    return ({"near": int(near), "lowrank": int(tables), "bases": int(stencil),
+    return ({"near": int(near), "pair_near": int(pair_near),
+             "lowrank": int(tables), "bases": int(stencil),
+             "expansions": int(expand), "gather_peak": int(gather),
              "total": int(total), "per_unknown": total / max(n, 1)},
             {"mean": float(r.mean()), "max": int(r.max()),
              "n_lowrank": len(ranks), "n_dense": 0, "n_capped": 0,
@@ -577,7 +606,7 @@ def run_rung(model: str, scale: float, backend: str, opts: dict,
         rec["rungs"] = {"+".join(sb["slots"]): sb["rung"]
                         for sb in report.precond_summary["super_blocks"]}
         phases["matvec_ms"] = median_matvec_ms(hasm.matvec, n, rng)
-        rec["bytes"], rec["ranks"], rec["fallbacks"] = fmm_stats(groups, n)
+        rec["bytes"], rec["ranks"], rec["fallbacks"] = fmm_stats(groups, n, pairs)
         rec["peak_rss_gb"] = peak_rss_gb()
         rec["numba"] = numba_threads()
         rec["defaults"] = defaults_snapshot()

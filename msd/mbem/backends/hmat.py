@@ -272,7 +272,8 @@ class AssembledH:
                 c = np.asarray(kernel_coeffs(g.kernel,
                                              self.materials[g.region]))
                 y = g.pair.matvec(c, np.concatenate(
-                    [z[a:b] for a, b in g.cols]))
+                    [z[a:b] for a, b in g.cols]),
+                    far=not defaults.PRECOND_LOWER_NEAR_ONLY)
                 off = 0
                 for name, (a, b) in zip(g.row_names, g.rows):
                     m = b - a

@@ -700,6 +700,14 @@ PRECOND_APPLY_MIN_CHUNKS = 2
 # is roundoff and not an identity -- unlike the worker count, which cannot
 # move the answer at all and is gated with array_equal. Measured 5e-15.
 PRECOND_APPLY_PARITY = 1e-12
+# Drop the FAR field from the preconditioner's off-diagonal couplings, keeping
+# the exact near field. A preconditioner is an APPROXIMATION: this changes the
+# preconditioner and not the operator, so the answer is untouched and only the
+# iteration count can move. It matters because for an FMM an off-diagonal
+# coupling is a full traversal -- ~45 of them per apply -- where the near
+# blocks are already cached per coefficient vector and cost nothing.
+# Measured basis beside the FMM ladder in BACKLOG.
+PRECOND_LOWER_NEAR_ONLY = True
 
 # --- HODLR ladder rung ------------------------------------------------
 # Loose tolerance of the rung's approximate inverse. It cannot move the

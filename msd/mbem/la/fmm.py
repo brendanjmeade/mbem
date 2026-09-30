@@ -1078,10 +1078,19 @@ class PairFMM:
 
     # -- operations ------------------------------------------------------
 
-    def matvec(self, coeffs: np.ndarray, x: np.ndarray) -> np.ndarray:
+    def matvec(self, coeffs: np.ndarray, x: np.ndarray,
+               far: bool = True) -> np.ndarray:
         """``y = A(coeffs) x``. ``x`` is (3 n_source,) or (3 n_source, k);
         several right-hand sides share one traversal and one M2L geometry,
-        which is the only concession to speed here."""
+        which is the only concession to speed here.
+
+        ``far=False`` applies the U list ALONE -- the exact near field, with
+        no traversal at all. That is not the operator and must never stand in
+        for it; it exists because a PRECONDITIONER is an approximation, so its
+        off-diagonal couplings can drop the far field and change only the
+        iteration count (`AssembledH.lower_applier`). The near blocks are
+        cached per coefficient vector, so this is nearly free.
+        """
         c = np.asarray(coeffs, dtype=float)
         params = _far_params(self.kernel, c)[:self.eps_terms]   # validates c
         X = np.asarray(x, dtype=float)
@@ -1094,6 +1103,9 @@ class PairFMM:
 
         for rows, cols, block in self._near_blocks(c):
             y[rows] += (block @ _dof_rows(X, cols)).reshape(rows.size, 3, k)
+        if not far:
+            y = y.reshape(self.shape[0], k)
+            return y[:, 0] if vector else y
 
         M = self._upward(self._charges(X.reshape(self.n_source, 3, k)))
 

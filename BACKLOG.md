@@ -1081,7 +1081,32 @@ The fixes moved the build and the solve a long way -- build 750.3 -> 201.8 s
 (3.7x) at scale 2 and 1050.6 -> 238.9 s (4.4x) at scale 3, RSS 43.4 -> 24.6 and
 55.5 -> 30.1 GB -- with every accuracy and iteration figure unchanged.
 
-**THE OPEN QUESTION FOR 4M IS THE RSS/BYTES GAP, AND IT DECIDES EVERYTHING.**
+**THE RSS/BYTES GAP IS EXPLAINED, AND IT IS NOT THE OPERATOR.** The accounting
+was extended to everything the operator holds -- the pairs' own near caches, the
+per-box multipole and local expansions, and the widest M2L gather -- and it
+REFUTED all four candidates. At 117,120 unknowns: near 1.67 GiB, pairs' near
+caches **0.00 GiB**, tables 4.14, stencil 0.47, expansions 0.31, gather 0.05,
+total 6.64 GiB against a 24.44 GB peak. The pairs' caches are empty because
+grouping the calibration and the preconditioner means `pair_for` is barely
+called any more, and the two transients are 0.36 GiB of an 18 GB gap.
+
+Tracing RSS through a bare traversal instead found it: imports 0.11 GB, tree
+0.24, groups 0.77, **first matvec 8.00** (building 4.14 GiB of table), second
+matvec 8.18. So the FMM OPERATOR is 8.0 GB against 6.64 GiB accounted --
+**1.12x, not 3.4x** -- and the accounting was right all along. The harness's
+24.44 GB is mostly not the operator: the PRECONDITIONER's LU factors, measured
+independently at 8.90 GB at this size (4 of 6 super-blocks on the dense rung),
+plus the 91 PairFMM objects and the exact-rows reference. `fmm_stats` was never
+meant to count the preconditioner, and it is a cost BOTH backends pay -- hmat's
+peak here is 25.5 GB.
+
+So the 4M memory estimate is the accounted fit times ~1.12 plus a preconditioner
+we size independently: ~88 GB of operator x 1.12 = ~98 GB, plus 19.6 GiB at
+`PRECOND_BJ_CHUNK_DOF = 1000`, **~119 GB -- it fits 128 GB, tightly**. The
+earlier ~335 GB came from extrapolating a peak that conflated the operator with
+a preconditioner whose size is a knob.
+
+**Superseded: the open question for 4M is the RSS/bytes gap.**
 Peak RSS is still 3.4x the accounted bytes (down from 6.2x once the duplicate
 tables went). Four rungs now, and it is NOT shrinking: 3.7x, 3.4x, 3.5x. Fitting the
 ACCOUNTED bytes as fixed + B N over the last two rungs gives ~3.8 GB +
@@ -1115,13 +1140,19 @@ same preconditioner with every lower coupling dropped, requiring the second to
 differ (measured 1.5e-01): a gate that only checked agreement would have passed
 the broken version, both sides being zero.
 
-**What is left of the solve is the traversals themselves.** At scale 2, 343.2 s
-over 37 iterations is 9.3 s per iteration against a 4.81 s matvec, so ~4.5 s is
-preconditioner and orthogonalization. The idea worth measuring next is that a
-preconditioner is an APPROXIMATION: its off-diagonal couplings could use the
-near field alone and skip the far field entirely, which changes the
-preconditioner and not the operator -- only the iteration count moves. That
-would make the couplings nearly free, since near blocks are cached.
+**NEAR-ONLY LOWER COUPLINGS: 1.17x, FOR +3 ITERATIONS**
+(`PRECOND_LOWER_NEAR_ONLY`, `PairFMM.matvec(far=False)`). A preconditioner is an
+APPROXIMATION, so its off-diagonal couplings can drop the far field and keep the
+exact near one: that changes the preconditioner and not the operator, so only the
+iteration count can move. Measured at scale 2: solve 343.2 -> 293.3 s,
+iterations 37 -> 40. The whole chain on that rung is 354.4 (per-term) -> 343.2
+(grouped) -> 293.3 (near-only), 1.21x.
+
+Gated as a genuine INTERMEDIATE, which is the only way to catch it doing nothing
+or everything: the near-only apply sits 3.296e-02 from the full coupling and
+1.594e-01 from dropping it, so it is neither. The equivalence clause pins the
+flag OFF, because with it on the grouped applier is deliberately not the
+per-term loop.
 
 **THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
 FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1

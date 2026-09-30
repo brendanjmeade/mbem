@@ -1042,6 +1042,49 @@ pairs. What is LEFT in the build (`other` 127.6 s of 129.9) is the one-time
 table factorization, which is N-INDEPENDENT -- a fixed cost, not a scaling
 problem.
 
+**THE FMM LADDER, RE-RUN WITH EVERY FIX IN: THREE CROSSOVERS, MEASURED.**
+topo_inclusion, canonical, compressed M2L, against the flat-H ladder on the
+same rungs:
+
+      N           build   matvec     solve  it    B/unk   RSS GB    op err
+   31,098  hmat     7.6     24.8       1.5  23   34,586      6.0   4.2e-05
+  117,120  hmat    48.2     71.1       8.8  37   40,744     25.5   2.8e-05
+           fmm    201.8   4758.7     354.4  37   57,530     24.6   9.4e-06
+  260,598  hmat   144.0    168.6      12.8  42   48,345     34.3   1.6e-05
+           fmm    238.9  10398.2     732.6  42   34,254     30.1   8.6e-06
+  459,516  hmat   314.1    351.1      29.0  49   55,848     59.3   5.9e-05
+
+At 260,598 unknowns the FMM is **smaller (34,254 B/unknown against 48,345, and
+30.1 GB of RSS against 34.3), more accurate (8.6e-06 against 1.6e-05) and takes
+the same 42 iterations**. Those are crossovers, not projections: flat H's bytes
+per unknown RISE with N and the FMM's FALL, because the M2L table is
+N-independent.
+
+The BUILD is about to cross too. The FMM's is N^0.21 over this range -- nearly
+flat, being mostly the one-time table factorization -- against flat H's N^1.38,
+so 238.9 s against 144.0 s at scale 3 becomes a win by scale 4.
+
+What has NOT crossed is the matvec: 10,398 ms against 168.6 ms, **62x**, at a
+clean N^0.98. That is the structural gap, and after compression it is no longer
+mostly M2L.
+
+The fixes moved the build and the solve a long way -- build 750.3 -> 201.8 s
+(3.7x) at scale 2 and 1050.6 -> 238.9 s (4.4x) at scale 3, RSS 43.4 -> 24.6 and
+55.5 -> 30.1 GB -- with every accuracy and iteration figure unchanged.
+
+**THE OPEN QUESTION FOR 4M IS THE RSS/BYTES GAP, AND IT DECIDES EVERYTHING.**
+Peak RSS is still 3.4x the accounted bytes (down from 6.2x once the duplicate
+tables went). Fitting the ACCOUNTED bytes as fixed + B N over the last two rungs
+gives ~4.6 GiB + 15,200 B/unknown = **~65 GiB at 4.26M, which fits**; fitting
+PEAK RSS the same way gives ~20 GB + 38,300 B/unknown = **~183 GB, which does
+not**. Until that 3.4x is explained the 4M memory claim is unsettled in the
+direction that matters.
+
+**And the preconditioner is still per-pair.** Of the 732.6 s solve at scale 3,
+42 x 10.4 s = 437 s is the matvec and ~295 s is preconditioner applies, which
+still call `pair.matvec` for every strictly-lower Gauss-Seidel coupling. The
+calibration was grouped; this was not.
+
 **THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
 FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1
 against exact rows, worst over a gaussian and the translation:

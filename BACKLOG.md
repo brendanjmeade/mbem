@@ -1042,6 +1042,36 @@ pairs. What is LEFT in the build (`other` 127.6 s of 129.9) is the one-time
 table factorization, which is N-INDEPENDENT -- a fixed cost, not a scaling
 problem.
 
+**THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
+FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1
+against exact rows, worst over a gaussian and the translation:
+
+    p_U/p_T   matvec    worst error   margin on FMM_OPERATOR_PARITY
+     6/8      1.16 s     1.686e-05          11.9x
+     6/7      0.98 s     3.793e-05           5.3x
+     6/6      0.89 s     2.090e-04          FAILS
+     5/6      0.82 s     2.090e-04          FAILS
+
+Half the earlier guess was right and half wrong. The OPERATOR's p-sensitivity is
+far below a pair's -- 2.25x per order against the pair's 14x -- so p = 7 is
+affordable on accuracy, which the pair rate said it would not be. But the SPEED
+gain is 1.18x where p^6 predicts 2.3x, so it costs half the accuracy margin for
+18 %. Not taken.
+
+The reason is the rule this file keeps having to relearn: **re-profile after
+every change.** Profiled after compression, the matvec is `_m2l_table` 57 %,
+`far_apply` (W) 10 %, `tensordot` + `_separable` (L2P, M2M, L2L) ~25 %, near and
+the rest ~8 %. M2L is ~56 % of the matvec, not the ~95 % it was, so EVERY
+remaining M2L lever is Amdahl-capped: the common basis's 1.9x becomes ~1.37x and
+float32's ~2x becomes ~1.3x.
+
+**And 57 % of the matvec was PYTHON, not GEMM.** The same profile showed
+`octree.cube` called 54,958 times -- twice per V pair, for a half-width that is a
+function of the LEVEL alone -- and 176,221 reshapes. Taking the half-width from
+`tree.level` and writing the gather into its output slice instead of through a
+temporary is 1.14x, free: 1.16 -> 1.021 s at scale 1 and 4.76 -> 4.161 s at
+scale 2.
+
 **M2L COMPRESSION: 6.9-7.6x ON THE WHOLE FAR-FIELD MATVEC, AND 18x ON THE
 TABLE.** The largest single result in the far field, and it comes from the one
 standard bbFMM technique this implementation never had (`fmm.py`'s own SCOPE

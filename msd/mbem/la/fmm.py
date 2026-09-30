@@ -914,14 +914,19 @@ class PairFMM:
             if B is None:                      # past the cap: stay exact
                 continue
             m = len(prs)
-            half = np.array([0.5 * float(tree.cube(b)[1][0] - tree.cube(b)[0][0])
-                             for _a, b in prs])
+            # The half-width is a function of the LEVEL alone, so it comes
+            # from the level array. Through `tree.cube` it was two calls and
+            # two array allocations per V pair -- 55,000 of them per matvec
+            # on the smallest model, and visible in the profile.
+            half = 0.5 * tree.root_edge / (1 << tree.level[[b for _a, b in prs]])
             for ip, (Bi, Bt) in enumerate(B):
                 s = half ** (-table.degree[ip])
                 cols = np.empty((nc * p3, m * k))
                 for j, (_a, b) in enumerate(prs):
                     q = Mc[b][:, :, ip * k:(ip + 1) * k]
-                    cols[:, j * k:(j + 1) * k] = s[j] * q.reshape(nc * p3, k)
+                    # into the output slice, not through a temporary
+                    np.multiply(q.reshape(nc * p3, k), s[j],
+                                out=cols[:, j * k:(j + 1) * k])
                 # Factored: the block is 2-5 % rank, so r (nr + nc) beats
                 # nr nc by an order of magnitude and the GEMM stays wide.
                 res = Bi @ cols if Bt is None else Bi @ (Bt @ cols)

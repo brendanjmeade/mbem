@@ -1,9 +1,48 @@
 # Backlog
 
-The one status document for `moss-org`. History and measurements live in
-`git log` (each commit message carries its numbers); rules live in each
-package's `CLAUDE.md`. Trunk: `msd/mbem`. `clq` is the frozen oracle for its
-P0/P1/P2 kernels; `ddbem` and `fbem` are closed (`FINDINGS.md` each).
+The one status document for this repo. History and measurements live in
+`git log` (each commit message carries its numbers); rules live in the root
+`CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
+and the two kernel copies are frozen oracles; `ddbem` and `fbem` are closed
+(`FINDINGS.md` each). Gates: `python tests/run_all.py`, 43 of them.
+
+**The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
+entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
+is `tests/gates/mbem`, `msd/examples` is `studies/mbem`, and
+`moss/mollified_kernel` is `src/moss_kernel`. The paper (`moss/`) and its
+public package (`medt_paper/`) left the repo for
+`~/Desktop/moss-org-paper-archive/`; they are in history and under tag
+`medt_paper-vendored-2026-09-17`. Nothing numeric changed in the move -- the
+17 frozen oracles are pinned by sha256 and all 17 were byte-identical
+afterwards, and the gate stdout was diffed line by line against a baseline
+taken before the first commit.
+
+Three things the migration established that are worth knowing before changing
+the tree again:
+
+* **Two independent kernel copies, two package names.** `mollified_kernel` and
+  `moss_kernel` are compared entrywise by the gates, and only `moss_kernel`
+  defines `analytical_eigenstress_kernel` / `eigenstress_batch`. A swap between
+  them is the one failure in this repo that stays GREEN: the parity residual
+  just slides from ~1e-12 to ~1e-16, which no tolerance rejects.
+  `verify_oracle_provenance` exists for that and pins each oracle by resolved
+  path AND sha256. Three files had hardcoded the prefix `mollified_kernel.` and
+  would have silently resolved to the wrong copy once the package was
+  installed.
+* **Two parity clauses are currently vacuous**, and predate the migration:
+  `verify_dd_pairing` [d] "msd scalar vs moss scalar" is exactly `0.00e+00`
+  and `verify_eigenstress_exact` [a]'s moss residuals are ~1e-16, because for
+  those functions the two copies are byte-identical CODE. They still trip if
+  the copies diverge, so they stay -- but the parity that is genuinely
+  independent is `src/clq`'s, which derives its kernels separately. Do not cite
+  the first two as independent evidence.
+* **Gates are spawned as subprocesses, by file path, deliberately.** Four gate
+  filenames exist in two suites each; the two kernel copies must not contend
+  for one module identity; and several gates rebind `defaults.X` around a
+  clause. `tests/run_all.py` also pins a gate COUNT per suite, because
+  discovery is a glob and a glob pointed at the wrong directory yields "0 / 0
+  PASS" and exit 0 -- a green empty suite, the one result a runner must not be
+  able to report.
 
 ## Standing rules
 

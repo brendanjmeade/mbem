@@ -403,6 +403,37 @@ OCTREE_PROTRUSION_C = 0.67
 OCTREE_LEVEL_CAP = 21
 
 # --- Chebyshev black-box FMM (la/fmm.py) ------------------------------
+# Which far field HBackend builds: "aca" (flat H-matrix + ACA) or "fmm"
+# (Chebyshev bbFMM on the shared octree). Both are complete and gated; the
+# choice is a COST decision along two axes, size and matvec count, and
+# neither dominates:
+#   ACA adapts its rank per block (~16) where the FMM's p^3 adapts to
+#   nothing, so the FMM does ~19.9 Mflop/unknown against ACA's ~9.5 Kflop
+#   -- 2,100x -- and its matvec measures ~46x slower at every rung. The
+#   remaining FMM levers (common basis 1.37x, float32 ~1.3x) leave ~25x, so
+#   that gap does not close.
+#   The FMM wins the BUILD exponent (N^0.21-0.43 against N^1.38-1.39, 84-87 %
+#   of the ACA build being the ACA loop) and holds half the bytes
+#   (27,941 B/unknown against 55,848 at 459,516), which is what makes 4M
+#   unknowns reachable at all: ~119 GB against ~530 GB.
+# So: "aca" whenever the operator fits, and especially when one geometry is
+# matvec'd many times (a rate-and-state run amortizes the build to zero);
+# "fmm" when it does not fit. HUGE AND many matvecs is covered by neither --
+# see BACKLOG.md, and note that an H^2, which would own that cell, is dead
+# on this kernel (shared bases inflate rank 17 -> 175).
+FAR_FIELD = "aca"
+# Interpolation domain the bbFMM interpolates on. "canonical" is the only one
+# that both shares the M2L table across the tree (316 transfer offsets,
+# N-independent) and keeps the true extents for P2M/L2P/W/X, and it measured
+# most accurate of the three at every scale with the X rule on. The FmmTree
+# and PairFMM constructors still default to "extent", which is what the
+# per-pair gate clauses sweep; this is the shipping choice.
+FMM_DOMAIN = "canonical"
+# M2L evaluator: "table" (shared per-offset blocks, compressed) is the
+# shipping variant, 6.9-7.6x on the far-field matvec over "numba" and 18x on
+# the table build over an exact factorization. "evaluated" is the reference
+# every gate is written against (FMM_M2L_VARIANT_PARITY).
+FMM_M2L = "table"
 # Chebyshev nodes per dimension (p^3 per box). Measured per admissible block
 # at the canonical worst offset (2, 0, 0): the single-layer U kernel reaches
 # 1e-4 relative Frobenius at p = 6, the double-layer T kernel, one derivative

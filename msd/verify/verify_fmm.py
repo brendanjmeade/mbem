@@ -67,7 +67,7 @@ import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh import make_rectangular_patch                 # noqa: E402
 from mbem import defaults                                         # noqa: E402
 from mbem.backends.dense import AssembledDense, translation_basis  # noqa: E402
-from mbem.backends.hmat import AssembledH                         # noqa: E402
+from mbem.backends.hmat import AssembledH, HBackend               # noqa: E402
 from mbem.kernels import (KERNEL_T, KERNEL_U, kernel_coeffs)      # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.kernels import tri_kernels as tk                        # noqa: E402
@@ -664,6 +664,35 @@ def check_operator() -> bool:
           f"({len(_pair_keys(system))} pairs): {worst:.3e}   "
           f"({time.time() - t0:.0f}s)")
 
+    # THE SAME REARRANGEMENT AFTER A MATERIAL REBUILD, which is a separate
+    # claim. ``FarGroups`` holds its own materials dict BY REFERENCE and it
+    # is not the assembly's, so a rebuild that forwards the groups without
+    # re-pointing them leaves the FAR FIELD at the old material while the
+    # calibration diagonal and the RHS move to the new one. Nothing in a
+    # residual shows that: the operator stays self-consistent and the solve
+    # converges, to the wrong problem. Hence two limits, not one -- the
+    # rebuilt grouped operator against the rebuilt per-term one (exact, the
+    # same rearrangement), AND a requirement that the rebuild MOVED at all,
+    # because groups that silently kept the old material still agree with
+    # the per-term route everywhere the far field does not reach.
+    t0 = time.time()
+    rname = sorted(materials)[0]
+    m0 = materials[rname]
+    doubled = mb.ElasticMaterial(mu=2.0 * m0.mu, lam=m0.lam)
+    hgr = hg.rebuild_for_materials({rname: doubled})
+    hpr = hp.rebuild_for_materials({rname: doubled})
+    reb = moved = 0.0
+    for name, v in _test_vectors(system, np.random.default_rng(2)):
+        a, b, held = hgr.matvec(v), hpr.matvec(v), hg.matvec(v)
+        reb = max(reb, float(np.max(np.abs(a - b)))
+                  / max(float(np.max(np.abs(b))), 1e-300))
+        moved = max(moved, float(np.max(np.abs(a - held)))
+                    / max(float(np.max(np.abs(held))), 1e-300))
+    print(f"    rebuilt at mu({rname}) {m0.mu:g} -> {doubled.mu:g}: grouped "
+          f"vs per-term {reb:.3e}; the far field MOVED by {moved:.3e}   "
+          f"({time.time() - t0:.0f}s)")
+    ok &= reb < VARIANT_TOL and moved > 1e-6
+
     # The PRECONDITIONER's strictly-lower couplings, grouped against the
     # per-term loop they replace. Gated because the failure is SILENT: an
     # applier that scatters to the wrong key subtracts nothing, the sweep
@@ -719,6 +748,34 @@ def check_operator() -> bool:
           f"({time.time() - t0:.0f}s)")
     ok &= (rel < VARIANT_TOL and grouped_sbs > 0 and jac > 1e-6
            and d_full > 1e-9 and d_none > 1e-9)
+
+    # THE FLAG ITSELF, at the SHIPPING settings. Everything above builds on
+    # the zone's own tree at placement_safety 1.0 and the "extent" /
+    # "evaluated" defaults, to isolate the pieces; `HBackend(far="fmm")`
+    # builds its own tree at domain="canonical" with the compressed table,
+    # which is what a caller gets and what no other clause runs end to end.
+    # Gated against the exact dense operator rather than against the
+    # hand-wired construction above, because the two do not share a tree.
+    # The storage refusal is here too: "combined" would reach a warm_views
+    # that PairFMM does not have, and the failure would be an AttributeError
+    # halfway through an assembly.
+    t0 = time.time()
+    hf = HBackend(jump="half", far="fmm").assemble(system, EPS)
+    flag = 0.0
+    for name, v in _test_vectors(system, np.random.default_rng(2)):
+        ref = dense.A @ v
+        flag = max(flag, float(np.max(np.abs(hf.matvec(v) - ref)))
+                   / float(np.max(np.abs(ref))))
+    try:
+        HBackend(far="fmm", storage="combined")
+        refused = False
+    except ValueError:
+        refused = True
+    print(f"    HBackend(far=\"fmm\") at domain={hf._far['domain']} "
+          f"m2l={hf._far['m2l']}, {len(hf._groups.groups)} traversals: "
+          f"{flag:.3e} vs dense (naive); storage=\"combined\" refused: "
+          f"{refused}   ({time.time() - t0:.0f}s)")
+    ok &= flag < NAIVE_TOL and refused
     return ok and worst < VARIANT_TOL
 
 

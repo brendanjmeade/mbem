@@ -15,11 +15,12 @@ declared material ``sweep``. P0 patches only
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 
 from .. import defaults
-from ..kernels import KERNEL_T, kernel_coeffs
+from ..kernels import KERNEL_T, KERNEL_U, kernel_coeffs
 from ..kernels import basis as kb
 from ..la.hop import PairCompressed, require_order0
 from ..la.preconditioner import BlockGaussSeidel
@@ -87,8 +88,12 @@ class HBackend:
                  n_workers: int | None = None,
                  jump: str = "calibrated",
                  deflate: bool = False,
-                 storage: str = "combined",
+                 storage: str | None = None,
                  sweep: bool = False,
+                 far: str = defaults.FAR_FIELD,
+                 fmm_order: dict | None = None,
+                 domain: str = defaults.FMM_DOMAIN,
+                 m2l: str = defaults.FMM_M2L,
                  verbose: bool = False):
         # jump / deflate: as for the dense backend; an all-Neumann model
         # with jump="calibrated" needs deflate=True (assembly refuses
@@ -102,8 +107,27 @@ class HBackend:
         # prescribed values) are compressed once and reused per material
         # instead of applied matrix-free at every rebuild -- at 100k
         # unknowns a fault RHS is ~2e9 kernel pairs, 70 s per material.
+        # far: which far field to build -- "aca" (flat H + ACA) or "fmm"
+        # (Chebyshev bbFMM on one shared octree). defaults.FAR_FIELD states
+        # the cost decision; the tol/min_leaf/eta/max_admissible/min_aca/
+        # precision knobs above govern "aca" ONLY, and fmm_order/domain/m2l
+        # govern "fmm" only. Passing the other family's knobs is accepted
+        # and has no effect, which is why both sets are named here.
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
+        if far not in ("aca", "fmm"):
+            raise ValueError(far)
+        # storage defaults per far field rather than to one constant:
+        # "combined" holds the ACA payloads at 1x memory, but PairFMM has no
+        # warm_views to recompress into a view, so the FMM path is
+        # per-basis. Refused rather than forced, because a caller who asked
+        # for "combined" asked for a memory bound the FMM cannot honour.
+        if storage is None:
+            storage = "basis" if far == "fmm" else "combined"
+        elif far == "fmm" and storage != "basis":
+            raise ValueError(
+                f'far="fmm" needs storage="basis", not "{storage}": a '
+                "PairFMM has no material view to warm")
         if storage not in ("basis", "combined"):
             raise ValueError(storage)
         # precision: storage precision of the views, normally derived
@@ -115,19 +139,73 @@ class HBackend:
         self.deflate = deflate
         self.storage = storage
         self.sweep = sweep
+        self.far = far
+        self.fmm_order = dict(fmm_order) if fmm_order is not None else {
+            KERNEL_U: defaults.FMM_ORDER_U, KERNEL_T: defaults.FMM_ORDER_T}
+        self.domain = domain
+        self.m2l = m2l
         self.verbose = verbose
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledH":
+        if self.far == "fmm":
+            return self._assemble_fmm(system, eps)
         return AssembledH(system, eps, self.opts, self.verbose,
                           jump=self.jump, deflate=self.deflate,
                           storage=self.storage, sweep=self.sweep)
+
+    def _assemble_fmm(self, system: BlockSystem, eps) -> "AssembledH":
+        """The bbFMM far field: one octree over every mesh of the model, one
+        traversal per (region, kernel), and a PairFMM per pair key alongside.
+
+        The pairs are not redundant with the groups: the calibration's
+        uncovered patches (a prescribed-displacement one the system built no
+        term for) and anything reaching ``pair_for`` still go pair by pair,
+        and ``opts`` is passed EMPTY because none of the ACA knobs reach a
+        PairFMM -- carrying them would imply a tol this path does not honour.
+        """
+        from ..la.fmm import FarGroups, FmmTree, PairFMM
+
+        model = system.model
+        order, kw = self.fmm_order, dict(domain=self.domain, m2l=self.m2l)
+        arrays = kb.MeshArrays()          # assembly-scoped mesh-array memo
+        meshes, seen = [], set()
+        for r in model.regions:
+            for p in list(r.patches) + list(r.faults):
+                if id(p.mesh) not in seen:
+                    seen.add(id(p.mesh))
+                    meshes.append(p.mesh)
+        phases = {}
+        t0 = time.perf_counter()
+        geom = FmmTree(meshes, arrays=arrays, domain=self.domain)
+        phases["tree"] = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        groups = FarGroups(system, {r.name: r.material for r in model.regions},
+                           geom, order, eps, arrays, **kw)
+        phases["groups"] = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        keys = {}
+        for t in system.terms:
+            keys.setdefault((id(t.field_patch), id(t.source_patch), t.kernel),
+                            (t.field_patch, t.source_patch, t.kernel))
+        pairs = {k: PairFMM(fp.mesh, sp.mesh, kern,
+                            kb.resolve_patch_eps(eps, sp), p=order[kern],
+                            geom=geom, arrays=arrays, **kw)
+                 for k, (fp, sp, kern) in keys.items()}
+        phases["pairs"] = time.perf_counter() - t0
+        asm = AssembledH(system, eps, {}, self.verbose,
+                         jump=self.jump, deflate=self.deflate,
+                         storage=self.storage, sweep=self.sweep,
+                         _shared=(pairs, {}), _groups=groups,
+                         _far=dict(order=order, **kw))
+        asm.far_phases = phases
+        return asm
 
 
 class AssembledH:
     def __init__(self, system: BlockSystem, eps, opts: dict, verbose: bool,
                  jump: str = "calibrated", deflate: bool = False,
                  storage: str = "combined", sweep: bool = False,
-                 _shared=None, _groups=None, _lineage=None):
+                 _shared=None, _groups=None, _far=None, _lineage=None):
         from .dense import (require_anchor_or_deflate,
                             warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
@@ -152,6 +230,12 @@ class AssembledH:
         # per-term pair.matvec below; the collocation diagonals are added
         # exactly as they were, from the unscaled segment.
         self._groups = _groups
+        # The FMM configuration the groups were built at (order, domain,
+        # m2l), so a material rebuild and the preconditioner's sub-groups run
+        # at the SAME settings as the operator. Reading them back off the
+        # tree and hardcoding the rest is how the two silently diverge.
+        self._far = _far
+        self.far_phases: dict = {}
 
         if _shared is None:
             self._pairs: dict = {}
@@ -259,11 +343,14 @@ class AssembledH:
         from ..la.fmm import FarGroups
 
         geom = self._groups.groups[0].pair.geom
-        order = {g.kernel: g.pair.p for g in self._groups.groups}
+        far = self._far or {}
+        order = far.get("order") or {g.kernel: g.pair.p
+                                     for g in self._groups.groups}
         try:
             sub = FarGroups(self.system, self.materials, geom, order,
                             self.eps, terms=list(terms),
-                            domain=geom.domain, m2l="table")
+                            domain=far.get("domain", geom.domain),
+                            m2l=far.get("m2l", defaults.FMM_M2L))
         except ValueError:
             return None                 # incomplete subset: keep the loop
 
@@ -624,11 +711,22 @@ class AssembledH:
                          jump=self.jump, deflate=self.deflate,
                          storage=self.storage, sweep=self.sweep,
                          _shared=(self._pairs, self._tree_cache),
+                         _groups=self._groups, _far=self._far,
                          _lineage=self._lineage)
         for name, mat in material_map.items():
             if name not in new.materials:
                 raise KeyError(f"unknown region '{name}'")
             new.materials[name] = mat
+        # The grouped far field reads ITS OWN materials dict, which is not
+        # this assembly's: re-point it onto the new one, as a new FarGroups
+        # so the rebuild does not move the far field of the assembly it came
+        # from. Dropping _groups instead is correct but costs the grouping
+        # (the per-pair fallback reads the new materials); sharing them
+        # without this line leaves the far field at the OLD material while
+        # the calibration and RHS below move to the new one -- silent, and
+        # the solve still converges.
+        if new._groups is not None:
+            new._groups = new._groups.for_materials(new.materials)
         # calibration + RHS are material-dependent: recompute AFTER the
         # material override (cheap: constant-field matvecs).
         new._refresh_material_state()

@@ -1,15 +1,16 @@
 """Topography + inclusion showcase: solve the four-state decomposition.
 
-The fig06 soft-inclusion model (host + mu_host/100 cylindrical inclusion
+The fig06 soft-inclusion model (host + mu_host/10 cylindrical inclusion
 + surface-breaking strike-slip fault) gains a compactly supported
-Gaussian hill east of the fault:
+Gaussian hill ON the fault trace:
 
-    h(x,y) = 2 km * exp(-r^2 / (2 * 30^2)) * S(r),  r about (100, 0),
+    h(x,y) = 2 km * exp(-r^2 / (2 * 30^2)) * S(r),  r about (0, -50),
     S = quintic taper on [75, 90] km, EXACTLY zero beyond 90 km
 
-so the topography never touches the inclusion (support clears the
-inclusion rim by >=125 km, the box edges by 100 km, and the fault trace
-by 10 km — the trace itself stays flat).
+so the topography never touches the inclusion, and the fault mesh is
+warped with the surface it breaks (``build`` enforces the equal-warp rule
+on the trace and ``assert_zero_clearance`` the inclusion rim and box
+edge). ``--bump-center`` moves the hill off the trace.
 
 Four solves on the SAME refined triangulation (warped vs flat, het vs
 homogeneous inclusion), all with the calibrated formulation and the
@@ -22,10 +23,19 @@ enabling same-connectivity decompositions:
     inclusion effect  Du_inc  = u(topo,het) - u(topo,hom)
     topography effect Du_topo = u(topo,het) - u(flat,het)
 
-Caches fields to benchmarks/topo_inclusion_fields.npz for
-benchmarks/render_topo_inclusion.py.
+``--backend`` picks the operator, on the same system and the same four
+states: ``dense`` (LU, the reference; the only one whose report carries a
+condition estimate, so ``cond_*`` is saved only for it), ``hmat``
+(``HBackend(far="aca")``) or ``fmm`` (``HBackend(far="fmm")``). The
+second material state exercises ``rebuild_for_materials`` on whichever
+far field was built, which is the one path a single-solve benchmark
+never reaches.
 
-Run from the moss2 repo root:  python benchmarks/make_topo_inclusion.py
+Writes fields to examples/topo_inclusion_fields_mu10.npz (the input to
+render_topo_inclusion.py) for ``dense``, and to a ``_<backend>``-suffixed
+file otherwise, so a cross-backend run never overwrites the reference.
+
+Run from msd/:  python examples/make_topo_inclusion.py [--backend hmat]
 """
 
 import gc
@@ -112,10 +122,65 @@ def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
             s_hat, bump)
 
 
+BACKENDS = ("dense", "hmat", "fmm")
+
+
+def _assemble(backend: str, system):
+    """The chosen far field on this BlockSystem, all three calibrated.
+
+    ``eps="auto"`` and ``jump="calibrated"`` are the model's, not the
+    backend's, so the only thing that varies here is how the far field is
+    represented -- which is the point of comparing them on this model.
+    """
+    if backend == "dense":
+        return AssembledDense(system, "auto", "direct", jump="calibrated")
+    from mbem.backends import HBackend
+    return HBackend(jump="calibrated",
+                    far="aca" if backend == "hmat" else "fmm"
+                    ).assemble(system, "auto")
+
+
+def _release(asm) -> None:
+    """Drop the dense factors before the rebuild allocates its own.
+
+    The compressed backends share their compressed geometry ACROSS the
+    rebuild -- that is what makes a material step cheap there -- so they
+    have nothing to release, and setting ``A``/``_lu`` on one would create
+    two unused attributes rather than free anything.
+    """
+    if isinstance(asm, AssembledDense):
+        asm.A = None
+        asm._lu = None
+    gc.collect()
+
+
+def _record(asm, state: str, conds: dict, iters: dict) -> str:
+    """Whatever this backend's report actually carries, and a line to print.
+
+    The dense report has a condition estimate and no iteration count; the
+    compressed ones have the reverse. Recording only what ran is why the
+    saved npz schema differs by backend, and the renderer prints the
+    ``cond_*`` keys when they are there.
+    """
+    rep = asm.report
+    if getattr(rep, "cond_estimate", None) is not None:
+        conds[state] = rep.cond_estimate
+        return f"cond {rep.cond_estimate:.3e}"
+    iters[state] = (int(rep.iterations), float(rep.true_relres))
+    return (f"{rep.iterations} iterations, true relres {rep.true_relres:.2e}"
+            f"{'' if rep.converged else '  NOT CONVERGED'}")
+
+
 def main(mu_inc: float = 3.0, lam_inc: float | None = None,
-         out: pathlib.Path = OUT, bump_center=BUMP_CENTER,
-         bump_sigma=BUMP_SIGMA, bump_height=BUMP_HEIGHT):
+         out: pathlib.Path | None = None, bump_center=BUMP_CENTER,
+         bump_sigma=BUMP_SIGMA, bump_height=BUMP_HEIGHT,
+         backend: str = "dense"):
     import mollified_bem as mb
+    if backend not in BACKENDS:
+        raise ValueError(backend)
+    if out is None:                  # never overwrite the dense reference
+        out = OUT if backend == "dense" else OUT.with_name(
+            f"{OUT.stem}_{backend}{OUT.suffix}")
     mat_inc = mb.ElasticMaterial(mu=mu_inc,
                                  lam=mu_inc if lam_inc is None else lam_inc)
     (meshes, top_flat, top_topo, fault_flat, fault_topo,
@@ -125,9 +190,11 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
     print(f"  bump: H={bump.height} km, sigma={bump.sigma} km, "
           f"support r={bump.support_radius} km at {bump.center_xy}")
     print(f"  inclusion: mu={mat_inc.mu} GPa (host 30)", flush=True)
+    print(f"  backend: {backend}", flush=True)
 
     fields = {}
-    conds = {}
+    conds: dict = {}
+    iters: dict = {}
     for surface, host_top, fault_mesh in (("topo", top_topo, fault_topo),
                                           ("flat", top_flat, fault_flat)):
         meshes["host_top"] = host_top
@@ -136,25 +203,27 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
         print(f"[{surface}] unknowns: {system.layout.n_unknowns}",
               flush=True)
 
-        asm = AssembledDense(system, "auto", "direct",
-                             jump="calibrated")
+        t0 = time.time()
+        asm = _assemble(backend, system)
+        build_s = time.time() - t0
         sol = asm.solve()
-        conds[f"{surface}_het"] = asm.report.cond_estimate
+        line = _record(asm, f"{surface}_het", conds, iters)
         for p in ("host_top", "inclusion_top"):
             fields[f"u_{p}_{surface}_het"] = sol[f"u:{p}"]
-        print(f"[{surface}] het: cond {asm.report.cond_estimate:.3e}", flush=True)
+        print(f"[{surface}] het: {line}  (build {build_s:.1f}s, "
+              f"total {time.time() - t0:.1f}s)", flush=True)
 
-        asm.A = None
-        asm._lu = None
-        gc.collect()
+        _release(asm)
+        t0 = time.time()
         asm_h = asm.rebuild_for_materials({"inclusion": MAT_HOST})
         del asm
         gc.collect()
         sol_h = asm_h.solve()
-        conds[f"{surface}_hom"] = asm_h.report.cond_estimate
+        line = _record(asm_h, f"{surface}_hom", conds, iters)
         for p in ("host_top", "inclusion_top"):
             fields[f"u_{p}_{surface}_hom"] = sol_h[f"u:{p}"]
-        print(f"[{surface}] hom: cond {asm_h.report.cond_estimate:.3e}", flush=True)
+        print(f"[{surface}] hom: {line}  "
+              f"(rebuild + solve {time.time() - t0:.1f}s)", flush=True)
         del asm_h, sol, sol_h, model, system
         gc.collect()
 
@@ -170,10 +239,13 @@ def main(mu_inc: float = 3.0, lam_inc: float | None = None,
         bump_height=bump.height, bump_sigma=bump.sigma,
         bump_support=bump.support_radius,
         mu_inc=mat_inc.mu, lam_inc=mat_inc.lam,
+        backend=backend,
         **fields,
         **{f"cond_{k}": val for k, val in conds.items()},
+        **{f"iters_{k}": np.array(v) for k, v in iters.items()},
     )
     print(f"saved {out}", flush=True)
+    return out
 
 
 if __name__ == "__main__":
@@ -182,7 +254,10 @@ if __name__ == "__main__":
     ap.add_argument("--mu-inc", type=float, default=3.0,
                     help="inclusion shear modulus, GPa (host is 30; mu/10)")
     ap.add_argument("--lam-inc", type=float, default=None)
-    ap.add_argument("--out", type=pathlib.Path, default=OUT)
+    ap.add_argument("--out", type=pathlib.Path, default=None,
+                    help="default: topo_inclusion_fields_mu10[_BACKEND].npz")
+    ap.add_argument("--backend", choices=BACKENDS, default="dense",
+                    help="far field: dense LU, flat H + ACA, or bbFMM")
     ap.add_argument("--bump-center", type=float, nargs=2,
                     default=list(BUMP_CENTER), metavar=("X", "Y"))
     ap.add_argument("--bump-sigma", type=float, default=BUMP_SIGMA)
@@ -190,4 +265,4 @@ if __name__ == "__main__":
     a = ap.parse_args()
     main(mu_inc=a.mu_inc, lam_inc=a.lam_inc, out=a.out,
          bump_center=tuple(a.bump_center), bump_sigma=a.bump_sigma,
-         bump_height=a.bump_height)
+         bump_height=a.bump_height, backend=a.backend)

@@ -66,7 +66,6 @@ sys.path.insert(0, str(HERE))
 import mollified_bem as mb                                        # noqa: E402
 from mbem import defaults                                         # noqa: E402
 from mbem.backends import HBackend                                # noqa: E402
-from mbem.backends.hmat import AssembledH                         # noqa: E402
 from mbem.backends.dense import AssembledDense, translation_basis # noqa: E402
 from mbem.estimate import total_ram_bytes                         # noqa: E402
 from mbem.kernels import KERNEL_T                                 # noqa: E402
@@ -75,11 +74,6 @@ from mbem.model import generate_system                            # noqa: E402
 
 MODELS = ("fault_box", "topo_inclusion")
 BACKENDS = ("dense", "hmat", "fmm")
-# Interpolation domain the fmm backend runs on. "canonical" is the only one
-# that both shares the M2L table (316 offsets, N-independent) and keeps the
-# extents for P2M/L2P/W/X; measured most accurate of the three at every
-# scale with the X rule on (BACKLOG).
-FMM_DOMAIN = "canonical"
 DEFAULT_SCALES = {"fault_box": [1.0, 1.6, 2.6], "topo_inclusion": [1.0]}
 DEFAULT_MESH_CACHE = pathlib.Path("~/.cache/msd_bench_meshes").expanduser()
 EPS = "auto"
@@ -547,96 +541,35 @@ def run_rung(model: str, scale: float, backend: str, opts: dict,
         rec["defaults"] = defaults_snapshot()
         return rec
 
-    if backend == "fmm":
-        # The bbFMM far field on the SHARED tree: one traversal per
-        # (region, kernel) through FarGroups, with a PairFMM per pair key
-        # alongside because the preconditioner's Gauss-Seidel couplings and
-        # the calibration row sums still reach the operator pair by pair.
-        # storage="basis": the "combined" path warms views PairFMM has not.
-        from mbem.kernels import KERNEL_U, basis as kb
-        from mbem.la.fmm import FarGroups, FmmTree, PairFMM
-
-        order = {KERNEL_U: defaults.FMM_ORDER_U,
-                 KERNEL_T: defaults.FMM_ORDER_T}
-        arrays = kb.MeshArrays()
-        fmeshes, fseen = [], set()
-        for r in region_model.regions:
-            for p in list(r.patches) + list(r.faults):
-                if id(p.mesh) not in fseen:
-                    fseen.add(id(p.mesh))
-                    fmeshes.append(p.mesh)
-        keys = {}
-        for t in system.terms:
-            keys.setdefault((id(t.field_patch), id(t.source_patch), t.kernel),
-                            (t.field_patch, t.source_patch, t.kernel))
-        t0 = time.perf_counter()
-        geom = FmmTree(fmeshes, arrays=arrays, domain=FMM_DOMAIN)
-        phases["tree"] = time.perf_counter() - t0
-        t1 = time.perf_counter()
-        mats = {r.name: r.material for r in region_model.regions}
-        groups = FarGroups(system, mats, geom, order, EPS, arrays,
-                           domain=FMM_DOMAIN, m2l="table")
-        phases["groups"] = time.perf_counter() - t1
-        t1 = time.perf_counter()
-        pairs = {k: PairFMM(fp.mesh, sp.mesh, kern,
-                            kb.resolve_patch_eps(EPS, sp), p=order[kern],
-                            geom=geom, arrays=arrays, domain=FMM_DOMAIN,
-                            m2l="table")
-                 for k, (fp, sp, kern) in keys.items()}
-        phases["pairs"] = time.perf_counter() - t1
-        hasm = AssembledH(system, EPS, {}, False, jump=JUMP, storage="basis",
-                          _shared=(pairs, {}), _groups=groups)
-        phases["build"] = time.perf_counter() - t0
-        phases["other"] = phases["build"] - (phases["tree"] + phases["groups"]
-                                             + phases["pairs"])
-        rec["opts"]["storage"] = "basis"
-        rec["opts"]["domain"] = FMM_DOMAIN
-
-        t0 = time.perf_counter()
-        sol = hasm.solve()
-        wall = time.perf_counter() - t0
-        report = hasm.report
-        phases["precond"] = report.precond_summary["build_s"]
-        phases["solve"] = wall - phases["precond"]
-        rec["iterations"] = int(report.iterations)
-        rec["converged"] = bool(report.converged)
-        rec["stagnated"] = bool(report.stagnated)
-        rec["true_relres"] = float(report.true_relres)
-        rec["precond"] = report.precond_summary
-        rec["rungs"] = {"+".join(sb["slots"]): sb["rung"]
-                        for sb in report.precond_summary["super_blocks"]}
-        phases["matvec_ms"] = median_matvec_ms(hasm.matvec, n, rng)
-        rec["bytes"], rec["ranks"], rec["fallbacks"] = fmm_stats(groups, n, pairs)
-        rec["peak_rss_gb"] = peak_rss_gb()
-        rec["numba"] = numba_threads()
-        rec["defaults"] = defaults_snapshot()
-
-        t0 = time.perf_counter()
-        if dense_ok:
-            dense = AssembledDense(system, EPS, "direct", jump=JUMP)
-            rec["operator"] = operator_error(hasm, dense.A, rng)
-            rec["solution"] = solution_error(sol, dense.solve())
-            del dense
-        else:
-            rec["operator"] = operator_error(hasm, None, rng)
-            rec["solution"] = None
-        rec["reference_s"] = time.perf_counter() - t0
-        return rec
-
-    # ---- compressed backend ----
-    hb_kwargs = dict(tol=opts["tol"], min_leaf=opts["leaf"], eta=opts["eta"],
-                     max_admissible=opts["max_admissible"],
-                     min_aca=opts["min_aca"])
-    if opts.get("storage"):
-        hb_kwargs["storage"] = opts["storage"]
-    hb = HBackend(jump=JUMP, **hb_kwargs)
+    # ---- compressed backend: one flag, two far fields ----
+    # "hmat" is HBackend(far="aca"), "fmm" is HBackend(far="fmm"). Everything
+    # from the solve down is SHARED, which is the point of the flag: the two
+    # rungs differ in the far field and in nothing else, so a difference
+    # between them is a property of the far field and not of the harness.
+    far = "fmm" if backend == "fmm" else "aca"
+    if far == "fmm":          # none of the ACA knobs reach a PairFMM
+        # --storage is passed THROUGH rather than overridden, so
+        # "--backend fmm --storage combined" is refused by HBackend instead
+        # of being silently ignored.
+        hb_kwargs = dict(storage=opts.get("storage") or "basis")
+    else:
+        hb_kwargs = dict(tol=opts["tol"], min_leaf=opts["leaf"],
+                         eta=opts["eta"],
+                         max_admissible=opts["max_admissible"],
+                         min_aca=opts["min_aca"])
+        if opts.get("storage"):
+            hb_kwargs["storage"] = opts["storage"]
+    hb = HBackend(jump=JUMP, far=far, **hb_kwargs)
     rec["opts"]["storage"] = hb.storage
+    if far == "fmm":
+        rec["opts"]["domain"], rec["opts"]["m2l"] = hb.domain, hb.m2l
     t0 = time.perf_counter()
     with _HopPhases() as ph:
         hasm = hb.assemble(system, EPS)
     phases["build"] = time.perf_counter() - t0
-    phases.update(ph.t)
-    phases["other"] = phases["build"] - sum(ph.t.values())
+    sub = hasm.far_phases or ph.t
+    phases.update(sub)
+    phases["other"] = phases["build"] - sum(sub.values())
 
     t0 = time.perf_counter()
     sol = hasm.solve()
@@ -652,7 +585,9 @@ def run_rung(model: str, scale: float, backend: str, opts: dict,
     rec["rungs"] = {"+".join(sb["slots"]): sb["rung"]
                     for sb in report.precond_summary["super_blocks"]}
     phases["matvec_ms"] = median_matvec_ms(hasm.matvec, n, rng)
-    rec["bytes"], rec["ranks"], rec["fallbacks"] = operator_stats(hasm)
+    rec["bytes"], rec["ranks"], rec["fallbacks"] = (
+        fmm_stats(hasm._groups, n, hasm._pairs) if far == "fmm"
+        else operator_stats(hasm))
     rec["peak_rss_gb"] = peak_rss_gb()      # before any dense reference
     rec["numba"] = numba_threads()
     rec["defaults"] = defaults_snapshot()

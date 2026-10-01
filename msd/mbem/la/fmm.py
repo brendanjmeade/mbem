@@ -1251,6 +1251,26 @@ class FarGroups:
                 off += b - a
         return y
 
+    def for_materials(self, materials: dict) -> "FarGroups":
+        """The same traversal at a new material set, in O(1).
+
+        ``materials`` is the ONLY material-dependent state here: a group
+        holds geometry, eps, the orientation sigma and the shared tree, and
+        the coefficient vector is formed per matvec. So a material change
+        costs a dict and not a traversal.
+
+        It must be a NEW ``FarGroups`` and not a write to this one, because
+        ``materials`` is held by reference: re-pointing it in place would
+        move the far field of every assembly holding these groups while
+        leaving its calibration diagonal and RHS at the old material. That
+        failure is silent -- the operator stays self-consistent and the
+        solve converges to the wrong problem.
+        """
+        new = FarGroups.__new__(FarGroups)
+        new.materials = materials
+        new.groups = self.groups
+        return new
+
     def summary(self) -> str:
         return "; ".join(f"{g.region}/{g.kernel}: {g.pair.shape}"
                          for g in self.groups)

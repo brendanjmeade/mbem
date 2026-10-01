@@ -1154,6 +1154,157 @@ or everything: the near-only apply sits 3.296e-02 from the full coupling and
 flag OFF, because with it on the grouped applier is deliberately not the
 per-term loop.
 
+**BOTH FAR FIELDS SHIP, AND THE CHOICE IS A FLAG** (`HBackend(far="aca"|"fmm")`,
+`defaults.FAR_FIELD`). Neither dominates, and the reason is that they fail on
+different axes. ACA adapts its rank per block (~16) where the FMM's p^3 adapts
+to nothing: the FMM does ~19.9 Mflop/unknown against ACA's ~9.5 Kflop, 2,100x,
+and its matvec measures ~46x slower at every rung of the ladder. The remaining
+FMM matvec levers are the common basis (1.37x, Amdahl-capped) and float32
+(~1.3x), so ~25x survives any of them -- that gap does not close. What the FMM
+wins is the BUILD exponent, N^0.21-0.43 against N^1.38-1.39 (84-87 % of the ACA
+build being the ACA loop), and half the bytes: 27,941 B/unknown against 55,848
+at 459,516 unknowns, which is ~119 GB against ~530 GB at 4.26M and the only
+reason 1M elements is reachable at all.
+
+So the map is two-dimensional -- size x matvec count -- and the fourth cell is
+covered by NEITHER:
+
+| | few solves | many matvecs |
+|---|---|---|
+| fits RAM | aca (4.4x faster end to end at 460k) | aca (46x per matvec) |
+| huge | fmm (the only one that builds) | **nothing** |
+
+1M elements under rate-and-state is exactly that cell: ACA needs ~530 GB
+(out-of-core ~106 s/matvec), the FMM fits at ~119 GB but pays 46x per step.
+That cell is what an H^2 would own -- adaptive rank AND shared bases -- and
+H^2 is dead on this kernel: shared bases inflate rank 17 -> 175 algebraically,
+reconfirmed at 100 -> 526/620 in the M2L common basis. Naming the gap here so
+it is not rediscovered as a surprise.
+
+**The open lever for that cell is TOLERANCE, not architecture.** Both operators
+over-deliver against `BENCH_OPERATOR_ERROR_MAX = 1e-4`: 5.9e-05 (ACA) and
+1.8e-05 (FMM) at 459,516. If a rate-and-state run tolerates 1e-3, ACA rank
+falls and the bytes with it, moving the fits-in-RAM boundary out. That is a
+sweep of `BLOCK_COMPRESSION_TOL` under the existing gate, not an engine.
+UNMEASURED -- do not assume the saving.
+
+**The flag cost one real bug fix, and it was the silent kind.**
+`rebuild_for_materials` never forwarded `_groups`, so an FMM assembly lost its
+grouping on every material step and fell back to the per-pair route (correct,
+because that route reads the assembly's materials, but ~91 traversals where 6
+would do, plus the per-PAIR calibration). Forwarding it naively would have been
+WRONG rather than slow: `FarGroups` holds its own materials dict by reference
+and it is not the assembly's, so the far field would have stayed at the old
+modulus while the calibration diagonal and the RHS moved to the new one --
+self-consistent, convergent, and the wrong problem. `FarGroups.for_materials`
+re-points it in O(1) (only `materials` is material-dependent; the groups hold
+geometry, eps, sigma and the tree) as a NEW object, because writing through
+would move the far field of every assembly holding those groups. Measured on
+the example below: the material step costs 52 s against the first state's
+229.5 s, i.e. the traversal and the M2L table are genuinely reused.
+
+`verify_fmm` clause [d] now gates both halves -- the rebuilt grouped operator
+against the rebuilt per-term one at 5.551e-16 AND that the far field MOVED
+(5.559e-02), because groups that silently kept the old material still agree
+with the per-term route everywhere the far field does not reach -- plus the flag
+itself at the SHIPPING settings (`domain="canonical"`, `m2l="table"`, 3.426e-06
+against the exact dense operator), which no clause ran end to end before: they
+all build on the zone's own tree at placement safety 1.0 and the
+"extent"/"evaluated" defaults, to isolate the pieces. `storage="combined"` with
+`far="fmm"` is refused rather than forced, because `PairFMM` has no
+`warm_views` and the failure would otherwise be an AttributeError halfway
+through an assembly.
+
+**BOX + TOPO + INCLUSION, BOTH FAR FIELDS, END TO END** (`--backend` on
+`examples/make_topo_inclusion.py`). The four-state decomposition at 31,098
+unknowns (7,483 triangles), every state calibrated with `eps="auto"`, against
+the committed dense reference:
+
+| | build | 4 states | iterations | u vs dense | Du_topo vs dense |
+|---|---|---|---|---|---|
+| aca | 7.6 s | 46 s | 23 23 23 23 | 1.5-9.9e-06 | 1.0-1.7e-04 |
+| fmm | 129.7 s | 560 s | 32 30 32 30 | 1.5-4.4e-06 | 1.6-2.9e-04 |
+
+Both converge to `true_relres` ~6-8e-09 on all four states. 12x apart end to
+end, which is the expected sign at 31k: this is far below the build crossing
+(scale 4, 459,516 unknowns), so the FMM is paying its p^3 with none of its
+build advantage yet.
+
+**The two agree with EACH OTHER as independently as with dense**, which is the
+check that rules out a shared bug: 2.1e-06 to 1.1e-05 on the four solution
+states, and h-f ~ (h-d) + (f-d) throughout -- the two far fields scatter around
+the dense LU independently rather than clustering together away from it. A
+common wrong kernel, sign or free term would show as h-f much SMALLER than
+either one's distance from dense. Two independent approximations landing
+independently on the same answer is the stronger statement.
+
+**And the decomposition error is a property of the QUANTITY, not the backend.**
+The figure shows Du_topo = u(topo,het) - u(flat,het), a difference of two
+fields that agree to 43-72x their difference. So displacement fields accurate
+to ~2e-06 give a decomposition accurate to ~1.4e-04, and both backends land
+there (1.0e-04 ACA, 1.6e-04 FMM on `host_top`; 1.7e-04 and 2.9e-04 on
+`inclusion_top`) -- the amplification is the cancellation, exactly. Anyone
+making this figure from a compressed backend is working at ~2e-04 on the
+decomposition, not the ~1e-06 the fields suggest. But it is the SAME field at
+the SAME amplitude: against dense, every decomposition has correlation
+0.99999996 to 1.0 and an amplitude ratio within 8e-05 of unity, so the residual
+is noise on a difference and not a disagreement. In physical units the worst
+case is a 2.26 cm topography effect on `inclusion_top` (displacements
+themselves 1.9-5.1 m) on which the two methods differ by ~8 um. The dense
+reference stays the reference, and a non-dense run writes a
+`_<backend>`-suffixed npz so it cannot overwrite it.
+
+Known hole, deliberately not filled: `AssembledH.nbytes()` sums `p.nbytes()`
+over the pairs and `PairFMM` has none, so asking an FMM assembly for its size
+raises. The honest FMM accounting is `bench_scaling.fmm_stats` (which counts
+the shared M2L tables ONCE, where a per-pair sum would multiply-count them);
+inventing a second number that disagrees with the committed ladder would be
+worse than the AttributeError. `estimate.estimate_memory` likewise has no
+"fmm" mode.
+
+**AND THE FMM "BUILD" IS 98 % M2L TABLE, NOT FAR FIELD -- WHICH MOVES THE
+BUILD/SOLVE SPLIT OF EVERY FMM RUNG IN THIS FILE.** Measured on
+topo_inclusion scale 1 (31,098 unknowns) by timing the pieces of a 129.7 s
+build:
+
+    tree 0.08   groups (the traversal) 2.19   pairs 0.07
+    _calibration_grouped 126.85        _build_rhs 0.13
+    the SAME calibration, called again on the warm assembly:  2.6
+
+So the calibration is not expensive -- 2.6 s warm against the ACA path's 0.11 s
+-- it is merely the FIRST consumer of the shared M2L table, and pays the whole
+construction. Worse, it only touches the T groups, so after the build the table
+cache holds T and not U:
+
+    build: table keys ['H', 'H']            (T, two eps passes)
+    matvec #1: 54.11 s -> ['G', 'G', 'H', 'H']    (U built here)
+    matvec #2: 1.06 s   #3: 1.08 s   #4: 1.09 s   (steady state)
+
+**The one-time table cost therefore straddles the two columns**: ~124 s inside
+"build" and ~53 s inside the first matvec, which the harness counts as SOLVE.
+Every FMM rung in this file understates its build and overstates its solve by
+the U table; the totals are right, and so is the 46x steady-state matvec ratio
+(1.07 s here), but the split is not. ~177 s of table against a 2.19 s traversal
+and a 1.07 s matvec.
+
+It also explains the build exponent rather than contradicting it: the table is
+316 transfer offsets and is N-INDEPENDENT by construction -- that is what the
+canonical domain buys -- so an FMM "build" dominated by it is nearly flat in N,
+which is exactly the N^0.21-0.43 that was fit and attributed to the traversal.
+
+**The lever this exposes, NOT taken:** the table depends on
+(kernel, p, params) and on nothing about the model, yet it is rebuilt per
+FmmTree. The four-state example pays for it twice (the topo and flat surfaces
+are different models, so different trees) where a material step within one tree
+pays nothing -- 52 s against 229.5 s, which is `for_materials` working. Caching
+the table across trees, or persisting it, is worth up to ~177 s per tree at
+this rung and is bounded by `FMM_M2L_TABLE_MAX_BYTES`. Unmeasured at scale.
+
+**Stale, and pessimistic by 1.17x: the FMM ladder table above** predates
+`PRECOND_LOWER_NEAR_ONLY`, so every FMM solve time in it is ~1.17x too slow.
+Rerun before quoting it as the two-path comparison, and note the build/solve
+split correction above applies to it as well.
+
 **THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
 FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1
 against exact rows, worst over a gaussian and the translation:

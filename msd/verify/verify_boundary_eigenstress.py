@@ -61,7 +61,6 @@ import warnings
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from mbem.evaluate import _stress_from_source, evaluate_stress    # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402

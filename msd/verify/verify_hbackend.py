@@ -42,7 +42,6 @@ import sys
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh import make_rectangular_patch                 # noqa: E402
@@ -553,8 +552,7 @@ def check_bj_rung():
     from mbem.la.preconditioner import BlockGaussSeidel
     from mbem.la.solver import fgmres
 
-    sys.path.insert(0, str(ROOT / "examples"))
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
 
     meshes = build_fault_box(half_x=100.0, z_bottom=-60.0,
                              fault_half_len=30.0, fault_depth=18.0,
@@ -738,9 +736,8 @@ def check_flat_view():
     the second would retire the guarantee it exists for."""
     import numba
 
-    sys.path.insert(0, str(ROOT / "examples"))
-    from assess_fig06_inclusion import build as build_inclusion
-    from assess_fig06_inclusion import build_model as inclusion_model
+    from mbem.cases.inclusion import build as build_inclusion
+    from mbem.cases.inclusion import build_model as inclusion_model
 
     ok = True
     zone = generate_system(_build_zone_model(
@@ -844,9 +841,8 @@ def check_aca_numba():
     nearly tied the discarded tail differs by one tolerance
     (``defaults.ACA_IMPL_PARITY``). Each path is bitwise repeatable on
     its own (``check_parallel_determinism``)."""
-    sys.path.insert(0, str(ROOT / "examples"))
-    from assess_fig06_inclusion import build as build_inclusion
-    from assess_fig06_inclusion import build_model as inclusion_model
+    from mbem.cases.inclusion import build as build_inclusion
+    from mbem.cases.inclusion import build_model as inclusion_model
 
     tol = defaults.BLOCK_COMPRESSION_TOL
     limit = defaults.ACA_IMPL_PARITY * tol
@@ -1032,9 +1028,8 @@ def check_certificate_retry():
       so the per-basis SVD of an exact block, B x O((3 n)^3) at one BLAS
       thread, is unreachable there whatever the block's size.
     """
-    sys.path.insert(0, str(ROOT / "examples"))
-    from assess_fig06_inclusion import build as build_inclusion
-    from assess_fig06_inclusion import build_model as inclusion_model
+    from mbem.cases.inclusion import build as build_inclusion
+    from mbem.cases.inclusion import build_model as inclusion_model
     from mbem.la.aca import (BlockEvalCache, SharedLR, compress_block,
                              draw_lines)
 

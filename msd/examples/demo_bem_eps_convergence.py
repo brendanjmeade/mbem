@@ -22,11 +22,9 @@ from scipy.interpolate import griddata
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                       # noqa: E402
-from _fault_box import build_fault_box, build_model             # noqa: E402
+from mbem.cases.fault_box import build_fault_box, build_model             # noqa: E402
 from mbem.backends.dense import AssembledDense                  # noqa: E402
 from mbem.model import generate_system                          # noqa: E402
 

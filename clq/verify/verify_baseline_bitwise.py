@@ -30,7 +30,6 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import clq                                                       # noqa: E402
 
 MANIFEST = pathlib.Path(__file__).resolve().parent / "baseline_uhe.json"

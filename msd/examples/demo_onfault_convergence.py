@@ -32,8 +32,6 @@ import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
 
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
 from mbem.evaluate import _stress_from_source                     # noqa: E402

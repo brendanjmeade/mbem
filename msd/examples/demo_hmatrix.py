@@ -33,11 +33,9 @@ import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                       # noqa: E402
-from assess_fig06_inclusion import build, build_model           # noqa: E402
+from mbem.cases.inclusion import build, build_model           # noqa: E402
 from mbem import defaults                                       # noqa: E402
 from mbem.backends import AssembledDense, HBackend              # noqa: E402
 from mbem.model import generate_system                          # noqa: E402

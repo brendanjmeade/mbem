@@ -22,8 +22,6 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 from local_box_mesh_eq import make_vertical_fault_eq                 # noqa: E402
 from mbem.kernels.tri_kernels import (                               # noqa: E402

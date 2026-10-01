@@ -60,8 +60,6 @@ import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
 
 import mollified_bem as mb                                        # noqa: E402
 from mbem import defaults                                         # noqa: E402
@@ -203,8 +201,8 @@ def _load_meshes(path, params: dict):
 def build_meshes(model: str, scale: float, cache_dir: pathlib.Path,
                  mu_inc: float) -> tuple:
     """(RegionModel, meshes dict, mesh wall seconds, cached flag)."""
-    from _fault_box import build_fault_box
-    from _fault_box import build_model as fault_box_model
+    from mbem.cases.fault_box import build_fault_box
+    from mbem.cases.fault_box import build_model as fault_box_model
 
     if model == "fault_box":
         params = dict(FAULT_BOX, scale=scale,
@@ -221,7 +219,7 @@ def build_meshes(model: str, scale: float, cache_dir: pathlib.Path,
             meshes = {k: built[k] for k in ("top", "base", "sides", "fault")}
             arrays = {"n_hat": built["n_hat"], "s_hat": built["s_hat"]}
         else:
-            from make_topo_inclusion import build as topo_build
+            from mbem.cases.topo_inclusion import build as topo_build
             (m, _top_flat, top_topo, _fault_flat, fault_topo,
              s_hat, _bump) = topo_build(scale=scale)
             meshes = dict(m)
@@ -239,7 +237,7 @@ def build_meshes(model: str, scale: float, cache_dir: pathlib.Path,
                  z_bottom=FAULT_BOX["z_bottom"])
         region_model = fault_box_model(m, FAULT_BOX_SLIP, FAULT_BOX_MAT)
     else:
-        from assess_fig06_inclusion import build_model as inclusion_model
+        from mbem.cases.inclusion import build_model as inclusion_model
         region_model = inclusion_model(
             {k: v for k, v in meshes.items() if k != "fault"},
             meshes["fault"], arrays["s_hat"],

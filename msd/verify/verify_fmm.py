@@ -60,8 +60,6 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "verify"))
 
 import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh import make_rectangular_patch                 # noqa: E402

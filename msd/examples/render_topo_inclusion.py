@@ -20,7 +20,6 @@ import matplotlib.tri as mtri
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 NPZ = pathlib.Path(__file__).parent / "topo_inclusion_fields_mu10.npz"
 

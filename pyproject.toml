@@ -52,6 +52,7 @@ package-dir = { "" = "msd", "clq" = "clq/clq", "moss_kernel" = "moss/mollified_k
 packages = [
     "mbem",
     "mbem.backends",
+    "mbem.cases",
     "mbem.kernels",
     "mbem.la",
     "mbem.model",

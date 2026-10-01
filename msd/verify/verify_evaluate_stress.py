@@ -29,8 +29,6 @@ import sys
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 from local_box_mesh_eq import make_vertical_fault_eq                # noqa: E402
 from mbem.evaluate import _stress_from_source, evaluate_stress      # noqa: E402
@@ -129,7 +127,7 @@ def check_anelastic_subtraction():
 
 def check_evaluate_stress_endtoend():
     import mollified_bem as mb
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.backends.dense import AssembledDense
     from mbem.model import generate_system
 

@@ -27,9 +27,6 @@ import numpy as np
 # Repo root on path so we can import the existing modules.
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
-for _p in (ROOT, HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
 
 from _paper_style import (  # noqa: E402
     set_paper_style, text_size, panel_letter,

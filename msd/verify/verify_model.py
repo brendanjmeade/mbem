@@ -7,7 +7,7 @@ Checks (PASS/FAIL):
   d. a fault outside its region, or lying ON its boundary, is rejected
   d''. a patch mesh with a collapsed element is rejected
   e. RegionModel.orientation() still refuses a fault of another region
-  f. the selfcheck model and examples/_fault_box.build_model() validate
+  f. the selfcheck model and mbem.cases.fault_box.build_model() validate
   g. a refinement ring keeps its vertices off the other constrained
      segments of the PSLG, and the refined topo_inclusion geometry
      passes the collapsed-element guard
@@ -18,8 +18,6 @@ import sys
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import inclusion_mesh                                               # noqa: E402
 import mollified_bem as mb                                          # noqa: E402
@@ -112,14 +110,14 @@ def main() -> bool:
     from mbem import selfcheck
     selfcheck._build_model(MAT.lam)
     print("  [ok] selfcheck model validates")
-    import _fault_box
+    from mbem.cases import fault_box as _fault_box
     meshes = _fault_box.build_fault_box(half_x=100.0, z_bottom=-50.0,
                                         fault_half_len=25.0, fault_depth=10.0,
                                         edge_fault=5.0, edge_near=20.0,
                                         edge_far=40.0, edge_side=40.0,
                                         near_field_radius=60.0)
     _fault_box.build_model(meshes, 1e-3, MAT)
-    print("  [ok] examples/_fault_box.build_model validates")
+    print("  [ok] mbem.cases.fault_box.build_model validates")
     ok &= _ring_clears_the_trace()
     return bool(ok)
 
@@ -145,7 +143,7 @@ def _ring_clears_the_trace() -> bool:
           f"trace: unrotated {d0:.1e} km, rotated {d1:.3f} km, "
           f"need {need:.3f} km")
 
-    from make_topo_inclusion import build as topo_build
+    from mbem.cases.topo_inclusion import build as topo_build
     m, _flat, top, _ff, fault, _s, _b = topo_build(scale=3.0)
     for name, mesh in dict(m, host_top=top, fault=fault).items():
         Patch(name, mesh, BCType.FREE_TRACTION)

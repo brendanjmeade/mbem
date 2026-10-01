@@ -40,8 +40,6 @@ import warnings
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
@@ -140,7 +138,7 @@ def check_h_convergence():
 
 
 def check_end_to_end():
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.evaluate import evaluate_stress
     from mbem.model import generate_system
 
@@ -231,7 +229,7 @@ def check_kelvin_accuracy():
 
 
 def check_half_jump_guard():
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.model import generate_system
 
     ok = DenseBackend().jump == "calibrated"

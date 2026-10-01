@@ -46,14 +46,12 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 from inclusion_mesh import (_circle_boundary, _rectangle_boundary,
                             make_inclusion_geometry)
 from local_box_mesh_eq import make_vertical_fault_eq
 
-from assess_fig06_inclusion import MAT_HOST, build_model
+from mbem.cases.inclusion import MAT_HOST, build_model
 from mbem.backends.dense import AssembledDense
 from mbem.model import generate_system
 from mbem.topography import (apply_topography, assert_zero_clearance,

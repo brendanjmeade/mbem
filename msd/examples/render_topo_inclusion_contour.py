@@ -53,7 +53,6 @@ import numpy as np
 from scipy.interpolate import griddata
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from mbem.topography import gaussian_bump  # noqa: E402
 

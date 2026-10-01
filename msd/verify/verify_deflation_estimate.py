@@ -20,8 +20,6 @@ import warnings
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
 from mbem import defaults                                         # noqa: E402
@@ -43,7 +41,7 @@ SOL_PARITY = defaults.H_PARITY_SOLUTION * defaults.BLOCK_COMPRESSION_TOL
 
 def _all_neumann_model():
     """Fault box with a FREE base: a genuinely all-Neumann model."""
-    from _fault_box import build_fault_box
+    from mbem.cases.fault_box import build_fault_box
     meshes = build_fault_box(half_x=100.0, z_bottom=-60.0,
                              fault_half_len=20.0, fault_depth=18.0,
                              edge_fault=3.0, edge_near=24.0, edge_far=50.0,
@@ -142,7 +140,7 @@ def check_deflation():
 
 
 def check_estimator():
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     meshes = build_fault_box(half_x=100.0, z_bottom=-60.0,
                              fault_half_len=20.0, fault_depth=18.0,
                              edge_fault=3.0, edge_near=24.0, edge_far=50.0,

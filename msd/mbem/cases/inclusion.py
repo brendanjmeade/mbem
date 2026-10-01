@@ -27,7 +27,6 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import mollified_bem as mb
 from inclusion_mesh import make_inclusion_geometry

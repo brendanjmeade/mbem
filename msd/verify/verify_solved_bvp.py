@@ -84,11 +84,9 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
-from _fault_box import build_fault_box, build_model               # noqa: E402
+from mbem.cases.fault_box import build_fault_box, build_model               # noqa: E402
 from local_box_mesh_eq import (                                   # noqa: E402
     _concatenate_meshes,
     make_rectangular_patch_eq,

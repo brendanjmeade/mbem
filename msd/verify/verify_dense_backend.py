@@ -25,8 +25,6 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                        # noqa: E402
 from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
@@ -52,7 +50,7 @@ def _bit_identical(name, asm, ref):
 
 
 def _fault_box_system():
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     meshes = build_fault_box(half_x=100.0, z_bottom=-60.0,
                              fault_half_len=30.0, fault_depth=18.0,
                              edge_fault=2.5, edge_near=15.0, edge_far=32.0,

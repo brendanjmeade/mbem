@@ -12,7 +12,6 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from mollified_kernel.analytical_batch import dd_displacement_batch
 from mollified_kernel.analytical_kernels import (analytical_dd_displacement,

@@ -63,9 +63,6 @@ import sys
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "mollified_kernel"))
-sys.path.insert(0, str(ROOT / "examples"))
 
 import mollified_bem as mb                                          # noqa: E402
 from anelastic import eigenstress_at_points                         # noqa: E402
@@ -356,7 +353,7 @@ def e_sign():
     # the evaluate_stress WIRING: (elastic - total) must be sigma C:eps_star
     # of every double layer exactly, the fault's Burgers vector with the
     # fault's own sigma (read through the one accessor, like the patches)
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.backends.dense import AssembledDense
     from mbem.model import generate_system
 
@@ -459,7 +456,7 @@ def f_graded_eps():
           f"{'graded eps differs from its own mean':58s} {rel:9.2e} (want > 5e-2)")
 
     # end to end: evaluate_stress used to RAISE on a graded fault eps
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.backends.dense import AssembledDense
     from mbem.model import generate_system
 
@@ -506,7 +503,7 @@ def g_near_list():
           "N_obs x N_src sum")
     import time
 
-    from _fault_box import build_fault_box, build_model
+    from mbem.cases.fault_box import build_fault_box, build_model
     from mbem.backends.dense import AssembledDense
     from mbem.model import BCType, generate_system
 

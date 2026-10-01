@@ -776,6 +776,47 @@ def check_operator() -> bool:
           f"{flag:.3e} vs dense (naive); storage=\"combined\" refused: "
           f"{refused}   ({time.time() - t0:.0f}s)")
     ok &= flag < NAIVE_TOL and refused
+
+    # THE SHARED M2L TABLE IS SHARED ACROSS TREES, AND BOUNDED. A block is
+    # the kernel on the unit lattice at one offset, so it depends on the
+    # model through nothing -- but that is only safe because the LATTICE IS
+    # IN THE KEY. So the clause pins the three things that could go wrong:
+    # a second tree must get the SAME object (else the reuse is not
+    # happening and a build pays twice), the two trees' lattices must be
+    # bitwise equal (else the shared blocks are stated on a lattice one of
+    # them does not use -- and a tolerance would hide exactly that), and a
+    # NOVEL material must get a different table (else a sweep silently
+    # reuses the wrong modulus). The LRU bound is checked last because the
+    # key carries the material: without it a sweep mints a table per
+    # material and nothing ever evicts one.
+    from mbem.la import fmm_table
+
+    t0 = time.time()
+    hf2 = HBackend(jump="half", far="fmm").assemble(system, EPS)
+    pf = hf._groups.groups[0].pair
+    pf2 = hf2._groups.groups[0].pair
+    u1, u2 = pf._unit_lattice(), pf2._unit_lattice()
+    distinct_trees = pf.geom is not pf2.geom
+    same_lattice = u1 is not None and np.array_equal(u1, u2)
+    tabs1 = {k: v for k, v in hf._groups.groups[0].pair.geom._tables.items()}
+    tabs2 = {k: v for k, v in pf2.geom._tables.items()}
+    shared_keys = set(tabs1) & set(tabs2)
+    reused = bool(shared_keys) and all(tabs1[k] is tabs2[k]
+                                      for k in shared_keys)
+    before = fmm_table.cache_stats()["tables"]
+    hf3 = hf2.rebuild_for_materials(
+        {sorted(materials)[0]: mb.ElasticMaterial(mu=3.0 * m0.mu, lam=m0.lam)})
+    hf3.matvec(np.ones(system.layout.n_unknowns))
+    after = fmm_table.cache_stats()
+    fresh = after["tables"] > before          # a novel material is not reused
+    bounded = after["tables"] <= defaults.FMM_M2L_CACHE_MAX_TABLES
+    print(f"    shared M2L table: distinct trees {distinct_trees}, lattices "
+          f"bitwise equal {same_lattice}, {len(shared_keys)} keys reused by "
+          f"object {reused}; a novel material builds its own {fresh}; "
+          f"{after['tables']} tables <= "
+          f"{defaults.FMM_M2L_CACHE_MAX_TABLES} bounded {bounded}   "
+          f"({time.time() - t0:.0f}s)")
+    ok &= distinct_trees and same_lattice and reused and fresh and bounded
     return ok and worst < VARIANT_TOL
 
 

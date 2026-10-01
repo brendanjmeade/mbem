@@ -150,6 +150,7 @@ the pair. Which of the two was used is part of any number reported from here.
 
 from __future__ import annotations
 
+import weakref
 from collections import OrderedDict
 from typing import NamedTuple
 
@@ -503,10 +504,15 @@ class FmmTree:
         self.x_margin = float(x_margin)
         self.x_min_subtree = (defaults.FMM_X_MIN_SUBTREE
                               if x_min_subtree is None else int(x_min_subtree))
-        # Shared M2L tables, keyed by (kernel, order, material coefficients).
-        # On the tree because that is what the lattice belongs to, and what
-        # every pair and group of one operator has in common.
-        self._tables: dict = {}
+        # A WEAK view of the shared M2L tables this tree uses, for byte
+        # accounting -- not a cache. ``fmm_table.shared_table`` owns them and
+        # bounds them by LRU; a strong reference here would defeat that
+        # bound, because one tree outlives every rebuild of a material sweep
+        # and would pin every superseded material's table. A key with no
+        # shared lattice at all is recorded in ``_no_table`` instead, since
+        # the absence of a table is not a weakly-referenceable object.
+        self._tables: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+        self._no_table: set = set()
         self.lists = InteractionLists(
             self.tree, XMargin(self.verts, *self.tgt_dom, self.x_margin),
             x_min_subtree=self.x_min_subtree)
@@ -885,28 +891,37 @@ class PairFMM:
         this is grouped over one traversal of the whole operator and not
         per pair, where the batch is 1.60.
         """
-        from .fmm_table import M2LTable
+        from .fmm_table import shared_table
 
         tree = self.geom.tree
         p3, nc = self.p ** 3, kernel_n_basis_charge(self.kernel)
         if not self._m2l:
             return set()
-        # The table belongs to the TREE, not to the pair. A block is the
-        # kernel on the lattice at one offset -- (kernel, order, material)
-        # and nothing else -- so every pair and every group with the same
-        # three share one. Held per pair it was rebuilt once per pair key:
-        # 91 redundant copies of a multi-GiB object on the bench model,
-        # which is what made peak RSS 6.2x the accounted bytes.
+        # The table belongs to the PROCESS, not to the pair and not to the
+        # tree. A block is the kernel on the lattice at one offset --
+        # (kernel, order, material, lattice) and nothing else -- so every
+        # pair, every group AND every tree with the same key share one.
+        # Held per pair it was rebuilt once per pair key: 91 redundant
+        # copies of a multi-GiB object on the bench model, which is what
+        # made peak RSS 6.2x the accounted bytes. Held per tree it was
+        # rebuilt per tree, ~177 s at 31k unknowns for the second of two
+        # trees over one geometry. The tree keeps a REFERENCE so a byte
+        # count walking one tree still sees its tables, and sees each once.
         key = (self.kernel, self.p,
                tuple(tuple(float(v) for v in prm) for prm in params))
+        if key in self.geom._no_table:
+            return set()
         table = self.geom._tables.get(key)
         if table is None:
             u = self._unit_lattice()
-            table = False if u is None else M2LTable(
-                self.kernel, self.p, params, u)
+            if u is None:
+                self.geom._no_table.add(key)
+                return set()
+            table = shared_table(self.kernel, self.p, params, u)
             self.geom._tables[key] = table
-        if table is False:
-            return set()
+        # A strong reference, and deliberately so: the pairs of one operator
+        # pin exactly the LIVE set of tables, so the LRU above can only ever
+        # evict one no pair is still using.
         self._table = table
         done: set = set()
         for off, prs in self._m2l_by_offset().items():

@@ -409,13 +409,16 @@ OCTREE_LEVEL_CAP = 21
 # neither dominates:
 #   ACA adapts its rank per block (~16) where the FMM's p^3 adapts to
 #   nothing, so the FMM does ~19.9 Mflop/unknown against ACA's ~9.5 Kflop
-#   -- 2,100x -- and its matvec measures ~46x slower at every rung. The
-#   remaining FMM levers (common basis 1.37x, float32 ~1.3x) leave ~25x, so
-#   that gap does not close.
-#   The FMM wins the BUILD exponent (N^0.21-0.43 against N^1.38-1.39, 84-87 %
-#   of the ACA build being the ACA loop) and holds half the bytes
-#   (27,941 B/unknown against 55,848 at 459,516), which is what makes 4M
-#   unknowns reachable at all: ~119 GB against ~530 GB.
+#   -- 2,100x -- and its matvec measures ~55x slower (48-64x over four
+#   rungs, no trend: both are O(N)). The remaining FMM levers (common basis
+#   1.37x, float32 ~1.3x) leave ~30x, so that gap does not close.
+#   The FMM wins the BUILD exponent (N^0.283 against N^1.381, 84-87 % of the
+#   ACA build being the ACA loop) and its bytes FALL with N (N^-0.549 against
+#   ACA's N^+0.175) because the M2L table is flat in N -- measured 4.44 GB
+#   over a 3.9x range. 31,326 B/unknown against 55,848 at 459,516, which
+#   extrapolates to a ~66 GB operator against ~419 GB at 4.26M and is what
+#   makes 1M elements reachable at all. The FMM build has NOT yet crossed
+#   (404.3 s against 315.3 at 459,516, 1.28x) and the total is 3.69x.
 # So: "aca" whenever the operator fits, and especially when one geometry is
 # matvec'd many times (a rate-and-state run amortizes the build to zero);
 # "fmm" when it does not fit. HUGE AND many matvecs is covered by neither --
@@ -592,6 +595,17 @@ FMM_M2L_TABLE_MAX_BYTES = 2 * 1024**3
 # These ranks do NOT depend on the mesh -- a block is the kernel on the
 # lattice at one offset -- so unlike a partition constant they carry.
 FMM_M2L_RANK_TOL = 1e-6
+# Whole M2L tables kept in the process-wide shared cache
+# (``fmm_table.shared_table``), LRU. A table is one (kernel, order,
+# material, lattice) and depends on the model through nothing, so trees
+# share them; the LIVE set of a solve is one per kernel per region, and
+# "region graphs = host plus a few inclusions", so 8 holds up to four
+# regions. The bound exists because the key carries the MATERIAL: a sweep
+# mints a table per novel material (measured 4 -> 7 tables, 3.34 -> 3.99 GB
+# over three rebuilds at 31k unknowns) and FMM_M2L_TABLE_MAX_BYTES bounds
+# one table, never their number. Superseded tables are dead the moment a
+# rebuild returns, so evicting the least recently used one is free.
+FMM_M2L_CACHE_MAX_TABLES = 8
 # Sketch width of the randomized range finder that factors an M2L block. It
 # caps the rank that can be found, so it must clear the measured worst: 160
 # for T at p = 8 and 102 for U at p = 6, both at 1e-6. A block whose rank

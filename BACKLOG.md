@@ -1061,6 +1061,12 @@ the same 42 iterations**. Those are crossovers, not projections: flat H's bytes
 per unknown RISE with N and the FMM's FALL, because the M2L table is
 N-independent.
 
+**SUPERSEDED by the rerun below** -- the build had NOT crossed (404.3 against
+315.3 once the M2L table is counted in the build that pays it), the solve ratio
+is ~55x not ~46x, and the total at scale 4 is 3.69x not 4.4x. Kept for the shape
+of the error: ~100 s of one-time table sat in the solve column, so the build
+looked like it had crossed and the solve looked worse than it was.
+
 **THE BUILD CROSSED AT SCALE 4, MEASURED: 304.2 s against 314.1 s.** The FMM's
 build is N^0.43 over the last step -- mostly the one-time table factorization --
 against flat H's N^1.38. At 459,516 unknowns the FMM is also 2.0x smaller per
@@ -1158,24 +1164,26 @@ per-term loop.
 `defaults.FAR_FIELD`). Neither dominates, and the reason is that they fail on
 different axes. ACA adapts its rank per block (~16) where the FMM's p^3 adapts
 to nothing: the FMM does ~19.9 Mflop/unknown against ACA's ~9.5 Kflop, 2,100x,
-and its matvec measures ~46x slower at every rung of the ladder. The remaining
-FMM matvec levers are the common basis (1.37x, Amdahl-capped) and float32
-(~1.3x), so ~25x survives any of them -- that gap does not close. What the FMM
-wins is the BUILD exponent, N^0.21-0.43 against N^1.38-1.39 (84-87 % of the ACA
-build being the ACA loop), and half the bytes: 27,941 B/unknown against 55,848
-at 459,516 unknowns, which is ~119 GB against ~530 GB at 4.26M and the only
-reason 1M elements is reachable at all.
+and its matvec measures ~55x slower (48-64x over four rungs, no trend). The
+remaining FMM matvec levers are the common basis (1.37x, Amdahl-capped) and
+float32 (~1.3x), so ~30x survives any of them -- that gap does not close. What
+the FMM wins is the BUILD exponent, N^0.283 against N^1.381 (84-87 % of the ACA
+build being the ACA loop), and the bytes: 31,326 B/unknown against 55,848 at
+459,516 unknowns, FALLING as N^-0.549 against ACA's N^+0.175 because the M2L
+table is flat in N. Extrapolated to 4.26M that is a ~66 GB operator against
+~419 GB, and it is the only reason 1M elements is reachable at all.
 
 So the map is two-dimensional -- size x matvec count -- and the fourth cell is
 covered by NEITHER:
 
 | | few solves | many matvecs |
 |---|---|---|
-| fits RAM | aca (4.4x faster end to end at 460k) | aca (46x per matvec) |
+| fits RAM | aca (3.7x faster end to end at 460k) | aca (~55x per matvec) |
 | huge | fmm (the only one that builds) | **nothing** |
 
-1M elements under rate-and-state is exactly that cell: ACA needs ~530 GB
-(out-of-core ~106 s/matvec), the FMM fits at ~119 GB but pays 46x per step.
+1M elements under rate-and-state is exactly that cell: ACA needs ~419 GB of
+operator (out-of-core ~106 s/matvec), the FMM fits at ~66 GB plus ~19.6 GiB of
+preconditioner but pays ~55x per step.
 That cell is what an H^2 would own -- adaptive rank AND shared bases -- and
 H^2 is dead on this kernel: shared bases inflate rank 17 -> 175 algebraically,
 reconfirmed at 100 -> 526/620 in the M2L common basis. Naming the gap here so
@@ -1283,8 +1291,8 @@ cache holds T and not U:
 **The one-time table cost therefore straddles the two columns**: ~124 s inside
 "build" and ~53 s inside the first matvec, which the harness counts as SOLVE.
 Every FMM rung in this file understates its build and overstates its solve by
-the U table; the totals are right, and so is the 46x steady-state matvec ratio
-(1.07 s here), but the split is not. ~177 s of table against a 2.19 s traversal
+the U table; the totals are right, and so is the steady-state matvec ratio
+(1.07 s here, ~55x), but the split is not. ~177 s of table against a 2.19 s traversal
 and a 1.07 s matvec.
 
 It also explains the build exponent rather than contradicting it: the table is
@@ -1292,18 +1300,123 @@ It also explains the build exponent rather than contradicting it: the table is
 canonical domain buys -- so an FMM "build" dominated by it is nearly flat in N,
 which is exactly the N^0.21-0.43 that was fit and attributed to the traversal.
 
-**The lever this exposes, NOT taken:** the table depends on
-(kernel, p, params) and on nothing about the model, yet it is rebuilt per
-FmmTree. The four-state example pays for it twice (the topo and flat surfaces
-are different models, so different trees) where a material step within one tree
-pays nothing -- 52 s against 229.5 s, which is `for_materials` working. Caching
-the table across trees, or persisting it, is worth up to ~177 s per tree at
-this rung and is bounded by `FMM_M2L_TABLE_MAX_BYTES`. Unmeasured at scale.
+**THE TABLE IS SHARED ACROSS TREES NOW, AND THE SPLIT IS HONEST**
+(`fmm_table.shared_table`, `FMM_M2L_CACHE_MAX_TABLES = 8`,
+`phases["tables"]`). A block is the kernel on the unit lattice at one transfer
+offset, so it depends on the model through NOTHING -- the lattice is the
+canonical Chebyshev grid and the half-width folds out as a power of two -- yet
+it was held per `FmmTree` and so rebuilt per tree. Measured on the four-state
+topography example at 31,098 unknowns, the second tree's build:
 
-**Stale, and pessimistic by 1.17x: the FMM ladder table above** predates
-`PRECOND_LOWER_NEAR_ONLY`, so every FMM solve time in it is ~1.17x too slow.
-Rerun before quoting it as the two-path comparison, and note the build/solve
-split correction above applies to it as well.
+    129.7 s -> 7.0 s      (18.5x; the tables phase 179.11 -> 2.02 s)
+    four states 558.8 s -> 382.3 s   (1.46x end to end)
+
+and `HBackend._assemble_fmm` now builds the tables itself, so "build" means
+ready to solve: 184.2 s of which `tables` 179.11, and the matvecs are
+1.09 / 1.11 / 1.11 s -- steady from the FIRST one, where before the first cost
+54.11 s inside the solve.
+
+**It is numerically a no-op, which is the claim that matters.** Iterations and
+`true_relres` are identical on all four states (32 / 30 / 32 / 30,
+7.77e-09 / 5.74e-09 / 8.10e-09 / 5.97e-09) and every digit of the
+agreement table above is unchanged.
+
+**And it fixed a leak that was not an optimisation.** The key carries the
+MATERIAL, so a sweep minted a table per novel material and nothing evicted the
+superseded ones: measured 4 -> 5 -> 6 -> 7 tables and 3.34 -> 3.99 GB over
+three rebuilds at 31k, where at 4M a T table reaches the
+`FMM_M2L_TABLE_MAX_BYTES` cap and a 22-material sweep would add tens of GB of
+dead blocks. That constant bounds ONE table and never bounded their number;
+the LRU does, and the same measurement now reads 4 -> 8 -> 8 -> 8 with the
+bytes plateauing. `FmmTree._tables` had to become a WEAK view for the bound to
+mean anything -- one tree outlives every rebuild of a sweep, so a strong
+reference there would pin every superseded material's table and defeat the
+eviction entirely.
+
+**The lattice is IN THE KEY, not checked afterwards**, which is what makes
+cross-tree sharing safe rather than probably-safe: a tree whose lattice
+differed would otherwise be handed blocks stated on a lattice it does not use.
+Measured bitwise equal between two trees over different surfaces of one
+geometry (max abs difference 0.000e+00), and `verify_fmm` clause [d] pins all
+five things that could go wrong -- distinct trees, lattices bitwise equal
+(`array_equal`, because a tolerance would hide exactly this), 4 keys reused BY
+OBJECT, a novel material building its own, and the count bounded.
+
+Not shared across PROCESSES: `bench_scaling` spawns a child per rung, so the
+ladder gets the honest split and no reuse. Persisting the table to disk is the
+next step on this thread and is unmeasured.
+
+**THE LADDER, RERUN WITH EVERYTHING IN -- AND THE BUILD HAS NOT CROSSED.**
+topo_inclusion scales 1-4, both far fields, near-only preconditioning, the
+honest build/solve split, the shared table (per process, so each child rung
+gets the split and no reuse). `build` includes `tables`:
+
+    n        bk   build tables precond solve  TOTAL  mv(ms) it  B/unk   RSS  op_err
+    31,098  hmat    7.6    0.0     4.0   1.5   13.1    24.9  23  34586   6.0 4.2e-05
+    31,098   fmm  184.1  179.0     3.9  41.1  229.2  1189.6  32 132068   8.9 1.6e-05
+    117,120 hmat   48.8    0.0    36.2   8.9   93.9    72.9  37  40744  25.4 2.8e-05
+    117,120  fmm  283.4  261.4    37.1 207.9  528.5  4687.2  40  60889  25.9 9.4e-06
+    260,598 hmat  144.0    0.0    26.5  12.9  183.4   174.8  42  48345  34.1 1.6e-05
+    260,598  fmm  327.4  271.4    27.6 491.2  846.2  9910.3  45  37467  29.9 8.6e-06
+    459,516 hmat  315.3    0.0    39.7  29.1  384.1   348.9  49  55848  59.3 5.9e-05
+    459,516  fmm  404.3  287.6    40.4 971.0 1415.7 18651.9  49  31326  45.0 1.8e-05
+
+**CORRECTION, and it was this file's own headline.** "THE BUILD CROSSED AT
+SCALE 4, 304.2 s against 314.1" is WRONG: with the tables counted where they
+are paid, the FMM build is **404.3 against 315.3, still 1.28x worse**. The
+crossing was ~100 s of M2L table sitting in the solve column. It is
+approaching fast and monotonically -- 24.16x, 5.80x, 2.27x, 1.28x -- and will
+cross just past this rung, but it has not crossed. Exponents N^1.381 (ACA,
+84-87 % the ACA loop) against **N^0.283** (FMM), and the low one is now
+explained rather than just fit: the table saturates.
+
+**THE MATVEC RATIO IS ~55x, NOT 46x**: 47.9 / 64.3 / 56.7 / 53.5 over the four
+rungs, non-monotone, so a constant factor and not a trend -- both matvecs are
+O(N) (ACA N^0.973, FMM N^1.014). Anywhere this file or a summary says 46x,
+read ~55x with a 48-64x spread.
+
+**TOTAL is 3.69x at scale 4, improved from 4.4x** by near-only preconditioning,
+and improving with size (17.44 / 5.63 / 4.61 / 3.69). The FMM's SOLVE exponent
+is the worse of the two, N^1.168 against N^1.047, because its iteration count
+climbs faster off a lower base (32/40/45/49 against 23/37/42/49 -- they MEET at
+scale 4).
+
+**THE TABLE TERM IS MEASURED FLAT, which is the whole memory argument.** The
+byte split at the four rungs:
+
+    near       0.53  1.79  3.35  6.42   (N^1.0, the exact near blocks)
+    lowrank    3.34  4.44  4.44  4.44   (the M2L tables: FLAT, 1,264 blocks)
+    bases      0.14  0.51  1.13  1.97   (the per-element stencil)
+    expansions 0.09  0.34  0.72  1.32   (per-box multipole/local)
+    total      4.11  7.13  9.76 14.39   GB
+
+4.44 GB over a 3.9x range in N, saturated after scale 1 once every transfer
+offset that occurs has occurred. That is what makes B/unknown FALL --
+**N^-0.549 against ACA's N^+0.175** -- and the bytes cross between 117k and
+261k (1.49x, 0.77x), reaching 0.56x at 459,516.
+
+**The 27,941 -> 31,326 B/unknown change is the ACCOUNTING completing, not the
+operator growing.** 14.39 GB minus `expansions` 1.32 and `gather_peak` 0.23 is
+12.84 GB = 27,941 B/unknown exactly; the committed ladder predates those two
+terms being counted at all.
+
+**EXTRAPOLATED TO 4.26M (last two rungs), and the trade is cleaner than a
+tie.** Earlier this file said the two paths tie at ~4.4 h against ~4.6 h. They
+do not:
+
+    ACA  TOTAL N^1.303 -> 1.94 h   operator 419 GB   peak RSS N^0.974 -> 518 GB
+    FMM  TOTAL N^0.907 -> 2.97 h   operator  66 GB   peak RSS N^0.719 -> 223 GB
+
+**ACA is FASTER at the target and does not fit; the FMM fits and is 1.5x
+slower.** That is the whole two-path case in one line, and it is a better
+statement than the tie because it does not depend on the two curves crossing
+at just the right place. The FMM operator estimate IMPROVED (66 GB against the
+earlier ~98 GB) because B/unknown falls once the table is flat. The 223 GB peak
+is the already-diagnosed gap -- preconditioner LU factors, the 91 pairs, the
+exact-rows reference -- not the operator, and the preconditioner's share is a
+knob (`PRECOND_BJ_CHUNK_DOF`); ~66 GB operator plus ~19.6 GiB preconditioner is
+~87 GB and fits. A peak-RSS fit over two rungs is the weakest number here and
+should not be the one a decision rests on.
 
 **THE p LEVER IS DEAD, AND SO IS MOST OF WHAT WAS LEFT: AFTER COMPRESSION THE
 FAR FIELD IS NO LONGER M2L-DOMINATED.** Measured on topo_inclusion scale 1

@@ -223,3 +223,63 @@ class M2LTable:
                 f"offsets, {self._bytes / 2**20:.0f} MiB, rank "
                 f"{r.min():.0f}-{r.max():.0f} (med {np.median(r):.0f}) of "
                 f"{full}, {self.hits} hits / {self.misses} builds")
+
+
+# ---------------------------------------------------------------------
+# the table is shared across TREES, and bounded
+# ---------------------------------------------------------------------
+
+_CACHE: OrderedDict = OrderedDict()
+
+
+def shared_table(kernel: str, p: int, params: list, nodes: np.ndarray):
+    """One ``M2LTable`` per (kernel, order, material, lattice), process-wide.
+
+    WHY ACROSS TREES. A block is the kernel on the unit lattice at one
+    transfer offset, so it depends on the model through nothing at all --
+    the lattice is the canonical Chebyshev grid (measured bitwise equal
+    between two trees over different surfaces of one geometry) and the
+    half-width folds out as a power of two. Held per tree it was rebuilt per
+    tree: the four-state topography example paid the whole construction
+    twice, ~177 s at 31k unknowns, for two trees that need identical blocks.
+
+    WHY BOUNDED, which is the part that is not an optimisation. The key
+    carries the MATERIAL, so a material sweep mints a new table per novel
+    material and nothing evicted the superseded ones: measured 4 -> 5 -> 6
+    -> 7 tables and 3.34 -> 3.99 GB over three rebuilds at 31k, and at the
+    4M target a T table reaches the ``FMM_M2L_TABLE_MAX_BYTES`` cap, so a
+    22-material sweep would add tens of GB of dead blocks.
+    ``FMM_M2L_TABLE_MAX_BYTES`` bounds one table and never bounded their
+    number; this does, by LRU over whole tables.
+
+    The LATTICE IS IN THE KEY rather than checked after the fact: a tree
+    whose lattice differed would otherwise either be handed the wrong blocks
+    or silently evict the right ones. A caller with no shared lattice at all
+    (``domain="extent"``) must not reach here -- ``PairFMM._unit_lattice``
+    returns None and the caller stays matrix-free.
+    """
+    u = np.ascontiguousarray(nodes, dtype=float)
+    key = (kernel, int(p),
+           tuple(tuple(float(v) for v in prm) for prm in params),
+           u.shape, u.tobytes())
+    table = _CACHE.get(key)
+    if table is None:
+        table = M2LTable(kernel, p, params, u)
+        _CACHE[key] = table
+    _CACHE.move_to_end(key)
+    while len(_CACHE) > defaults.FMM_M2L_CACHE_MAX_TABLES:
+        _CACHE.popitem(last=False)
+    return table
+
+
+def cache_stats() -> dict:
+    """``{tables, bytes, blocks}`` resident in the shared cache."""
+    return {"tables": len(_CACHE),
+            "bytes": sum(t._bytes for t in _CACHE.values()),
+            "blocks": sum(len(t._blocks) for t in _CACHE.values())}
+
+
+def clear_cache() -> None:
+    """Drop every shared table. For gates that measure a build, and for a
+    caller that is done with one geometry and wants the bytes back."""
+    _CACHE.clear()

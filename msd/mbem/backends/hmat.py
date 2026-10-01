@@ -192,6 +192,20 @@ class HBackend:
                             geom=geom, arrays=arrays, **kw)
                  for k, (fp, sp, kern) in keys.items()}
         phases["pairs"] = time.perf_counter() - t0
+        # BUILD THE SHARED M2L TABLES HERE, so "build" means ready to solve.
+        # They are built on demand by whatever touches a group first, and
+        # that used to be the calibration below -- which touches only the T
+        # groups, leaving the U tables to be built inside the first matvec of
+        # the SOLVE. The split was wrong in both directions by ~53 s of ~177
+        # at 31k unknowns, and no harness could have seen it. One constant
+        # field per group is the cheapest thing that reaches every table key
+        # the operator will use; with m2l="table" off there is nothing to
+        # build and the pass is skipped rather than wasted.
+        t0 = time.perf_counter()
+        if self.m2l == "table":
+            x = np.ones(system.layout.n_unknowns)
+            groups.matvec(x, np.zeros_like(x))
+        phases["tables"] = time.perf_counter() - t0
         asm = AssembledH(system, eps, {}, self.verbose,
                          jump=self.jump, deflate=self.deflate,
                          storage=self.storage, sweep=self.sweep,

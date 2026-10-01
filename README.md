@@ -96,7 +96,7 @@ mollified_kernel/         point-source kernel + analytic triangle integration
   local_box_mesh_eq.py    equilateral Delaunay box / fault mesh builders
   inclusion_mesh.py       host + cylindrical-inclusion mesh builder
   anelastic.py            anelastic (eigenstrain) eigenstress -> elastic stress
-tests/                    run_all.py + test_gates.py; 43 gates (print PASS/FAIL)
+tests/                    run_all.py + test_gates.py; 44 gates (print PASS/FAIL)
 studies/                  runnable demos and bench_scaling.py
 docs/figures/             the curated, tracked figure gallery
 ```
@@ -118,6 +118,28 @@ numba must resolve its OpenMP threading layer (`numba.threading_layer() ==
 nogil kernels on a Python thread pool while parallel kernels run beside them,
 which the OpenMP layer tolerates and the default workqueue layer does not,
 and threadpoolctl is what pins BLAS to one thread inside that pool.
+
+## Run a study
+
+A study is a Python config module; each run writes a new self-describing folder
+under `runs/` (gitignored).
+
+```
+python -m mbem run configs/fault_box.py
+python -m mbem run configs/topo_inclusion.py --set surface=flat --set backend=fmm
+python -m mbem list
+python -m mbem show <run-dir> --section effective
+```
+
+A run folder holds `resolved.json` (the spec, the keyword arguments actually
+passed, eps resolved to numbers per patch, all 110 `defaults` constants, and the
+environment), `report.json` (iterations, residuals, phase timings, peak RSS),
+the solution fields as `.npz`, and a `MANIFEST` of sha256 hashes.
+
+A config *names* a mesh and model builder rather than describing patches and
+boundary conditions, so it cannot restate the fault sign convention or the eps
+rule. `tests/gates/mbem/verify_config.py` proves the config path builds the same
+model the gates do, fault Burgers vector bitwise included.
 
 ## Verify the kernels
 

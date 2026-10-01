@@ -20,8 +20,10 @@ is the bug.
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
-| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 43 gates in `gates/{mbem,clq,moss_kernel}`. |
-| `studies/` | Runnable demos and `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation. |
+| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 44 gates in `gates/{mbem,clq,moss_kernel}`. |
+| `configs/` | A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
+| `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, all 110 defaults, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
+| `studies/` | Runnable demos and `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation. It keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`. |
 | `ddbem/`, `fbem/` | Closed. `FINDINGS.md` only: the P0/P1/P2 convergence study the higher-order patches rest on, and why the force-element BEM was dropped. Do not rebuild either without reading it. |
 
@@ -35,12 +37,18 @@ tag `medt_paper-vendored-2026-09-17`. `medt_paper` is published separately
 
 ```bash
 pip install -e .                      # once; no other installer
-python tests/run_all.py               # all 43 gates, exit 1 on any FAIL
-python tests/run_all.py -k fmm        # one, by <suite>/<name>
-python tests/run_all.py --fast        # skip verify_fmm (~900 s)
+
+python -m mbem run configs/fault_box.py          # a study -> a new runs/ folder
+python -m mbem run configs/topo_inclusion.py --set surface=flat --set backend=fmm
+python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
+python -m mbem list                              # runs, newest first
+python -m mbem show <run-dir> --section effective
+python -m mbem publish <run-dir>                 # figures -> docs/figures, with provenance
+python -m mbem verify [-k fmm] [--fast]          # the gates
+
+python tests/run_all.py               # all 44 gates, exit 1 on any FAIL
 pytest -m "not slow"                  # same set, pytest front end
 python studies/mbem/demo_fault_only.py
-python -m mbem.cases.topo_inclusion --backend fmm
 ```
 
 `/Users/meade/micromamba/bin/python` on this machine. Numba compiles on first
@@ -85,6 +93,12 @@ rather than skip without it.
 10. **Numbers live in one place:** tolerances and thresholds in
     `mbem/defaults.py`, the collocation free term in `equations.py`, kernel
     identifiers in `kernels/__init__.py`. A convention written twice is a bug.
+    A config overrides a number by PASSING THE KEYWORD, never by rebinding
+    `defaults` — the backends bind their defaults at def time, so a rebind is a
+    silent no-op there. A field left `None` is absent from the call, so
+    `defaults` stays the source. Gate-only criteria (`BENCH_*`, `*_PARITY*`)
+    are not reachable from a config at all: a run that could move them could
+    declare its own success.
 11. **Lean.** Docstrings state the rule and the reason; measurements and
     history go in commit messages; no probe scripts in the tree; extend a gate
     before adding one; no new top-level documents.

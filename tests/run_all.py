@@ -34,7 +34,7 @@ ROOT = HERE.parent
 
 # suite -> (directory, expected gate count). The count is a pin, not a hint.
 SUITES = {
-    "mbem": (HERE / "gates" / "mbem", 20),
+    "mbem": (HERE / "gates" / "mbem", 21),
     "clq": (HERE / "gates" / "clq", 16),
     # moss's own gates on the INDEPENDENT kernel copy -- the only
     # thing that has ever gated the copy holding the eigenstress oracle.

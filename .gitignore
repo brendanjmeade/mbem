@@ -16,3 +16,9 @@ clq/fig_*.pdf
 
 # msd: bench_scaling's mesh cache (regenerable; the mesher takes 5 min at 168k)
 msd/examples/_cache/
+
+# Packaging / test tooling build output (pip install -e ., pytest)
+*.egg-info/
+build/
+dist/
+.pytest_cache/

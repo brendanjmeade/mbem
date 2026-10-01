@@ -1,0 +1,78 @@
+# Packaging for the mollified BEM / MEDT program.
+#
+# PHASE 1 OF THE MIGRATION: this file packages the tree EXACTLY WHERE IT SITS.
+# Every `package-dir` entry points at the directory the `sys.path.insert` calls
+# were already finding, so `pip install -e .` is a no-op for import resolution
+# -- the editable finder maps each name to the same file. That is deliberate:
+# it makes the first migration commit incapable of breaking a gate, and it lets
+# the 64 `sys.path.insert` calls come out one file at a time while the old
+# paths still work, so a wrong deletion fails in isolation instead of six files
+# later. The directories move in a later phase, by which point nothing computes
+# a path to find them.
+#
+# WHY THE FLAT ORACLES ARE TOP-LEVEL MODULES, not a subpackage: the frozen
+# meshing oracles do `from mollified_bem import TriMesh`, and ~30 files do
+# `import mollified_bem as mb`. Keeping the flat names means the migration
+# edits NO frozen file. A subpackage would require editing them, which the
+# oracles-are-frozen rule forbids.
+#
+# WHY moss's kernel copy is `moss_kernel` and msd's keeps `mollified_kernel`:
+# they are different files (msd's analytical_kernels.py is 49,069 B, moss's is
+# 51,562 B and holds analytical_eigenstress_kernel / eigenstress_batch, which
+# msd's lacks) and the difference IS the point -- the gates compare them
+# entrywise. Two distinct package names let one interpreter hold both, which a
+# single name never could.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medt"
+version = "0.1.0"
+description = "Mollified boundary element method (mbem) and mollified elastic dislocation theory"
+readme = "msd/README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "matplotlib", "numba", "triangle"]
+
+[project.optional-dependencies]
+# cutde anchors the classical-TDE gates (verify_solved_bvp, verify_evaluate_stress)
+# and two demos. Those gates FAIL rather than skip without it, so it is a test
+# requirement, not a convenience.
+tde = ["cutde"]
+# sympy/mpmath are clq's verification-only dependencies, and three of moss's
+# oracle gates need sympy.
+test = ["pytest", "sympy", "mpmath"]
+
+[tool.setuptools]
+# Three source roots, all in place. "" = the default root for top-level names.
+package-dir = { "" = "msd", "clq" = "clq/clq", "moss_kernel" = "moss/mollified_kernel" }
+# Listed explicitly rather than found, so `verify/` and `examples/` are never
+# packaged by accident -- they are scripts, run by path, not importable units.
+packages = [
+    "mbem",
+    "mbem.backends",
+    "mbem.kernels",
+    "mbem.la",
+    "mbem.model",
+    "mollified_kernel",
+    "clq",
+    "moss_kernel",
+]
+py-modules = [
+    "mollified_bem",
+    "anelastic",
+    "local_box_mesh",
+    "local_box_mesh_eq",
+    "inclusion_mesh",
+    "tde_reference",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The gates are spawned as SUBPROCESSES and must never be collected by import:
+# four filenames collide between suites, the two mollified_kernel copies would
+# contend for one module identity, and one gate prepends an oracle directory to
+# sys.path and never removes it. norecursedirs is the belt to that braces.
+norecursedirs = ["tests/gates"]
+markers = ["slow: takes over 60 s (verify_fmm is ~900 s)"]

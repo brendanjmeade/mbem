@@ -9,11 +9,10 @@ This catches mistakes in the new Cortez-blob terms added to:
 """
 
 import numpy as np
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "mollified_kernel"))
+import sys
 
-from mollified_elastic_kernels import kelvin_d2G
-from analytical_kernels import (
+from mollified_kernel.mollified_elastic_kernels import kelvin_d2G
+from mollified_kernel.analytical_kernels import (
     analytical_kelvin_G,
     integrate_D2G,
     integrate_DG,

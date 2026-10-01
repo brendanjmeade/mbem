@@ -44,10 +44,9 @@ Run:
 from __future__ import annotations
 
 import numpy as np
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "mollified_kernel"))
+import sys
 
-from analytical_kernels import (
+from mollified_kernel.analytical_kernels import (
     integrate_all_moments,
     integrate_moments_numerical,
     analytical_kelvin_G,

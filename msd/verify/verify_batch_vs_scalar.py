@@ -4,14 +4,13 @@ after the Cortez-blob fix.
 """
 
 import numpy as np
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "mollified_kernel"))
+import sys
 
-from analytical_kernels import (
+from mollified_kernel.analytical_kernels import (
     analytical_dd_displacement,
     analytical_kelvin_G,
 )
-from analytical_batch import (
+from mollified_kernel.analytical_batch import (
     dd_displacement_batch,
     kelvin_G_batch,
 )

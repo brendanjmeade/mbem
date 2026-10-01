@@ -119,7 +119,7 @@ def main():
             if e == n_eps - 1:
                 ax.set_xlabel(r"$x/L$")
 
-    out_dir = os.path.abspath(os.path.join(HERE, ".."))
+    out_dir = HERE          # beside the study, not above it
     fig.savefig(os.path.join(out_dir, "fig_triangle_eps_sweep.pdf"))
     fig.savefig(os.path.join(out_dir, "fig_triangle_eps_sweep.png"))
     plt.close(fig)

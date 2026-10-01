@@ -153,7 +153,7 @@ def main():
     fig.suptitle(r"Fault-only mollified BEM (elastic surface stress: "
                  r"anelastic term subtracted)", fontsize=11, y=0.98)
     for ext in ("png", "pdf"):
-        out = ROOT / f"fig_fault_only.{ext}"
+        out = HERE / f"fig_fault_only.{ext}"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         print(f"  wrote {out}")
     plt.close(fig)

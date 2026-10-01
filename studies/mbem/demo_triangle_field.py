@@ -165,7 +165,7 @@ def main():
             if r == 2:
                 ax.set_xlabel(r"$x/L$")
 
-    out_dir = os.path.abspath(os.path.join(HERE, ".."))
+    out_dir = HERE          # beside the study, not above it
     fig.savefig(os.path.join(out_dir, "fig_triangle_field.pdf"))
     fig.savefig(os.path.join(out_dir, "fig_triangle_field.png"))
     plt.close(fig)

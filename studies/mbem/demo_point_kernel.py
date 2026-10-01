@@ -167,7 +167,7 @@ def main():
     style_panel(ax, "d", (-2.0, 2.0), [-2, 0, 2], (-2500.0, 2500.0),
                  r"$x / L$ at $z = 0.02\,L$", r"$K^\varepsilon_{xz,x}$")
 
-    out_dir = os.path.abspath(os.path.join(HERE, ".."))
+    out_dir = HERE          # beside the study, not above it
     fig.savefig(os.path.join(out_dir, "fig_point_kernel.pdf"))
     fig.savefig(os.path.join(out_dir, "fig_point_kernel.png"))
     plt.close(fig)

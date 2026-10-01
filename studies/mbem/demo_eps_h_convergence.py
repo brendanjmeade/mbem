@@ -207,7 +207,7 @@ def main():
                 bbox_to_anchor=(0.79, 0.32), frameon=False, fontsize=7,
                 title="(b)", title_fontsize=8)
 
-    out_dir = os.path.abspath(os.path.join(HERE, ".."))
+    out_dir = HERE          # beside the study, not above it
     fig.savefig(os.path.join(out_dir, "fig_eps_h_convergence.pdf"))
     fig.savefig(os.path.join(out_dir, "fig_eps_h_convergence.png"))
     plt.close(fig)

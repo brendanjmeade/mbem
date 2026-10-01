@@ -77,8 +77,6 @@ from mbem.kernels.tri_kernels import eigenstress_contract           # noqa: E402
 
 MU = 30.0                      # GPa
 SLIP = 0.001                   # km = 1 m
-MOSS = ROOT.parent / "moss" / "mollified_kernel"
-CLQ = ROOT.parent / "clq"
 
 CHECKS = []
 
@@ -99,19 +97,27 @@ def check_band(name, val, lo, hi):
 
 
 def _load_moss():
-    """Load moss's exact eigenstress oracles BY FILE PATH (cross-tree)."""
-    if not (MOSS / "analytical_kernels.py").exists():
+    """moss's exact eigenstress oracles, as an installed package.
+
+    These two modules are the ONLY definition of
+    ``analytical_eigenstress_kernel`` and ``eigenstress_batch`` in the tree --
+    msd's own copy of mollified_kernel has neither -- so clauses [a] and [f]
+    have no substitute for them. The provenance assert is therefore not
+    ceremony: resolving to msd's copy would not raise, it would simply fail to
+    find the functions, or worse find same-named ones, and the clause would
+    compare a copy against itself.
+
+    Returns (None, None) rather than raising, because this gate counts a
+    missing oracle as FAIL and prints why -- never a silent skip.
+    """
+    try:
+        import moss_kernel.analytical_kernels as ak
+        import moss_kernel.analytical_batch as ab
+    except ImportError:
         return None, None
-    sys.path.insert(0, str(MOSS))
-    out = []
-    for name, fn in (("_moss_eig_ak", "analytical_kernels.py"),
-                     ("_moss_eig_ab", "analytical_batch.py")):
-        spec = importlib.util.spec_from_file_location(name, str(MOSS / fn))
-        m = importlib.util.module_from_spec(spec)
-        sys.modules[name] = m
-        spec.loader.exec_module(m)
-        out.append(m)
-    return out[0], out[1]
+    for m in (ak, ab):
+        assert "moss" in m.__file__, m.__file__
+    return ak, ab
 
 
 def _lam(mu, nu):
@@ -181,7 +187,7 @@ def a_moss_parity():
     print("\n[a] entrywise parity with moss's exact eigenstress oracles")
     ak, ab = _load_moss()
     if ak is None:
-        print(f"  (moss oracle not found at {MOSS} -- SKIPPED)")
+        print("  (moss_kernel not importable -- SKIPPED)")
         CHECKS.append(False)
         return
     eps = 0.3
@@ -218,12 +224,12 @@ def a_moss_parity():
 
 def b_clq_parity():
     print("\n[b] independent parity with clq.eigenstress (separate derivation)")
-    if not (CLQ / "clq" / "api.py").exists():
-        print(f"  (clq not found at {CLQ} -- SKIPPED)")
+    try:
+        import clq
+    except ImportError as exc:
+        print(f"  (clq not importable: {exc} -- SKIPPED)")
         CHECKS.append(False)
         return
-    sys.path.insert(0, str(CLQ))
-    import clq                                                  # noqa: E402
 
     tri = np.array([V1, V2, V3])
     slip = SLIP * np.array([0.7, -0.2, 0.5])

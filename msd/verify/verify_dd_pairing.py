@@ -204,20 +204,28 @@ def main():
 
     # (d) parity: msd scalar == moss scalar; batch == scalar; mbem == batch at nu = 0.3
     print("\n[d] parity at nu = 0.3")
-    moss_path = ROOT.parent / "moss" / "mollified_kernel" / "analytical_kernels.py"
+    # moss's copy is an installed package (moss_kernel), not a file path, so
+    # this no longer requires msd and moss to be sibling directories. The
+    # provenance assert is the point: the two copies are independent
+    # implementations and this clause compares them, so resolving to msd's own
+    # would compare a copy against itself and still pass.
+    try:
+        import moss_kernel.analytical_kernels as moss
+        assert "moss" in moss.__file__, moss.__file__
+        moss_why = None
+    except (ImportError, AssertionError) as exc:
+        moss, moss_why = None, exc
     nu = 0.30
     obs_pts = np.array([[0.5, 0.4, 0.7], [-0.3, 0.9, -0.6], [2.0, 1.0, 1.5]])
     Us = np.array([analytical_dd_displacement(o, v1, v2, v3, n, mu, nu, eps) for o in obs_pts])
     Ub = dd_displacement_batch(v1, v2, v3, n, obs_pts, mu, nu, eps)
     check("batch vs scalar", np.abs(Ub - Us).max() / np.abs(Us).max(), 1e-12)
-    if moss_path.exists():
-        spec = importlib.util.spec_from_file_location("_moss_ak", str(moss_path))
-        moss = importlib.util.module_from_spec(spec); spec.loader.exec_module(moss)
+    if moss is not None:
         Um = np.array([moss.analytical_dd_displacement(o, v1, v2, v3, n, mu, nu, eps) for o in obs_pts])
         check("msd scalar vs moss scalar", np.abs(Um - Us).max() / np.abs(Us).max(), 1e-12)
     else:
         CHECKS.append(False)
-        print(f"  [XX] moss oracle not found at {moss_path} -- parity check counted as FAILED")
+        print(f"  [XX] moss oracle unavailable ({moss_why}) -- parity check counted as FAILED")
     mesh1 = mb.TriMesh(vertices=np.array([v1, v2, v3]), triangles=np.array([[0, 1, 2]]))
     lam = 2.0 * mu * nu / (1.0 - 2.0 * nu)
     T1 = kb.assemble_t_matrix(obs_pts, mesh1, mb.ElasticMaterial(mu=mu, lam=lam), eps)

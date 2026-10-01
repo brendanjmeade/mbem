@@ -8,16 +8,7 @@ with ``sys.executable``.
 """
 from __future__ import annotations
 
-import importlib.util
-import pathlib
-import sys
-
 import numpy as np
-
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-MOSS_ORG = ROOT.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 # A generic tilted, non-right, non-unit triangle (msd's verify_arbitrary_triangle).
 TRI = np.array([[0.37, -0.81, 0.44],
@@ -26,31 +17,39 @@ TRI = np.array([[0.37, -0.81, 0.44],
 MU, NU_DEFAULT = 1.0, 0.3
 
 
-def load_module(name: str, path):
-    """Import a legacy oracle file under a private module name."""
-    spec = importlib.util.spec_from_file_location(name, str(path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
+# The oracles are ordinary imports of installed packages. They were loaded by
+# FILE PATH under private module names, which the two kernel copies required
+# while they shared the name ``mollified_kernel``; they are now installed under
+# distinct names, so one interpreter can hold both and the path arithmetic --
+# which also forced clq, msd and moss to stay siblings -- is gone.
+#
+# Each accessor asserts WHICH copy it got. The two are independent
+# implementations compared entrywise here, so a name resolving to the wrong one
+# would make the comparison a copy against itself: still PASS, residual merely
+# sliding from ~1e-12 to ~1e-16. verify_oracle_provenance (in msd) pins this
+# repo-wide; these asserts make each clq gate fail on its own too.
 
 def msd_analytical():
-    return load_module("_msd_analytical_kernels",
-                       MOSS_ORG / "msd" / "mollified_kernel" / "analytical_kernels.py")
+    import mollified_kernel.analytical_kernels as m
+    assert "msd" in m.__file__, m.__file__
+    return m
 
 
 def msd_batch():
-    return load_module("_msd_analytical_batch",
-                       MOSS_ORG / "msd" / "mollified_kernel" / "analytical_batch.py")
+    import mollified_kernel.analytical_batch as m
+    assert "msd" in m.__file__, m.__file__
+    return m
 
 
 def moss_analytical():
-    return load_module("_moss_analytical_kernels",
-                       MOSS_ORG / "moss" / "mollified_kernel" / "analytical_kernels.py")
+    import moss_kernel.analytical_kernels as m
+    assert "moss" in m.__file__, m.__file__
+    return m
 
 
 def msd_anelastic():
-    return load_module("_msd_anelastic", MOSS_ORG / "msd" / "anelastic.py")
+    import anelastic
+    return anelastic
 
 
 def relmax(a, b) -> float:

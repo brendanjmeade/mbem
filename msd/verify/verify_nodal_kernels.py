@@ -53,7 +53,6 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-CLQ = ROOT.parent / "clq"
 
 from mbem.kernels import basis as kb                                # noqa: E402
 from mbem.kernels import tri_kernels as tk                          # noqa: E402
@@ -97,10 +96,15 @@ def relmax(a, b):
 
 
 def _load_clq():
-    if not (CLQ / "clq" / "api.py").exists():
+    """clq is an installed package, not a sibling directory on sys.path.
+
+    Still None rather than a raised ImportError, because this gate counts a
+    missing oracle as FAIL and says so -- never a silent skip.
+    """
+    try:
+        import clq
+    except ImportError:
         return None
-    sys.path.insert(0, str(CLQ))
-    import clq                                                      # noqa: E402
     return clq
 
 
@@ -487,7 +491,7 @@ def main():
     print("=" * 76)
     clq = _load_clq()
     if clq is None:
-        print(f"  [XX] clq oracle not found at {CLQ}")
+        print("  [XX] clq oracle not importable")
         print("-" * 76)
         print("FAIL: nodal triangle kernels (clq oracle missing)")
         return False

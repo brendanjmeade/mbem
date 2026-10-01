@@ -29,22 +29,32 @@ MU, NU_DEFAULT = 1.0, 0.3
 # sliding from ~1e-12 to ~1e-16. verify_oracle_provenance (in msd) pins this
 # repo-wide; these asserts make each clq gate fail on its own too.
 
+def _from(mod, package: str):
+    """Assert which COPY a module came from, by its package directory name.
+
+    A substring test on the full path ("msd" in __file__) depends on where the
+    tree happens to live and broke the moment the directories moved; the parent
+    directory name is the package identity itself.
+    """
+    import pathlib
+    got = pathlib.Path(mod.__file__).parent.name
+    assert got == package, f"{mod.__name__} came from {got}, wanted {package}"
+    return mod
+
+
 def msd_analytical():
     import mollified_kernel.analytical_kernels as m
-    assert "msd" in m.__file__, m.__file__
-    return m
+    return _from(m, "mollified_kernel")
 
 
 def msd_batch():
     import mollified_kernel.analytical_batch as m
-    assert "msd" in m.__file__, m.__file__
-    return m
+    return _from(m, "mollified_kernel")
 
 
 def moss_analytical():
     import moss_kernel.analytical_kernels as m
-    assert "moss" in m.__file__, m.__file__
-    return m
+    return _from(m, "moss_kernel")
 
 
 def msd_anelastic():

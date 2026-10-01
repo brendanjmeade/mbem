@@ -1182,7 +1182,7 @@ def dd_stress_contract(x_field, tri_verts, normals, eps_arr, density, mu, lam):
 # obs point), which is the d/L -> 0 limit of this integral: the two agree
 # deep inside a large element and differ by up to ~2x near element edges
 # (i.e. over the whole fault RIM). Parity oracles:
-# moss/mollified_kernel/analytical_kernels.py::analytical_eigenstress_kernel,
+# moss_kernel/analytical_kernels.py::analytical_eigenstress_kernel,
 # analytical_batch.py::eigenstress_batch, and clq.eigenstress; gate:
 # verify/verify_eigenstress_exact.py.
 #

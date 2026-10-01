@@ -4,7 +4,7 @@ WHY THIS EXISTS. The oracles are frozen and the live kernels are gated against
 them by entrywise parity, so a parity clause is only worth what its reference is
 worth. Two failure modes make a reference worthless WITHOUT making any gate red:
 
-  * A SWAP. ``msd/mollified_kernel/`` and ``moss/mollified_kernel/`` are two
+  * A SWAP. ``src/mollified_kernel/`` and ``src/moss_kernel/`` are two
     independent implementations of the same analytic kernels, installed as
     ``mollified_kernel`` and ``moss_kernel``. If an import ever resolves one to
     the other, the parity clause compares a copy against ITSELF and still prints
@@ -30,7 +30,7 @@ it makes the edit visible in review instead of silent. Regenerate with
 
 and say in the commit message why the hash moved.
 
-Run from msd/. Prints PASS:/FAIL:, exits 1 on FAIL.
+Run from anywhere. Prints PASS:/FAIL:, exits 1 on FAIL.
 """
 
 from __future__ import annotations
@@ -48,31 +48,31 @@ MANIFEST = HERE / "oracle_manifest.json"
 # to the repo root, so it pins WHICH COPY the name resolves to, not merely that
 # something importable exists.
 ORACLES = {
-    "mollified_bem": "msd/mollified_bem.py",
-    "anelastic": "msd/anelastic.py",
-    "tde_reference": "msd/tde_reference.py",
-    "local_box_mesh": "msd/local_box_mesh.py",
-    "local_box_mesh_eq": "msd/local_box_mesh_eq.py",
-    "inclusion_mesh": "msd/inclusion_mesh.py",
+    "mollified_bem": "src/mollified_bem.py",
+    "anelastic": "src/anelastic.py",
+    "tde_reference": "src/tde_reference.py",
+    "local_box_mesh": "src/local_box_mesh.py",
+    "local_box_mesh_eq": "src/local_box_mesh_eq.py",
+    "inclusion_mesh": "src/inclusion_mesh.py",
     "mollified_kernel.analytical_kernels":
-        "msd/mollified_kernel/analytical_kernels.py",
+        "src/mollified_kernel/analytical_kernels.py",
     "mollified_kernel.analytical_batch":
-        "msd/mollified_kernel/analytical_batch.py",
+        "src/mollified_kernel/analytical_batch.py",
     "mollified_kernel.mollified_elastic_kernels":
-        "msd/mollified_kernel/mollified_elastic_kernels.py",
+        "src/mollified_kernel/mollified_elastic_kernels.py",
     "moss_kernel.analytical_kernels":
-        "moss/mollified_kernel/analytical_kernels.py",
+        "src/moss_kernel/analytical_kernels.py",
     "moss_kernel.analytical_batch":
-        "moss/mollified_kernel/analytical_batch.py",
+        "src/moss_kernel/analytical_batch.py",
     "moss_kernel.mollified_elastic_kernels":
-        "moss/mollified_kernel/mollified_elastic_kernels.py",
+        "src/moss_kernel/mollified_elastic_kernels.py",
     "moss_kernel.mindlin_kernels":
-        "moss/mollified_kernel/mindlin_kernels.py",
+        "src/moss_kernel/mindlin_kernels.py",
     "moss_kernel.mindlin_triangle":
-        "moss/mollified_kernel/mindlin_triangle.py",
-    "clq.kernels": "clq/clq/kernels.py",
-    "clq.primitives": "clq/clq/primitives.py",
-    "clq.moments": "clq/clq/moments.py",
+        "src/moss_kernel/mindlin_triangle.py",
+    "clq.kernels": "src/clq/kernels.py",
+    "clq.primitives": "src/clq/primitives.py",
+    "clq.moments": "src/clq/moments.py",
 }
 
 # Names present in exactly one of the two kernel copies, per MODULE -- the

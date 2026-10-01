@@ -113,7 +113,8 @@ def _load_moss():
     except ImportError:
         return None, None
     for m in (ak, ab):
-        assert "moss" in m.__file__, m.__file__
+        assert pathlib.Path(m.__file__).parent.name == "moss_kernel", \
+            m.__file__
     return ak, ab
 
 

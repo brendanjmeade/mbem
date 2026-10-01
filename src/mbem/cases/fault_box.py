@@ -14,7 +14,7 @@ from local_box_mesh_eq import (_concatenate_meshes, make_rectangular_patch_eq,
                                make_vertical_fault_eq, make_vertical_panel_eq)
 from mbem.model import BCType, Patch, Region, RegionModel
 
-# On-fault elastic stress wants eps <= ~0.07 h on the fault (msd/CLAUDE.md
+# On-fault elastic stress wants eps <= ~0.07 h on the fault (docs/mbem-rules.md
 # rule 4); the boundary patches take "auto" (= defaults.EPS_OVER_H * h).
 def build_fault_box(half_x=200.0, z_bottom=-100.0, fault_half_len=50.0,
                     fault_depth=20.0, edge_fault=8.0, edge_near=20.0,

@@ -24,7 +24,7 @@ mis-built list BREAKS, not a tolerance:
      lists exactly, threshold infinity empties X into U over exactly the
      pairs X held), what it selects in between, and what that costs
 
-Run from msd/. PASS:/FAIL:, exit 1 on FAIL.
+Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
 
 from __future__ import annotations

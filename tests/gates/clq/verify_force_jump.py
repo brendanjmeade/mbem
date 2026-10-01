@@ -17,7 +17,7 @@ normalisation and its units.
 
 (b) DISPLACEMENT CONTINUITY.  The single layer itself is continuous: this is
     the clq-level statement of why it carries NO 1/2 I free term in a BEM
-    (msd/mbem/model/equations.py puts the jump on the double layer alone).
+    (src/mbem/model/equations.py puts the jump on the double layer alone).
 
 (c) GLOBAL EQUILIBRIUM.  For any closed surface S enclosing the element,
     ``int_S sigma . n dS = -int_T f dS``, which follows from

@@ -47,7 +47,7 @@ operator -- and never against another approximation.
      the cube indices. The half-width floor is checked by removal: without
      it a flat box's P2M is NaN.
 
-Run from msd/. PASS:/FAIL:, exit 1 on FAIL. It is slow (minutes): the
+Run from anywhere. PASS:/FAIL:, exit 1 on FAIL. It is slow (minutes): the
 reference evaluates every M2L where it is used, in numpy.
 """
 

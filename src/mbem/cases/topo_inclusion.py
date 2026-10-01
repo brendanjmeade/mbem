@@ -35,7 +35,7 @@ Writes fields to examples/topo_inclusion_fields_mu10.npz (the input to
 render_topo_inclusion.py) for ``dense``, and to a ``_<backend>``-suffixed
 file otherwise, so a cross-backend run never overwrites the reference.
 
-Run from msd/:  python examples/make_topo_inclusion.py [--backend hmat]
+Run:  python -m mbem.cases.topo_inclusion [--backend hmat]
 """
 
 import gc

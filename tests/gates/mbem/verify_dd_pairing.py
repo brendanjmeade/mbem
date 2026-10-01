@@ -209,7 +209,8 @@ def main():
     # would compare a copy against itself and still pass.
     try:
         import moss_kernel.analytical_kernels as moss
-        assert "moss" in moss.__file__, moss.__file__
+        assert pathlib.Path(moss.__file__).parent.name == "moss_kernel", \
+            moss.__file__
         moss_why = None
     except (ImportError, AssertionError) as exc:
         moss, moss_why = None, exc

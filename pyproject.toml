@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 name = "medt"
 version = "0.1.0"
 description = "Mollified boundary element method (mbem) and mollified elastic dislocation theory"
-readme = "msd/README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy", "scipy", "matplotlib", "numba", "triangle"]
 
@@ -45,8 +45,10 @@ tde = ["cutde"]
 test = ["pytest", "sympy", "mpmath"]
 
 [tool.setuptools]
-# Three source roots, all in place. "" = the default root for top-level names.
-package-dir = { "" = "msd", "clq" = "clq/clq", "moss_kernel" = "moss/mollified_kernel" }
+# One source root now that the tree is packaged. Phase 1 pointed these at the
+# old locations so the install was a no-op for imports; the directories have
+# since moved, and nothing computes a path to find them any more.
+package-dir = { "" = "src" }
 # Listed explicitly rather than found, so `verify/` and `examples/` are never
 # packaged by accident -- they are scripts, run by path, not importable units.
 packages = [

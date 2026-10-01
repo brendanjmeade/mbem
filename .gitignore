@@ -1,24 +1,36 @@
+# Consolidated from the five .gitignore files the sub-project tree carried
+# (root, msd/, clq/, moss/, medt_paper/). Paths are retargeted to the packaged
+# layout; the dead fbem/cache/ rule is dropped.
+
 # Python / numba build output
 __pycache__/
 *.py[cod]
 *.nbi
 *.nbc
 
-# macOS
-.DS_Store
-
-# fbem: every .npz here is regenerable solver output or a mesh cache
-fbem/cache/
-
-# clq: figure outputs of examples/ (regenerable)
-clq/fig_*.png
-clq/fig_*.pdf
-
-# msd: bench_scaling's mesh cache (regenerable; the mesher takes 5 min at 168k)
-msd/examples/_cache/
-
-# Packaging / test tooling build output (pip install -e ., pytest)
+# Packaging / test tooling
 *.egg-info/
 build/
 dist/
 .pytest_cache/
+
+# macOS
+.DS_Store
+
+# Per-run output. The run directory is the artifact; nothing in it is tracked.
+runs/
+
+# Study outputs. Figures are regenerable, so the PDFs are ignored and only the
+# curated PNG gallery under docs/figures/ is tracked -- see docs/figures/.
+studies/**/fig_*.pdf
+studies/**/fig_*.png
+docs/figures/*.pdf
+
+# Solver output npz written by the studies. The DENSE topo_inclusion fields are
+# tracked as the reference the compressed backends are compared against; the
+# per-backend copies and the fig06 assessment are regenerable.
+studies/mbem/topo_inclusion_fields_mu10_*.npz
+studies/mbem/fig06_assessment.npz
+
+# bench_scaling's mesh cache (regenerable; the mesher takes 5 min at 168k)
+studies/mbem/_cache/

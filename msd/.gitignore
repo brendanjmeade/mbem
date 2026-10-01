@@ -1,8 +1,0 @@
-*.pyc
-*.pdf
-__pycache__/
-examples/fig06_assessment.npz
-# Cross-backend comparison outputs of make_topo_inclusion --backend hmat|fmm.
-# Regenerable; the DENSE run's topo_inclusion_fields_mu10.npz stays tracked as
-# the reference the other two are compared against.
-examples/topo_inclusion_fields_mu10_*.npz

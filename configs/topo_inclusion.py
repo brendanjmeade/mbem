@@ -40,7 +40,12 @@ def run_spec(surface: str = "topo", backend: str = "hmat",
         backend=Backend(kind=backend),
         solve=Solve(),
         states=(State("het"), State("hom", {"inclusion": HOST})),
-        outputs=Output(slots=("u:host_top", "u:inclusion_top"),
+        # slots=() means EVERY slot, which `mbem sample` needs: an interior
+        # point is evaluated from the density on all of them -- sides, base,
+        # both interfaces, fault -- not just the two the showcase figure
+        # draws. Output's docstring warns that all-slots is tens of GB, but
+        # that is at 4M unknowns; here the whole solution is ~200 kB a state.
+        outputs=Output(slots=(),
                        save_meshes=True,
                        figures=("topo_inclusion_showcase",
                                 "topo_inclusion_contour")),

@@ -4,7 +4,7 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 44 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 45 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`

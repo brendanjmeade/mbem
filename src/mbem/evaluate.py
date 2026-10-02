@@ -305,20 +305,30 @@ def _stress_from_source(points, src_mesh, density, kernel, mu, lam, eps_arr,
 
 
 def _double_layer_stress(points, src_mesh, jump, sigma, mu, lam, eps_arr,
-                         subtract_anelastic, order: int = 0):
+                         subtract_anelastic, order: int = 0,
+                         parts: bool = False):
     """``-sigma * Sdd @ jump`` for one mollified double layer (boundary
     ``u_p`` or fault ``slip``); with ``subtract_anelastic`` its divergent
     on-surface part ``-sigma * C:eps_star`` is removed by adding
     ``+sigma * C:eps_star`` (``kernel="eigen"`` returns +C:eps_star). The
     one place this pairing is written; the sign is pinned by finiteness as
     eps -> 0 (``verify_eigenstress_exact.py`` [e]).
+
+    ``parts`` additionally returns the removed term on its own, so a caller
+    that wants BOTH the elastic field and the anelastic part it rests on gets
+    them from one pass. Recovering the eigenstress afterwards as
+    ``total - elastic`` would mean a second evaluation of the ``dd`` kernel,
+    which is ~80 % of the cost of the whole thing and would be thrown away.
     """
     sig = -sigma * _stress_from_source(points, src_mesh, jump, "dd",
                                        mu, lam, eps_arr, order)
-    if subtract_anelastic:
-        sig += sigma * _stress_from_source(points, src_mesh, jump, "eigen",
-                                           mu, lam, eps_arr, order)
-    return sig
+    eig = None
+    if subtract_anelastic or parts:
+        eig = sigma * _stress_from_source(points, src_mesh, jump, "eigen",
+                                          mu, lam, eps_arr, order)
+        if subtract_anelastic:
+            sig += eig
+    return (sig, eig) if parts else sig
 
 
 class PointCloud:
@@ -413,7 +423,8 @@ class DisplacementEvaluator:
 def evaluate_stress(model: RegionModel, region: Region | str,
                     solution: dict, points: np.ndarray, eps,
                     subtract_anelastic: bool = True,
-                    warn_near: bool = True) -> np.ndarray:
+                    warn_near: bool = True,
+                    parts: bool = False):
     """Stress tensor (N,3,3) at ``points`` of ``region``.
 
     Mirrors :func:`evaluate_displacement` with the stress operator applied
@@ -429,6 +440,12 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     for the frozen scalar-eps ``anelastic.py`` approximation).
 
     ``solution`` is the slot dict returned by a backend solve.
+
+    ``parts`` returns ``(sigma, eigenstress)``: the field and the anelastic
+    term, summed over every double layer, from the same pass. A volume readout
+    wants both -- the elastic stress to look at and ``C:eps*`` to see what the
+    mollification put there -- and differencing two separate calls would redo
+    the ``dd`` kernel, the dominant cost.
     """
     region = _region(model, region)
     if region.faults:
@@ -437,18 +454,29 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     if warn_near:
         _warn_near_boundary(points, region)
     sig = np.zeros((points.shape[0], 3, 3))
+    eigen = np.zeros((points.shape[0], 3, 3)) if parts else None
 
     mat = region.material
     mu, lam = mat.mu, mat.lam
+
+    def _add(mesh, jump, sigma, eps_arr, order):
+        """One double layer, accumulating its eigenstress when asked."""
+        out = _double_layer_stress(points, mesh, jump, sigma, mu, lam,
+                                   eps_arr, subtract_anelastic, order,
+                                   parts=parts)
+        if parts:
+            eigen[...] += out[1]
+            return out[0]
+        return out
+
     for p in region.patches:
         sigma = float(model.orientation(region, p))
         # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
         # the boundary u_p is a jump exactly as a fault slip is.
         u_p = _density(p, "u", solution)
         if np.any(u_p):
-            sig += _double_layer_stress(points, p.mesh, u_p, sigma, mu, lam,
-                                        kb.resolve_patch_eps(eps, p),
-                                        subtract_anelastic, p.order)
+            sig += _add(p.mesh, u_p, sigma, kb.resolve_patch_eps(eps, p),
+                        p.order)
         # t_p term (single layer): + sigma * SG @ t_p
         t_p = _density(p, "t", solution)
         if np.any(t_p):
@@ -463,8 +491,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
         sigma = float(model.orientation(region, f))
         slip = _density(f, "slip", solution)
         if np.any(slip):
-            sig += _double_layer_stress(points, f.mesh, slip, sigma, mu, lam,
-                                        kb.resolve_patch_eps(eps, f),
-                                        subtract_anelastic, f.order)
+            sig += _add(f.mesh, slip, sigma, kb.resolve_patch_eps(eps, f),
+                        f.order)
 
-    return sig
+    return (sig, eigen) if parts else sig

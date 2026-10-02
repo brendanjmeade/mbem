@@ -2,6 +2,59 @@
 from __future__ import annotations
 
 import numpy as np
+from numba import njit, prange
+
+
+@njit(cache=True, parallel=True)
+def _solid_angle_rows(verts, tris, points, out):
+    """van Oosterom signed solid angle of every triangle, summed per point.
+
+    The ONE statement of the formula: ``model/core`` reads containment off it
+    and the volume sampler classifies a grid with it, so a second copy is the
+    one that would disagree. ``prange`` is over the POINTS and the per-triangle
+    work is O(1) scratch, so this is O(1) memory at any point count -- the
+    vectorised numpy form needs (N_pts, N_tri, 3) temporaries, which is 54 GB
+    for a 500k-point grid over a 4.5k-triangle surface.
+
+    ``parallel=True``, so main thread only (rule 9); there is no ``_serial``
+    variant because nothing threads this yet.
+    """
+    for n in prange(points.shape[0]):
+        px, py, pz = points[n, 0], points[n, 1], points[n, 2]
+        total = 0.0
+        for t in range(tris.shape[0]):
+            ax = verts[tris[t, 0], 0] - px
+            ay = verts[tris[t, 0], 1] - py
+            az = verts[tris[t, 0], 2] - pz
+            bx = verts[tris[t, 1], 0] - px
+            by = verts[tris[t, 1], 1] - py
+            bz = verts[tris[t, 1], 2] - pz
+            cx = verts[tris[t, 2], 0] - px
+            cy = verts[tris[t, 2], 1] - py
+            cz = verts[tris[t, 2], 2] - pz
+            ra = np.sqrt(ax * ax + ay * ay + az * az)
+            rb = np.sqrt(bx * bx + by * by + bz * bz)
+            rc = np.sqrt(cx * cx + cy * cy + cz * cz)
+            # numer = a . (b x c)
+            numer = (ax * (by * cz - bz * cy)
+                     + ay * (bz * cx - bx * cz)
+                     + az * (bx * cy - by * cx))
+            denom = (ra * rb * rc
+                     + rc * (ax * bx + ay * by + az * bz)
+                     + ra * (bx * cx + by * cy + bz * cz)
+                     + rb * (ax * cx + ay * cy + az * cz))
+            total += 2.0 * np.arctan2(numer, denom)
+        out[n] = total
+
+
+def solid_angle_batch(mesh, points) -> np.ndarray:
+    """``(N,)`` signed solid angle subtended by ``mesh`` at each point."""
+    points = np.ascontiguousarray(np.asarray(points, float).reshape(-1, 3))
+    out = np.zeros(points.shape[0])
+    _solid_angle_rows(np.ascontiguousarray(np.asarray(mesh.vertices, float)),
+                      np.ascontiguousarray(np.asarray(mesh.triangles)),
+                      points, out)
+    return out
 
 
 def point_triangle_distance(p, a, b, c):

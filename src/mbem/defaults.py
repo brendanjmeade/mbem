@@ -811,6 +811,15 @@ HALF_JUMP_MAX_EPS_OVER_H = 0.5
 # distance: the piecewise-constant density limits the representation there
 # (~2e-1 relative stress error at d/h = 0.25 with eps/h = 0.3; ~10 % at 0.5).
 NEAR_BOUNDARY_H_RATIO = 0.5
+# Observation points per chunk in the volume sampler (volume.sample). The
+# contraction kernels are O(N_obs) in memory but hold ~4 transient (N,3,3)
+# arrays live per double-layer term, so a chunk is ~400 B/pt; 50k keeps one
+# chunk's working set inside ~20 MB while still giving every core enough
+# prange work to cover the per-call setup (a fresh cKDTree of the chunk's
+# points per double layer). The loop is SERIAL by necessity, not timidity:
+# rule 9 forbids calling a parallel=True kernel from a Python thread and the
+# kernels already prange over exactly this axis.
+VOLUME_CHUNK = 50_000
 # The eigenstress readout sums each element only over the observation points
 # within this many (eps_j + h_j) of its centroid (evaluate._eigen_near_list):
 # the element's weight is (15 eps^4 / 8 pi) I7, ~(eps/R)^4 per element and

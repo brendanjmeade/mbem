@@ -104,7 +104,7 @@ src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
 configs/                  seven studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 44 gates (print PASS/FAIL)
+tests/                    run_all.py + test_gates.py; 45 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -151,7 +151,7 @@ python -m mbem verify [-k fmm] [--fast]             # the gates, through the CLI
 ```
 
 A run folder holds `resolved.json` (the spec, the keyword arguments actually
-passed, eps resolved to numbers per patch, all 110 `defaults` constants, and the
+passed, eps resolved to numbers per patch, all 111 `defaults` constants, and the
 environment), `report.json` (iterations, residuals, phase timings, peak RSS),
 the solution fields as `.npz`, and a `MANIFEST` of sha256 hashes.
 
@@ -163,7 +163,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 44 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 45 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 
@@ -185,6 +185,48 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals
 ```
+
+## The field in the volume
+
+The solve reports its answer on the boundary. `mbem sample` re-evaluates a
+stored run's solution on a 3-D grid and writes VTK ImageData, which opens by
+dragging into ParaView Glance or with desktop ParaView:
+
+```
+python -m mbem sample <run-dir>                       # 4 km default
+python -m mbem sample <study-dir> --spacing 8 --difference
+python -m mbem sample <run-dir> --state het --no-eigenstress
+```
+
+Post-processing, not a re-solve: the model is rebuilt from the run's own spec
+(the mesher is re-run, ~3 ms, because `meshes.npz` does not carry
+`bundle.scalars` and so cannot reproduce a fault), the per-patch `mesh_sha256`
+is checked against the stored fingerprint, and the assembly and solve are
+skipped. The run must have saved every slot — `outputs=Output(slots=())` — since
+an interior point needs the density on all of them.
+
+Each `.vti` carries displacement, elastic stress and strain as six named
+components each, the subtracted eigenstress `C:eps*`, and `u_mag`,
+`von_mises`, `mean_stress`, `max_shear`, `dilatation`. A study samples every
+child on **one shared grid**, which is what makes a cross-run difference well
+defined when the two runs have different meshes; a difference is written only
+where both bodies contain the point, and its scalars are recomputed from the
+differenced tensors rather than differenced (the von Mises of a perturbation is
+not a difference of von Mises values).
+
+Two arrays decide whether a value is trustworthy. `region` is 0 outside the
+body — points above the topography and outside the box are NaN, because 0 is a
+value. `clearance_h` and `clearance_eps` give each point's distance to the
+nearest element in units of that element's size and of its own eps: within
+`NEAR_BOUNDARY_H_RATIO` the mollified field is not the elastic field. **The
+band is flagged, not blanked**, and it matters — on the showcase model the
+topography effect reads 1287 mm at a point lying on the surface and 39 mm once
+`clearance_h > 0.5`, a factor of 33.
+
+Cost is linear in the interior point count and dominated by the stress kernel:
+measured 2.3 ms per point on the 11k-triangle showcase model (0.22 for
+displacement, 2.09 for stress with the eigenstress in the same pass). So 8 km
+spacing is ~1.6 min a state and 4 km is ~12 min.
 
 ## Scaling
 

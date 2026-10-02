@@ -224,6 +224,174 @@ def cmd_figure(a) -> int:
     return 0
 
 
+def _rebuild(resolved: dict):
+    """``(bundle, model, eps)`` for a stored run, from its resolved spec.
+
+    The mesher is RE-RUN rather than read back, because ``meshes.npz`` is not
+    enough: the runner persists ``bundle.meshes`` and ``bundle.arrays`` but not
+    ``bundle.scalars``, and ``topo_inclusion_model`` takes the fault out of
+    ``scalars["fault_mesh"]`` -- so the fault is unreconstructible from the
+    npz. Re-running costs ~3 ms warm (0.085 s with the lazy imports) against
+    7-8 s to assemble, and the per-patch ``mesh_sha256`` in the fingerprint
+    then proves the rebuilt mesh is the solved one.
+
+    ``eps`` comes from ``spec`` verbatim, including the literal "auto", which
+    the evaluator re-resolves per patch. ``effective.eps`` is per-patch summary
+    STATISTICS and would be silently wrong here.
+    """
+    from mbem import config as cfg
+    spec = resolved["spec"]
+    g = spec["model"]["geometry"]
+    mesh_fn = cfg.resolve(g["builder"], cfg.MESH_BUILDERS)
+    bundle = mesh_fn(scale=g["scale"], **g["params"])
+    model_fn = cfg.resolve(spec["model"]["builder"], cfg.MODEL_BUILDERS)
+    model = model_fn(bundle, **spec["model"]["params"])
+    return bundle, model, spec["model"]["eps"]
+
+
+def _check_mesh(resolved: dict, model) -> list:
+    """Per-patch ``mesh_sha256`` of the rebuilt model against the stored run."""
+    import hashlib
+
+    import numpy as np
+    want = {p["name"]: p.get("mesh_sha256")
+            for r in resolved.get("model", {}).get("regions", [])
+            for p in r.get("patches", [])}
+    bad = []
+    for r in model.regions:
+        for p in r.patches:
+            m = p.mesh
+            h = hashlib.sha256(np.asarray(m.vertices).tobytes()
+                               + np.asarray(m.triangles).tobytes()
+                               ).hexdigest()[:16]
+            if want.get(p.name) not in (None, h):
+                bad.append(p.name)
+    return bad
+
+
+def cmd_sample(a) -> int:
+    """Evaluate a stored solution on a 3-D grid and write .vti volumes.
+
+    Post-processing, not a re-solve: the assembly and the solve are exactly
+    what this skips. A study directory samples every child on ONE shared grid,
+    which is what makes a cross-run difference well defined -- topo and flat
+    are different meshes, so on the boundary the showcase figure can only
+    difference them by carrying a flat copy of the top, but on a common grid
+    the subtraction is just arithmetic.
+    """
+    import numpy as np  # noqa: F401  (used by the difference block)
+
+    from mbem import figures as F, volume as V, vti
+
+    src = pathlib.Path(a.run_dir)
+    if not src.is_dir():
+        print(f"not a directory: {src}")
+        return 2
+    study = (src / "study.json").exists()
+    children = ([src / r["dir"] for r in
+                 json.loads((src / "study.json").read_text())["rows"]]
+                if study else [src])
+
+    out = pathlib.Path(a.out) if a.out else runner.new_run_dir(
+        f"volume-{src.name.split('-')[1] if '-' in src.name else src.name}")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "STATUS").write_text("RUNNING\n")
+
+    grid = None
+    report = {"source": str(src), "spacing": a.spacing, "volumes": [],
+              "phases": {}, "status": "OK"}
+    saved = {}
+    for child in children:
+        run = F.load_run(child)
+        if not run.fields:
+            print(f"  {child.name}: no fields saved -- rerun the config with "
+                  f"outputs=Output(slots=()) so every slot is stored")
+            return 1
+        bundle, model, eps = V.timed(
+            f"{child.name}: rebuild",
+            lambda: _rebuild(run.resolved), log=print)[0]
+        bad = _check_mesh(run.resolved, model)
+        if bad:
+            print(f"  REFUSING: rebuilt mesh differs from the solved mesh on "
+                  f"{bad} -- the mesher is not reproducing this run")
+            return 1
+        if grid is None:
+            # ONE grid for every child, which is what makes a cross-run
+            # difference well defined. Built from the first child's bounds and
+            # padded by a cell, so a sibling whose boundary reaches further --
+            # a warped top against a flat one -- is still covered.
+            grid = V.make_grid(model, a.spacing, pad=a.spacing)
+            nx, ny, nz = grid.dims
+            print(f"  grid {nx} x {ny} x {nz} = {grid.points.shape[0]:,} "
+                  f"points at {a.spacing} km (shared by every child)")
+        # Classified PER CHILD, not once: topo and flat are different bodies.
+        # A point under the hill is inside the warped model and outside the
+        # flat one, so one shared code array would evaluate the flat run at
+        # exterior points and quietly return the exterior field there.
+        code, dt = V.timed(f"{child.name}: classify",
+                           lambda: V.classify(model, grid), log=print)
+        report["phases"][f"classify:{child.name}"] = dt
+        (c_h, c_eps), dt = V.timed(f"{child.name}: clearance",
+                                   lambda: V.clearance(model, grid, eps),
+                                   log=print)
+        report["phases"][f"clearance:{child.name}"] = dt
+        inside = int((code > 0).sum())
+        print(f"  inside: {inside:,} of {grid.points.shape[0]:,} "
+              f"({100.0 * inside / grid.points.shape[0]:.1f}%)")
+
+        states = [a.state] if a.state else sorted(run.fields)
+        for st in states:
+            if st not in run.fields:
+                print(f"  no state {st!r} in {child.name}; have "
+                      f"{sorted(run.fields)}")
+                return 2
+            tag = f"{child.name}-{st}" if study else st
+            fields, dt = V.timed(
+                f"sample {tag}",
+                lambda: V.sample(model, run.fields[st], eps, grid, code,
+                                 eigenstress=not a.no_eigenstress), log=print)
+            report["phases"][f"sample:{tag}"] = dt
+            saved[tag] = (fields, code)
+            arrays = V.as_vti_arrays(grid, fields, code, c_h, c_eps)
+            p = vti.write(out / f"volume_{runner._slug(tag)}.vti", grid.origin,
+                          grid.spacing, grid.dims, arrays)
+            print(f"  wrote {p.name}  ({p.stat().st_size / 1e6:.1f} MB)")
+            report["volumes"].append(p.name)
+
+    # Cross-run / cross-state differences, on the shared grid. Valid only
+    # where BOTH bodies contain the point: differencing a field against the
+    # exterior field of a sibling that does not reach there is meaningless, so
+    # the intersection is the domain and everything else stays NaN.
+    if a.difference and len(saved) > 1:
+        keys = sorted(saved)
+        base = keys[0]
+        for k in keys[1:]:
+            fa, ca = saved[k]
+            fb, cb = saved[base]
+            both = (ca > 0) & (cb > 0)
+            d = V.difference(fa, fb, both)
+            arrays = V.as_vti_arrays(grid, d, both.astype(np.int8),
+                                     c_h, c_eps)
+            name = f"diff_{runner._slug(k)}_minus_{runner._slug(base)}.vti"
+            p = vti.write(out / name, grid.origin, grid.spacing, grid.dims,
+                          arrays)
+            print(f"  wrote {p.name}  ({p.stat().st_size / 1e6:.1f} MB)")
+            report["volumes"].append(p.name)
+
+    runner._write_json(out / "resolved.json", {
+        "schema": 1,
+        "run": {"id": out.name, "name": f"volume:{src.name}", "kind": "volume"},
+        "source_run": str(src),
+        "grid": {"origin": list(grid.origin), "spacing": list(grid.spacing),
+                 "dims": list(grid.dims), "n_points": grid.points.shape[0]},
+        "env": prov.environment()})
+    runner._write_json(out / "report.json", report)
+    (out / "STATUS").write_text(report["status"] + "\n")
+    runner._manifest(out)
+    print(f"  -> {out}")
+    return 0
+
+
 def cmd_publish(a) -> int:
     """Copy chosen figures into the tracked gallery, with provenance.
 
@@ -291,6 +459,20 @@ def main(argv=None) -> int:
     p.add_argument("key")
     p.add_argument("--out", default=None)
     p.set_defaults(fn=cmd_figure)
+
+    p = sub.add_parser("sample", help="evaluate a stored run on a 3-D grid")
+    p.add_argument("run_dir", help="a run directory, or a study (all children)")
+    p.add_argument("--spacing", type=float, default=4.0,
+                   help="grid spacing in km (default 4)")
+    p.add_argument("--state", default=None,
+                   help="one state label; default every state in the run")
+    p.add_argument("--no-eigenstress", action="store_true",
+                   help="skip C:eps*, halving the stress work")
+    p.add_argument("--difference", action="store_true",
+                   help="also write each volume minus the first, on the "
+                        "shared grid")
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_sample)
 
     p = sub.add_parser("verify", help="run the gates (writes nothing)")
     p.add_argument("-k", "--only", default=None)

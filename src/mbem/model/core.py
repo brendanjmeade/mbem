@@ -221,20 +221,14 @@ class Region:
 
 
 def _solid_angle_sum(mesh, x: np.ndarray) -> float:
-    """Sum of van-Oosterom signed solid angles of all triangles from x."""
-    tv = mesh.vertices[mesh.triangles]          # (M, 3, 3)
-    r1 = tv[:, 0] - x
-    r2 = tv[:, 1] - x
-    r3 = tv[:, 2] - x
-    R1 = np.linalg.norm(r1, axis=1)
-    R2 = np.linalg.norm(r2, axis=1)
-    R3 = np.linalg.norm(r3, axis=1)
-    numer = np.einsum("ni,ni->n", r1, np.cross(r2, r3))
-    denom = (R1 * R2 * R3
-             + R3 * np.einsum("ni,ni->n", r1, r2)
-             + R1 * np.einsum("ni,ni->n", r2, r3)
-             + R2 * np.einsum("ni,ni->n", r1, r3))
-    return float(np.sum(2.0 * np.arctan2(numer, denom)))
+    """Sum of van-Oosterom signed solid angles of all triangles from x.
+
+    Delegates: the formula lives in ``geometry._solid_angle_rows`` because the
+    volume sampler needs it over a grid, and a second copy here is the one that
+    would drift.
+    """
+    from ..geometry import solid_angle_batch
+    return float(solid_angle_batch(mesh, np.asarray(x, dtype=float))[0])
 
 
 def patch_solid_angle(patch: Patch, x: np.ndarray) -> float:
@@ -396,16 +390,45 @@ class RegionModel:
                             f"patch '{p.name}' of region '{r.name}'; a fault "
                             f"on an interface must be split: split it at the "
                             f"interface")
-                for k, c in enumerate(cs):
-                    total = sum(self._sigma[(r.name, p.name)]
-                                * patch_solid_angle(p, c) for p in r.patches)
-                    if abs(total - 4.0 * np.pi) > _CLOSURE_TOL * 4.0 * np.pi:
-                        raise ValueError(
-                            f"fault '{f.name}' triangle {k} is not inside "
-                            f"region '{r.name}': closure sum at its centroid "
-                            f"= {total:.6f} sr, expected 4*pi")
+                inside, total = self.point_in_region(r, cs, closure=True)
+                if not inside.all():
+                    k = int(np.argmax(~inside))
+                    raise ValueError(
+                        f"fault '{f.name}' triangle {k} is not inside "
+                        f"region '{r.name}': closure sum at its centroid "
+                        f"= {total[k]:.6f} sr, expected 4*pi")
 
     # -- convenience -------------------------------------------------
+
+    def point_in_region(self, region, points, closure: bool = False):
+        """Which of ``points`` lie strictly inside ``region``: ``(N,) bool``.
+
+        The Gauss closure identity this module is built on, read as a
+        classifier rather than as a check::
+
+            sum_p sigma(R,p) * Omega_p(x) = 4*pi   iff x is inside R
+
+        It is exact for any region graph, which is why the volume sampler uses
+        it instead of an analytic test per geometry: a cylinder test would be a
+        second statement of containment, right for one model and silent on the
+        next. ``validate`` reads fault containment off this same call.
+
+        A point ON a patch has an ambiguous solid angle and is classified
+        either way; ``validate`` guards that case separately with an exact
+        distance test, and the volume sampler has the near-field clearance
+        arrays for it. ``closure=True`` also returns the raw sum, for an error
+        message or a diagnostic.
+        """
+        from ..geometry import solid_angle_batch
+        region = region if not isinstance(region, str) else \
+            next(r for r in self.regions if r.name == region)
+        pts = np.asarray(points, float).reshape(-1, 3)
+        total = np.zeros(pts.shape[0])
+        for p in region.patches:
+            total += self._sigma[(region.name, p.name)] * \
+                solid_angle_batch(p.mesh, pts)
+        inside = np.abs(total - 4.0 * np.pi) <= _CLOSURE_TOL * 4.0 * np.pi
+        return (inside, total) if closure else inside
 
     def is_anchored(self) -> bool:
         """True if some patch prescribes displacement. On an un-anchored

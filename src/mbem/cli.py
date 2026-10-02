@@ -64,6 +64,41 @@ def cmd_run(a) -> int:
             return 2
         params[k] = _coerce(v, accepted.get(k, ("any", None))[0])
 
+    if a.sweep:
+        axes = {}
+        for spec in a.sweep:
+            if "=" not in spec:
+                print(f"--sweep needs KEY=V1,V2[,...], got {spec!r}")
+                return 2
+            key, _, csv = spec.partition("=")
+            if accepted and key not in accepted:
+                print(f"{path.name} does not accept {key!r}; it accepts "
+                      f"{sorted(accepted)}")
+                return 2
+            kind = accepted.get(key, ("any", None))[0]
+            axes[key] = [_coerce(v, kind) for v in csv.split(",") if v]
+        # The study's figures come from the first child's spec: a figure that
+        # spans the sweep is declared by the study it belongs to, and every
+        # child of one sweep declares the same ones.
+        first = {k: v[0] for k, v in axes.items()}
+        probe = cfg.load(path, **dict(params, **first))
+        from mbem import figures as F
+        figs = tuple(f for f in probe.outputs.figures if f in F.STUDY_FIGURES)
+        study_dir = runner.new_run_dir(
+            f"{probe.name}-sweep-{'-'.join(axes)}",
+            pathlib.Path(a.runs_dir) if a.runs_dir else None)
+        n = 1
+        for v in axes.values():
+            n *= len(v)
+        print(f"study {study_dir.name}  ({n} runs: "
+              + "; ".join(f"{k} = {', '.join(map(str, v))}"
+                          for k, v in axes.items()) + ")")
+        rep = runner.execute_study(path, axes, params, study_dir, figs)
+        for f in rep["figures"]:
+            print(f"  figure {f}")
+        print(f"  {rep['status']}  -> {study_dir}")
+        return 0 if rep["status"] == "OK" else 1
+
     run = cfg.load(path, **params)
     if a.dry_run:
         # Validate and print, touching no mesh and no backend: the common
@@ -91,6 +126,10 @@ def cmd_run(a) -> int:
                  if "iterations" in st else
                  f"cond {st.get('cond_estimate', float('nan')):.2e}")
         print(f"  {st['label']:10s} {extra}  ({st['solve_s']:.1f} s)")
+    for f in rep.get("figures", []):
+        print(f"  figure {f}")
+    for f in rep.get("figures_deferred", []):
+        print(f"  figure {f} deferred: spans a sweep, use --sweep")
     print(f"  {rep['status']}  {rep['wall_s']:.1f} s total, "
           f"peak RSS {rep['memory']['peak_rss_gb']:.2f} GB")
     print(f"  -> {run_dir}")
@@ -152,6 +191,39 @@ def cmd_verify(a) -> int:
     return subprocess.run(argv, cwd=prov.REPO).returncode
 
 
+def cmd_figure(a) -> int:
+    """Draw a model-free figure into its own run directory.
+
+    These five need no model, backend, solve or eps -- they exercise the kernels
+    directly -- so forcing them through a Run would mean a spec that is almost
+    entirely empty and a resolved.json that is mostly null. They still get a run
+    folder: "which code and which commit drew this?" is a question about every
+    figure, not only the ones with a solve behind them.
+    """
+    from mbem import figures as F
+    if a.key not in F.FIGURES:
+        print(f"unknown figure {a.key!r}; known: {sorted(F.FIGURES)}")
+        return 2
+    if a.key not in F.MODEL_FREE:
+        kind = "study (use --sweep)" if a.key in F.STUDY_FIGURES else "run"
+        print(f"{a.key!r} is a {kind} figure: it needs a solve, so run the "
+              f"config that declares it")
+        return 2
+    out = pathlib.Path(a.out) if a.out else runner.new_run_dir(f"fig-{a.key}")
+    out.mkdir(parents=True, exist_ok=True)
+    runner._write_json(out / "resolved.json", {
+        "schema": 1,
+        "run": {"id": out.name, "name": f"figure:{a.key}", "kind": "figure"},
+        "figure": a.key, "env": prov.environment()})
+    made = F.resolve(a.key)(out) or []
+    for p in made:
+        print(f"  figure {pathlib.Path(p).name}")
+    (out / "STATUS").write_text("OK\n")
+    runner._manifest(out)
+    print(f"  -> {out}")
+    return 0
+
+
 def cmd_publish(a) -> int:
     """Copy chosen figures into the tracked gallery, with provenance.
 
@@ -196,6 +268,9 @@ def main(argv=None) -> int:
     p = sub.add_parser("run", help="run a config into a new run directory")
     p.add_argument("config")
     p.add_argument("--set", action="append", metavar="KEY=VALUE")
+    p.add_argument("--sweep", action="append", metavar="KEY=V1,V2",
+                   help="one child run per value, as a study; repeat for a "
+                        "cartesian product; study figures span them")
     p.add_argument("--out", default=None, help="explicit run directory")
     p.add_argument("--runs-dir", default=None)
     p.add_argument("--dry-run", action="store_true",
@@ -211,6 +286,11 @@ def main(argv=None) -> int:
     p.add_argument("run_dir")
     p.add_argument("--section", default=None)
     p.set_defaults(fn=cmd_show)
+
+    p = sub.add_parser("figure", help="draw a model-free figure")
+    p.add_argument("key")
+    p.add_argument("--out", default=None)
+    p.set_defaults(fn=cmd_figure)
 
     p = sub.add_parser("verify", help="run the gates (writes nothing)")
     p.add_argument("-k", "--only", default=None)

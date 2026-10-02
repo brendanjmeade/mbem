@@ -182,6 +182,42 @@ def e_gate_criteria_unreachable() -> None:
     check("no generic defaults-override field on the spec", not hatch, f"{hatch}")
 
 
+def g_figures_resolve() -> None:
+    """[g] every registered figure resolves, and is classified exactly once.
+
+    The registry holds STRINGS resolved on demand, which is what keeps importing
+    mbem free of matplotlib -- and also what lets an entry rot unnoticed, since
+    nothing touches it until someone asks for that figure. So the gate resolves
+    all of them. It also checks the classification is a partition: a figure is
+    model-free, or spans a study, or takes one run, and the CLI dispatches on
+    exactly that, so a figure in two sets or in neither would be dispatched
+    wrongly or not at all.
+    """
+    print("\n[g] the figure registry")
+    from mbem import figures as F
+    bad = []
+    for key in sorted(F.FIGURES):
+        try:
+            F.resolve(key)
+        except Exception as exc:                     # noqa: BLE001
+            bad.append(f"{key}: {type(exc).__name__}: {exc}")
+    check(f"all {len(F.FIGURES)} registered figures resolve", not bad,
+          f"{bad[:2]}")
+    both = sorted(F.STUDY_FIGURES & F.MODEL_FREE)
+    check("no figure is both model-free and a study figure", not both, f"{both}")
+    unknown = sorted((F.STUDY_FIGURES | F.MODEL_FREE) - set(F.FIGURES))
+    check("no classification names an unregistered figure", not unknown,
+          f"{unknown}")
+    run_level = sorted(set(F.FIGURES) - F.STUDY_FIGURES - F.MODEL_FREE)
+    check("the remainder are run figures", True, f"{run_level}")
+    # save_figure is the one statement of the png+pdf convention; the demos
+    # each carried their own copy, which rule 10 calls a bug twelve times over.
+    import inspect
+    src = inspect.getsource(F.save_figure)
+    check("save_figure writes both png and pdf",
+          '"png"' in src and '"pdf"' in src)
+
+
 def f_run_dir_complete(run_dir: pathlib.Path, report: dict) -> None:
     """[f] the directory is complete, and MANIFEST actually matches."""
     print("\n[f] the run directory is self-describing")
@@ -217,6 +253,7 @@ def main() -> bool:
         d_effective_covers_backend(run_dir)
         e_gate_criteria_unreachable()
         f_run_dir_complete(run_dir, report)
+    g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     ok = not n_bad

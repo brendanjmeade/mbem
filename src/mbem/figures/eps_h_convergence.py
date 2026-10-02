@@ -43,7 +43,8 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 
-from _paper_style import (  # noqa: E402
+from mbem.figures import save_figure
+from mbem.figures.style import (  # noqa: E402
     set_paper_style, text_size, panel_letter,
 )
 from mollified_kernel.analytical_kernels import (  # noqa: E402
@@ -98,10 +99,11 @@ def stress_sum_quad(P, tris, n_vec, mu, nu, eps, n_quad):
     return np.einsum("mnk,k->mn", H, delta_u)
 
 
-CACHE = os.path.join(HERE, "_cache", "fig_eps_h_convergence.npz")
+CACHE = os.path.join(os.path.expanduser("~/.cache/mbem_figures"),
+                     "fig_eps_h_convergence.npz")
 
 
-def main():
+def figure(out_dir, force: bool = False):
     L = 1.0
     mu, nu = 1.0, 0.25
     v1, v2, v3, n_vec = equilateral_triangle(L)
@@ -207,12 +209,6 @@ def main():
                 bbox_to_anchor=(0.79, 0.32), frameon=False, fontsize=7,
                 title="(b)", title_fontsize=8)
 
-    out_dir = HERE          # beside the study, not above it
-    fig.savefig(os.path.join(out_dir, "fig_eps_h_convergence.pdf"))
-    fig.savefig(os.path.join(out_dir, "fig_eps_h_convergence.png"))
+    written = save_figure(fig, out_dir, "eps_h_convergence")
     plt.close(fig)
-    print("wrote fig_eps_h_convergence.pdf/png")
-
-
-if __name__ == "__main__":
-    main()
+    return written

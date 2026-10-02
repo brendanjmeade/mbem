@@ -33,10 +33,12 @@ from mollified_kernel.analytical_kernels import (                 # noqa: E402
     analytical_stress_kernel,
 )
 
+from mbem.figures import save_figure                            # noqa: E402
+
 try:
-    from _paper_style import set_paper_style
+    from mbem.figures.style import set_paper_style
     set_paper_style()
-except Exception:
+except Exception:                                                  # noqa: BLE001
     pass
 
 RAW_C = "#c1272d"     # warm  -> raw (with anelastic term)
@@ -68,7 +70,7 @@ def fault_stress(obs, fault, slip_cart, mu, nu, eps):
     return sig
 
 
-def main():
+def figure(out_dir):
     # Vertical strike-slip fault in the y-z plane (normal +x, slip +y).
     fault, n_hat, s_hat = make_vertical_fault_eq(
         strike_length=2.0 * L, depth_range=(-D, 0.0), target_edge=0.5 * L)
@@ -141,12 +143,7 @@ def main():
     fig.suptitle(r"Subtracting the anelastic term keeps on-fault stress finite "
                  r"as $\varepsilon\to0$", fontsize=10.5, y=0.99)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    for ext in ("png", "pdf"):
-        out = HERE / f"fig_anelastic_subtraction.{ext}"
-        fig.savefig(out, dpi=300, bbox_inches="tight")
-        print(f"  wrote {out}")
+    written = save_figure(fig, out_dir, "anelastic_subtraction")
     plt.close(fig)
+    return written
 
-
-if __name__ == "__main__":
-    main()

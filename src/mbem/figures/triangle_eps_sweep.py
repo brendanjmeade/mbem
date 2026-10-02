@@ -25,7 +25,8 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 
-from _paper_style import set_paper_style, text_size  # noqa: E402
+from mbem.figures import save_figure
+from mbem.figures.style import set_paper_style, text_size  # noqa: E402
 from mollified_kernel.analytical_kernels import (  # noqa: E402
     analytical_stress_kernel,
 )
@@ -44,7 +45,7 @@ def equilateral_triangle(L: float = 1.0):
     return v1, v2, v3, n
 
 
-def main():
+def figure(out_dir):
     L = 1.0
     mu, nu = 1.0, 0.25
     v1, v2, v3, n_vec = equilateral_triangle(L)
@@ -119,12 +120,7 @@ def main():
             if e == n_eps - 1:
                 ax.set_xlabel(r"$x/L$")
 
-    out_dir = HERE          # beside the study, not above it
-    fig.savefig(os.path.join(out_dir, "fig_triangle_eps_sweep.pdf"))
-    fig.savefig(os.path.join(out_dir, "fig_triangle_eps_sweep.png"))
+    written = save_figure(fig, out_dir, "triangle_eps_sweep")
     plt.close(fig)
-    print("wrote fig_triangle_eps_sweep.pdf/png")
+    return written
 
-
-if __name__ == "__main__":
-    main()

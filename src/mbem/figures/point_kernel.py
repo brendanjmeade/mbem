@@ -28,7 +28,8 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 
-from _paper_style import (  # noqa: E402
+from mbem.figures import save_figure
+from mbem.figures.style import (  # noqa: E402
     set_paper_style, text_size, panel_letter,
 )
 from mollified_kernel.analytical_kernels import kelvin_dG_pointwise  # noqa: E402
@@ -72,7 +73,7 @@ def dd_displacement_kernel_pt(d, normal, mu, nu, eps):
     return U
 
 
-def main():
+def figure(out_dir):
     L = 1.0
     mu = 1.0
     nu = 0.25
@@ -167,12 +168,7 @@ def main():
     style_panel(ax, "d", (-2.0, 2.0), [-2, 0, 2], (-2500.0, 2500.0),
                  r"$x / L$ at $z = 0.02\,L$", r"$K^\varepsilon_{xz,x}$")
 
-    out_dir = HERE          # beside the study, not above it
-    fig.savefig(os.path.join(out_dir, "fig_point_kernel.pdf"))
-    fig.savefig(os.path.join(out_dir, "fig_point_kernel.png"))
+    written = save_figure(fig, out_dir, "point_kernel")
     plt.close(fig)
-    print("wrote fig_point_kernel.pdf/png")
+    return written
 
-
-if __name__ == "__main__":
-    main()

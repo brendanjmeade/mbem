@@ -21,9 +21,10 @@ is the bug.
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
 | `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 44 gates in `gates/{mbem,clq,moss_kernel}`. |
-| `configs/` | A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
+| `configs/` | Six studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, all 110 defaults, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
-| `studies/` | Runnable demos and `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation. It keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. |
+| `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
+| `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`. |
 | `ddbem/`, `fbem/` | Closed. `FINDINGS.md` only: the P0/P1/P2 convergence study the higher-order patches rest on, and why the force-element BEM was dropped. Do not rebuild either without reading it. |
 
@@ -39,7 +40,9 @@ tag `medt_paper-vendored-2026-09-17`. `medt_paper` is published separately
 pip install -e .                      # once; no other installer
 
 python -m mbem run configs/fault_box.py          # a study -> a new runs/ folder
-python -m mbem run configs/topo_inclusion.py --set surface=flat --set backend=fmm
+python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
+python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
+python -m mbem figure point_kernel                # model-free: no solve
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list                              # runs, newest first
 python -m mbem show <run-dir> --section effective

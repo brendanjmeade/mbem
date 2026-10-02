@@ -219,7 +219,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     if save:
         _write_json(run_dir / "resolved.json", resolved)
 
-    cur, ok = asm, True
+    cur, ok, solutions = asm, True, {}
     for st in run.states:
         if st.materials:
             cur = cur.rebuild_for_materials(
@@ -237,8 +237,22 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 row[attr] = prov.json_safe(getattr(rep, attr))
         if getattr(rep, "precond_summary", None):
             row["precond"] = prov.json_safe(rep.precond_summary)
+        solutions[st.label] = sol
         ok &= bool(getattr(rep, "converged", True))
         report["states"].append(row)
+
+        if save and run.outputs.save_meshes and st is run.states[0]:
+            # Written once per run, not per state: the mesh is the run's, and a
+            # material state does not change it. A figure needs it because a
+            # solution is just numbers until you know which triangles they sit
+            # on.
+            payload = {}
+            for name, m in bundle.meshes.items():
+                payload[f"{name}__v"] = m.vertices
+                payload[f"{name}__t"] = m.triangles
+            for name, a in bundle.arrays.items():
+                payload[f"arr__{name}"] = np.asarray(a)
+            np.savez(run_dir / "meshes.npz", **payload)
 
         if save and run.outputs.save_fields:
             want = run.outputs.slots or tuple(sol)
@@ -249,6 +263,25 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
             np.savez(run_dir / f"fields_{_slug(st.label)}.npz",
                      **{k: sol[k] for k in want})
 
+    if save and run.outputs.figures:
+        from mbem import figures as F
+        t0 = time.perf_counter()
+        made = []
+        for key in run.outputs.figures:
+            if key in F.STUDY_FIGURES:
+                # Not an error: a study figure spans several runs, so the sweep
+                # that owns them draws it. Recorded so a config naming one here
+                # is not silently ignored.
+                report.setdefault("figures_deferred", []).append(key)
+                continue
+            fn = F.resolve(key)
+            ctx = F.RunContext(run_dir=run_dir, model=model, bundle=bundle,
+                               eps=eps, solutions=solutions, resolved=resolved,
+                               asm=asm, system=system)
+            made += [str(p.name) for p in fn(ctx) or []]
+        phases["figures"] = time.perf_counter() - t0
+        report["figures"] = made
+
     report["wall_s"] = time.perf_counter() - t_run
     report["memory"] = {"peak_rss_gb": prov.peak_rss_gb()}
     report["status"] = "OK" if ok else "FAIL"
@@ -257,3 +290,54 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         (run_dir / "STATUS").write_text(("OK" if ok else "FAIL") + "\n")
         _manifest(run_dir)
     return report
+
+
+def execute_study(config_path: pathlib.Path, axes: dict,
+                  params: dict, study_dir: pathlib.Path,
+                  figures: tuple = ()) -> dict:
+    """One child run per point of the cartesian product of ``axes``.
+
+    A STUDY exists because some figures are differences between operators: the
+    topography effect is ``u(topo) - u(flat)``, and those are different meshes,
+    so different runs. A figure needing two operators cannot be a property of
+    either. Two axes are allowed because the questions are genuinely
+    two-dimensional -- an eps ladder contrasted between a P0 and a P1 top is one
+    figure, not two.
+
+    Child directories are ``NN-<values>``, so a study sorts the way it was swept
+    rather than by name, and ``study.json`` is the index a figure reads.
+    """
+    import itertools
+    study_dir.mkdir(parents=True, exist_ok=True)
+    (study_dir / "STATUS").write_text("RUNNING\n")
+    keys = list(axes)
+    rows, reports, ok = [], {}, True
+    for i, combo in enumerate(itertools.product(*(axes[k] for k in keys)),
+                              start=1):
+        pt = dict(zip(keys, combo))
+        child = study_dir / f"{i:02d}-{'-'.join(_slug(v) for v in combo)}"
+        child.mkdir()
+        run = cfg.load(config_path, **dict(params, **pt))
+        print(f"  [{', '.join(f'{k}={v}' for k, v in pt.items())}] {run.name}",
+              flush=True)
+        rep = execute(run, child, config_path)
+        reports[child.name] = rep
+        ok &= rep["status"] == "OK"
+        rows.append({"params": pt, "dir": child.name})
+    _write_json(study_dir / "study.json",
+                {"swept": keys, "rows": rows, "config": str(config_path),
+                 "params": params, "figures": list(figures)})
+
+    made = []
+    if figures:
+        from mbem import figures as F
+        study = F.load_study(study_dir)
+        for key in figures:
+            made += [p.name for p in F.resolve(key)(study) or []]
+    _write_json(study_dir / "report.json",
+                {"swept": keys, "status": "OK" if ok else "FAIL",
+                 "runs": {k: v["status"] for k, v in reports.items()},
+                 "figures": made})
+    (study_dir / "STATUS").write_text(("OK" if ok else "FAIL") + "\n")
+    return {"status": "OK" if ok else "FAIL", "figures": made,
+            "runs": reports}

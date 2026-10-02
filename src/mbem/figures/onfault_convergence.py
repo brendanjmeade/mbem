@@ -37,10 +37,12 @@ from local_box_mesh_eq import make_vertical_fault_eq              # noqa: E402
 from mbem.evaluate import _stress_from_source                     # noqa: E402
 from tde_reference import classical_tde_stress                    # noqa: E402
 
+from mbem.figures import save_figure                            # noqa: E402
+
 try:
-    from _paper_style import set_paper_style
+    from mbem.figures.style import set_paper_style
     set_paper_style()
-except Exception:
+except Exception:                                                  # noqa: BLE001
     pass
 
 RAW_C = "#c1272d"     # warm -> raw (with anelastic term)
@@ -72,7 +74,7 @@ def eigenstress(obs, fault, slip, eps):
                                np.full(nt, float(eps)))
 
 
-def main():
+def figure(out_dir):
     fault, n_hat, s_hat = make_vertical_fault_eq(
         strike_length=2.0 * L, depth_range=(-D, 0.0), target_edge=TARGET_EDGE)
     s_hat = np.asarray(s_hat, float)
@@ -182,12 +184,7 @@ def main():
                  r"$\varepsilon\to0$ (matches classical TDE)",
                  fontsize=10.5, y=0.99)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    for ext in ("png", "pdf"):
-        out = HERE / f"fig_onfault_convergence.{ext}"
-        fig.savefig(out, dpi=300, bbox_inches="tight")
-        print(f"  wrote {out}")
+    written = save_figure(fig, out_dir, "onfault_convergence")
     plt.close(fig)
+    return written
 
-
-if __name__ == "__main__":
-    main()

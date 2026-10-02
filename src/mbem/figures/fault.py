@@ -1,0 +1,141 @@
+"""Solve-driven figures on the fault box.
+
+Ported from the demos that owned them, with the computation unchanged. The one
+real change is where the figure lands: a maker is handed its run's directory, so
+the figure sits beside the provenance of the solve that produced it instead of
+being written into a shared directory under a fixed name.
+
+The free-surface Hooke law, the eigenstress sign (read through
+``model.orientation``, never a literal +-1) and the fault-strip mask are the
+demo's own and are kept verbatim: the mask exists because slip is DISCONTINUOUS
+across the trace, so grid-differentiating there renders the jump, not stress.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+from scipy.interpolate import griddata
+
+from mbem.evaluate import _stress_from_source
+from mbem.figures import save_figure
+from mbem.figures.style import set_paper_style
+from mbem.kernels import basis as kb
+
+GPA_TO_MPA = 1.0e3
+VIEW = 100.0            # km plotting half-window
+GRID_N = 161
+
+
+def free_surface_stress(meshes, model, sol, eps, mat):
+    """Elastic surface stress on a regular grid: interpolate the free-surface
+    displacement, apply the free-surface Hooke law to the in-plane gradients,
+    then remove the anelastic eigenstress of the model's fault (``eps`` is
+    the solve's spec)."""
+    top = meshes["top"]
+    c = top.centroids()
+    u = sol["u:top"]
+    g = np.linspace(-VIEW, VIEW, GRID_N)
+    X, Y = np.meshgrid(g, g)
+    pts = np.column_stack([X.ravel(), Y.ravel()])
+    ux = griddata(c[:, :2], u[:, 0], pts, method="linear")
+    uy = griddata(c[:, :2], u[:, 1], pts, method="linear")
+    nn_x = griddata(c[:, :2], u[:, 0], pts, method="nearest")
+    nn_y = griddata(c[:, :2], u[:, 1], pts, method="nearest")
+    ux = np.where(np.isfinite(ux), ux, nn_x).reshape(X.shape)
+    uy = np.where(np.isfinite(uy), uy, nn_y).reshape(X.shape)
+
+    dh = g[1] - g[0]
+    dux_dy, dux_dx = np.gradient(ux, dh, dh)
+    duy_dy, duy_dx = np.gradient(uy, dh, dh)
+    mu, lam = mat.mu, mat.lam
+    coef = 2.0 * mu * lam / (lam + 2.0 * mu)          # free-surface plane stress
+    div = dux_dx + duy_dy
+    sig = np.zeros((X.size, 3, 3))
+    sig[:, 0, 0] = (coef * div + 2.0 * mu * dux_dx).ravel()
+    sig[:, 1, 1] = (coef * div + 2.0 * mu * duy_dy).ravel()
+    sig[:, 0, 1] = sig[:, 1, 0] = (mu * (dux_dy + duy_dx)).ravel()
+
+    obs = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
+    # ``sig`` is differentiated from the BEM displacement field, whose fault
+    # term is -sigma H@b (b the Burgers vector, sigma = FAULT_ORIENTATION),
+    # so its divergent near-fault part is -sigma times the eigenstress
+    # C:eps_star(b); recovering the elastic field adds +sigma C:eps_star(b),
+    # exactly as mbem.evaluate_stress does (``_double_layer_stress``), with
+    # sigma read through the one accessor. The eigenstress is negligible off
+    # the surface-breaking trace and the trace strip is masked below, so this
+    # only matters in a thin band hugging the mask -- but the sign is kept
+    # consistent so a future on/near-fault evaluation does not double the spike.
+    region = model.regions[0]
+    fpatch = region.faults[0]
+    sig_el = sig + float(model.orientation(region, fpatch)) * _stress_from_source(
+        obs, fpatch.mesh, fpatch.value_array(), "eigen", mu, lam,
+        kb.resolve_patch_eps(eps, fpatch))
+    comps = {"xx": sig_el[:, 0, 0], "yy": sig_el[:, 1, 1], "xy": sig_el[:, 0, 1]}
+    S = {k: (v * GPA_TO_MPA).reshape(X.shape) for k, v in comps.items()}
+    # Mask the thin surface-breaking fault strip: the slip is DISCONTINUOUS
+    # across x=0, so grid-differentiating it there is meaningless (the band is
+    # a rendering artifact of the jump, not stress).
+    yext = float(np.abs(meshes["fault"].vertices[:, 1]).max())
+    strip = (np.abs(X) < 8.0) & (np.abs(Y) <= yext + 10.0)
+    for k in S:
+        S[k][strip] = np.nan
+    return X, Y, S
+
+
+def _style(ax, title):
+    ax.set_aspect("equal")
+    ax.set_xlim(-VIEW, VIEW); ax.set_ylim(-VIEW, VIEW)
+    ax.set_xticks([-100, 0, 100]); ax.set_yticks([-100, 0, 100])
+    ax.set_xlabel(r"$x$ (km)"); ax.set_ylabel(r"$y$ (km)")
+    ax.set_title(title, fontsize=9)
+    ax.tick_params(direction="out", length=3, width=0.8)
+
+
+def _cbar(fig, ax, mappable, vmax):
+    cb = fig.colorbar(mappable, ax=ax, fraction=0.045, pad=0.04, shrink=0.85)
+    cb.set_ticks([-vmax, 0, vmax])
+    cb.set_ticklabels([f"{-vmax:.2g}", "0", f"{vmax:.2g}"])
+    cb.ax.tick_params(labelsize=7)
+
+
+if __name__ == "__main__":
+    main()
+
+
+def fault_only(ctx):
+    """Surface displacement and elastic surface stress of the fault box."""
+    import matplotlib.pyplot as plt
+    set_paper_style()
+    sol = ctx.base
+    mat = ctx.model.regions[0].material
+    X, Y, S = free_surface_stress(ctx.bundle.meshes, ctx.model, sol, ctx.eps,
+                                  mat)
+    top = ctx.bundle.meshes["top"]
+    c = top.centroids()
+    u = sol["u:top"] * 1e6                      # km -> mm
+
+    fig, axes = plt.subplots(2, 3, figsize=(11.0, 7.2),
+                             sharex=True, sharey=True,
+                             gridspec_kw=dict(wspace=0.22, hspace=0.18))
+    disp_titles = [r"$u_x$ (mm)", r"$u_y$ (mm)", r"$u_z$ (mm)"]
+    for k, ax in enumerate(axes[0]):
+        vmax = max(float(np.percentile(np.abs(u[:, k]), 99.0)), 1e-3)
+        tcf = ax.tripcolor(c[:, 0], c[:, 1], u[:, k], cmap="RdBu_r",
+                           vmin=-vmax, vmax=vmax, shading="gouraud")
+        _style(ax, disp_titles[k]); _cbar(fig, ax, tcf, vmax)
+    for ax, (key, title) in zip(axes[1], (("xx", r"$\sigma_{xx}$ (MPa)"),
+                                          ("yy", r"$\sigma_{yy}$ (MPa)"),
+                                          ("xy", r"$\sigma_{xy}$ (MPa)"))):
+        f = S[key]
+        vmax = max(float(np.nanpercentile(np.abs(f), 99.0)), 1e-3)
+        cf = ax.pcolormesh(X, Y, f, cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                           shading="auto")
+        _style(ax, title); _cbar(fig, ax, cf, vmax)
+    for ax, letter in zip(axes.flat, "abcdef"):
+        ax.text(0.95, 0.95, letter, transform=ax.transAxes, ha="right",
+                va="top")
+    fig.suptitle("Fault-only mollified BEM (elastic surface stress: "
+                 "anelastic term subtracted)", fontsize=11, y=0.98)
+    out = save_figure(fig, ctx.run_dir, "fault_only")
+    plt.close(fig)
+    return out

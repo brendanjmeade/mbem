@@ -3,8 +3,11 @@
 ``surface`` is a GEOMETRY parameter -- it changes the mesh and so the operator
 -- so topo and flat are two runs:
 
-    python -m mbem run configs/topo_inclusion.py --set surface=topo
-    python -m mbem run configs/topo_inclusion.py --set surface=flat
+    python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
+
+which is one study of two child runs, because the showcase figure differences
+them. A single ``--set surface=topo`` run still solves and saves its fields; it
+reports the showcase as deferred, since one surface cannot draw it.
 
 het and hom are two STATES of one run, because they share the assembly through
 ``rebuild_for_materials``; that sharing is the whole reason states exist. The
@@ -37,6 +40,9 @@ def run_spec(surface: str = "topo", backend: str = "hmat",
         backend=Backend(kind=backend),
         solve=Solve(),
         states=(State("het"), State("hom", {"inclusion": HOST})),
-        outputs=Output(slots=("u:host_top", "u:inclusion_top")),
+        outputs=Output(slots=("u:host_top", "u:inclusion_top"),
+                       save_meshes=True,
+                       figures=("topo_inclusion_showcase",
+                                "topo_inclusion_contour")),
         notes="figure-10 showcase; het/hom share one assembly",
         tags=("figure", "showcase"))

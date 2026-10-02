@@ -97,9 +97,15 @@ def topo_inclusion_meshes(*, scale: float = 1.0,
     meshes = dict(meshes)
     warped = surface == "topo"
     meshes["host_top"] = top_topo if warped else top_flat
+    # The figure plots in the FLAT frame (a map view) and colours the relief, so
+    # both travel with the bundle: a solved field is just numbers until you know
+    # which triangles it sits on and how high they are.
+    v = top_flat.vertices
     return MeshBundle(
         meshes,
-        {"s_hat": s_hat},
+        {"s_hat": s_hat,
+         "host_top_flat_v": v, "host_top_flat_t": top_flat.triangles,
+         "host_top_h": bump(v[:, 0], v[:, 1])},
         {"fault_mesh": fault_topo if warped else fault_flat,
          "surface": surface, "bump_center": tuple(bump_center),
          "bump_sigma": bump_sigma, "bump_height": bump_height,

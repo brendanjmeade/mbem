@@ -151,6 +151,10 @@ class Output:
     state, so a large run should name the slots it actually wants."""
     slots: tuple[str, ...] = ()
     save_fields: bool = True
+    # The mesh a figure needs to plot the fields on. Off by
+    # default because at 4M unknowns it is large and only a
+    # figure wants it.
+    save_meshes: bool = False
     figures: tuple[str, ...] = ()
 
 

@@ -1,0 +1,46 @@
+---
+import Base from "../layouts/Base.astro";
+import About from "../components/About.astro";
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
+---
+<Base
+  title="mbem"
+  description="Mollified boundary element method for 3-D linear elasticity: non-singular displacements and stresses, including on the fault."
+  current="home"
+>
+  <Fragment slot="sidebar">
+    <h1>mbem<span class="sub">mollified boundary element method</span></h1>
+    <About />
+  </Fragment>
+
+  <div
+    id="hero"
+    class="hero"
+    aria-label="Three slices through the von Mises stress of a 400 by 400 by 200 km elastic box containing a strike-slip fault, a soft cylindrical inclusion and a topographic hill"
+  ></div>
+  <p class="cap">
+    Elastic von Mises stress through a 400&nbsp;&times;&nbsp;400&nbsp;&times;&nbsp;200&nbsp;km
+    box, from a stored solve &mdash; 24,348 unknowns, read out on a 79,000-point
+    grid. The box holds a surface-breaking strike-slip fault (<b>pink</b>), a
+    cylindrical inclusion ten times softer than its host (<b>blue</b>), and a
+    2&nbsp;km Gaussian hill on the free surface, which the fault mesh is warped to
+    follow. Drag to orbit. The eigenstress of every mollified jump has been
+    subtracted, so this is the <i>elastic</i> stress; cells within half an element
+    of a boundary are hidden, because the piecewise-constant boundary density
+    limits the readout there. See <a href={`${base}concepts/`}>Concepts</a> for
+    what that means and <a href={`${base}examples/`}>Examples</a> to move the
+    slices yourself.
+  </p>
+
+  <style>
+    .hero { min-height: 420px; width: 100%; overflow: hidden; cursor: grab; }
+    .hero canvas { display: block; }
+    .hero:active { cursor: grabbing; }
+    .cap { font-size: 13px; color: var(--fg-dim); margin-top: 10px; }
+    .cap b { color: var(--fg); font-weight: 600; }
+  </style>
+  <script>
+    import { startHero } from "../viz/hero";
+    startHero(document.getElementById("hero")!, import.meta.env.BASE_URL);
+  </script>
+</Base>

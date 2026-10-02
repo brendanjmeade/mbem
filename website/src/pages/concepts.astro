@@ -1,0 +1,37 @@
+---
+import Base from "../layouts/Base.astro";
+import About from "../components/About.astro";
+import Concepts from "../content/concepts.mdx";
+
+const sections = [
+  { id: "two-things-classical-dislocation-theory-cannot-do",
+    label: "Two things classical theory cannot do" },
+  { id: "mollification", label: "Mollification" },
+  { id: "every-mollified-jump-carries-an-eigenstress",
+    label: "Every mollified jump carries an eigenstress" },
+  { id: "what-that-buys-and-what-it-does-not",
+    label: "What that buys, and what it does not" },
+  { id: "solving-it-at-scale", label: "Solving it at scale" },
+];
+---
+<Base
+  title="mbem — Concepts"
+  description="How the mollified boundary element method works: Cortez regularization, the eigenstress that every smeared jump carries, and what the method's accuracy actually depends on."
+  current="concepts"
+>
+  <Fragment slot="sidebar">
+    <h1>Concepts<span class="sub">how the method works</span></h1>
+    <nav class="toc">
+      <h3>Contents</h3>
+      <ol>
+        {sections.map((s) => (
+          <li><a href={`#${s.id}`}>{s.label}</a></li>
+        ))}
+      </ol>
+    </nav>
+    <hr />
+    <About />
+  </Fragment>
+
+  <Concepts />
+</Base>

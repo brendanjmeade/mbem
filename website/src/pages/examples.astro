@@ -1,0 +1,93 @@
+---
+import Base from "../layouts/Base.astro";
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
+---
+<Base
+  title="mbem — Examples"
+  description="Move three slices through a stored mollified BEM solution: four material and surface states, three fields, and the near-boundary quality threshold."
+  current="examples"
+>
+  <Fragment slot="sidebar">
+    <h1>Examples<span class="sub">a stored solve, explored</span></h1>
+    <p>
+      Nothing is computed here. The solve &mdash; 24,348 unknowns, a dense LU
+      reference and a block-compressed operator agreeing to ~2&times;10<sup>&minus;6</sup>
+      &mdash; ran in Python; this page moves three slices through its stored
+      readout.
+    </p>
+    <p>
+      Four <b>states</b> share one geometry: the surface is flat or carries the
+      hill, and the inclusion is soft or identical to its host. Differencing them
+      isolates each effect, which is only well defined because every state was
+      sampled on the same grid.
+    </p>
+    <div class="note">
+      The <b>quality</b> slider is the one to play with. It hides cells closer
+      than <i>d</i>/<i>h</i> to a solved boundary. The topography effect reads
+      1287&nbsp;mm at a point lying on the free surface and 96&nbsp;mm at
+      <i>d</i>/<i>h</i>&nbsp;&gt;&nbsp;0.5 &mdash; a factor of 33 that is
+      discretization, not physics.
+    </div>
+    <p class="contact">
+      Fields are shown on a <b>log</b> colour scale: they span about five
+      decades, and a linear scale shows only the fault.
+    </p>
+  </Fragment>
+
+  <div id="viewer" class="viewer">
+    <div class="panel">
+      <label><span>State</span><span data-ctl="state"></span></label>
+      <label><span>Field</span><span data-ctl="field"></span></label>
+      <label><span>Colours</span><span data-ctl="map"></span></label>
+      <label><span>Quality</span><span data-ctl="threshold" class="rng"></span></label>
+    </div>
+    <div data-canvas class="canvas"></div>
+    <div data-bar class="bar"></div>
+    <div class="panel slices">
+      <label><span>x slice</span><span data-ctl="slice-x" class="rng"></span></label>
+      <label><span>y slice</span><span data-ctl="slice-y" class="rng"></span></label>
+      <label><span>z slice</span><span data-ctl="slice-z" class="rng"></span></label>
+    </div>
+    <p data-status class="status">loading&hellip;</p>
+  </div>
+
+  <p class="cap">
+    Pink outlines the fault, blue the inclusion, grey the box and the free
+    surface. Stress is the <b>elastic</b> part: the eigenstress
+    <i>C</i>:&epsilon;* that every mollified jump carries has been subtracted, which
+    is what makes an on-fault value mean anything. See
+    <a href={`${base}concepts/`}>Concepts</a>.
+  </p>
+
+  <style is:global>
+    #viewer { margin-bottom: 18px; }
+    #viewer .canvas { width: 100%; min-height: 440px; cursor: grab; background: #fff; }
+    #viewer .canvas:active { cursor: grabbing; }
+    #viewer .canvas canvas { display: block; }
+    #viewer .panel {
+      display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+      margin-bottom: 10px; font-size: 13px;
+    }
+    #viewer .panel label { display: flex; align-items: center; gap: 6px; }
+    #viewer .panel label > span:first-child { color: var(--fg-dim); }
+    #viewer .panel select { font: inherit; font-size: 13px; padding: 2px 4px; }
+    #viewer .panel .rng { display: flex; align-items: center; gap: 6px; }
+    #viewer .panel input[type="range"] { width: 120px; }
+    #viewer .panel .val { color: var(--fg-dim); min-width: 84px; font-variant-numeric: tabular-nums; }
+    #viewer .slices { margin-top: 10px; }
+    #viewer .bar { margin-top: 8px; }
+    #viewer .bar .strip { height: 10px; border: 1px solid var(--rule); }
+    #viewer .bar .ends {
+      display: flex; justify-content: space-between; font-size: 12px;
+      color: var(--fg-dim); margin-top: 3px; font-variant-numeric: tabular-nums;
+    }
+    #viewer .bar .ends .mid { color: var(--fg-faint); }
+    #viewer .status { font-size: 13px; color: var(--fg-dim); margin-top: 8px; }
+    .cap { font-size: 13px; color: var(--fg-dim); }
+    .cap b { color: var(--fg); font-weight: 600; }
+  </style>
+  <script>
+    import { startViewer } from "../viz/controls";
+    startViewer(document.getElementById("viewer")!, import.meta.env.BASE_URL);
+  </script>
+</Base>

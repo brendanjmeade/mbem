@@ -1,0 +1,138 @@
+## Two things classical dislocation theory cannot do
+
+Classical elastic dislocation theory represents a fault as a surface of zero
+thickness across which displacement jumps. It is enormously useful and it has two
+defects that are not numerical but structural.
+
+The first is that **the stress on the fault itself is not defined**. The
+displacement-discontinuity kernel is singular as the observation point approaches
+the source, and the integral over the element does not converge there. Codes
+return a number anyway — by taking a one-sided limit, by evaluating at an offset,
+by discarding the self term — and those numbers disagree with each other. For a
+quantity as consequential as the shear stress resolved on a fault that is about
+to slip, that is an uncomfortable place to be.
+
+The second is that **a fault of zero thickness is not a fault**. Real fault zones
+are damaged, finite-width volumes. A representation that insists on zero width is
+not an approximation of a thin thing; it is a different object, and the stress it
+predicts diverges as you approach it rather than converging to anything.
+
+## Mollification
+
+Both follow from the same source, so both yield to the same fix. Replace the
+distance in the Green's function with a regularized distance,
+
+$$
+r \;\longrightarrow\; r_\varepsilon \;=\; \sqrt{r^{2} + \varepsilon^{2}},
+$$
+
+the regularization Cortez introduced for Stokes flow. The parameter
+$\varepsilon$ has units of length, and it is the **width of the fault zone** —
+not a numerical fudge, but the physical scale over which slip is distributed. The
+mollified kernels are smooth everywhere; there is no singular surface integral
+left to regularize, and the stress at a point on the fault is an ordinary
+integral with an ordinary value.
+
+What makes this practical rather than merely tidy is that each triangle's
+contribution is integrated **analytically** — in closed form, for a density that
+is constant, linear or quadratic over the element. There is no quadrature, so
+there is no quadrature error tying $\varepsilon$ to the element size $h$. The two
+are independent knobs: you can refine the mesh at fixed fault-zone width, or
+narrow the fault zone at fixed mesh, and the method does not object. This is the
+elasticity analogue of a result established for regularized Stokeslets.
+
+## Every mollified jump carries an eigenstress
+
+Here is the part that is easy to get wrong, and it is the reason an on-fault
+stress from this method means something.
+
+Smearing a displacement jump over a width $\varepsilon$ does not only soften the
+kernel. It introduces a genuine **anelastic** strain — an eigenstrain
+$\boldsymbol\varepsilon^{*}$, the distributed version of the slip. The stress you
+read off a mollified source is therefore the *total* stress,
+
+$$
+\boldsymbol\sigma_{\text{total}}
+  = \mathbf{C}\!:\!\boldsymbol\varepsilon_{\text{elastic}}
+  + \mathbf{C}\!:\!\boldsymbol\varepsilon^{*},
+$$
+
+and inside the fault zone the second term dominates: it peaks at
+$\tfrac{3}{4}\mu s/\varepsilon$ and diverges as $\varepsilon \to 0$. Reported as
+an elastic stress it would be badly wrong, and wrong in a way that gets worse the
+narrower you make the fault.
+
+So the eigenstress is subtracted. Not approximately — the exact finite-triangle
+form is known in closed form, element by element, each with its own
+$\varepsilon$. What remains is the elastic stress, it is finite on the fault, and
+as $\varepsilon \to 0$ it converges to the finite part of the classical
+triangular-dislocation solution.
+
+**This is not only a fault story.** Every mollified double layer carries an
+eigenstress, including a boundary patch, whose density is a jump between the
+field inside the body and zero outside. Subtracting it there too removed an error
+that had previously looked like a mesh limit near boundaries — an error that
+*did not improve under refinement*, because it was not a discretization error at
+all.
+
+## What that buys, and what it does not
+
+"Interpretable" is not "exact", and it is worth being precise about which is
+which, because the two limits are easy to confuse and they respond to different
+remedies.
+
+Measured on a manufactured problem whose answer is known in closed form — a
+uniform strain $\mathbf{u} = \mathbf{A}\mathbf{x}$ imposed on a closed box, whose
+interior stress is exactly $\mathbf{C}\!:\!\mathbf{A}$ at any distance from the
+boundary — over a grid of element sizes $h$ and widths $\varepsilon$ given
+*independently*:
+
+| relative stress error | $\varepsilon$ = 0.6 km | 1.5 km | 3.6 km |
+| --- | --- | --- | --- |
+| deep interior, $h$ = 10 km | 7.3 × 10⁻³ | 1.66 × 10⁻² | 4.21 × 10⁻² |
+| deep interior, $h$ = 5 km | 6.8 × 10⁻³ | 1.71 × 10⁻² | 4.13 × 10⁻² |
+| extra factor near a boundary | 12.9 × | 4.7 × | 2.9 × |
+
+Read the first two rows: **halving the mesh changes nothing**, while $\varepsilon$
+times 2.4 multiplies the error by 2.4. The accuracy floor is set by the fault-zone
+width and is roughly $0.5\,(\varepsilon/L)$ for a domain of size $L$ — so one per
+cent on this box asks for $\varepsilon \lesssim 0.02\,L$. That the floor is flat
+in $h$ is precisely the decoupling claim, seen from the error side.
+
+The third row is a separate effect. Near a boundary whose density was **solved
+for** rather than prescribed, the piecewise-constant representation of that
+density limits the readout, and the error rises by a further factor of three to
+thirteen. A fault is exempt: its slip is data, exact on each element, which is
+why on-fault evaluation is legitimate while evaluation half an element from a
+free surface is not.
+
+Neither distance alone governs it — binning the error on $d/h$ leaves a 4.2×
+spread across $(h, \varepsilon)$ and on $d/\varepsilon$ a 3.8× spread — so both
+are reported per voxel, and the
+[Examples](../examples/) page lets you threshold on the first and watch the
+surface shell disappear. One practical consequence, measured: at fixed
+$\varepsilon$, refining $h$ by four improved the near-boundary error by only
+1.27×, while standing off from $d/h = 0.2$ to $2$ improved it thirteenfold.
+**Evaluate deeper; refining the patch alone barely helps.**
+
+## Solving it at scale
+
+The boundary integral equation is solved by collocation, which gives a dense
+operator — and at a million elements a dense operator is four million unknowns
+and hundreds of gigabytes. Two compressed far fields are available, and which one
+to want depends on what you are doing rather than on which is better:
+
+- a **flat H-matrix with adaptive cross approximation**, whose rank adapts per
+  block to whatever the geometry needs, and
+- a **Chebyshev black-box fast multipole method**, whose cost is set by an
+  interpolation order that adapts to nothing.
+
+Measured against each other on the model on this site's front page, the first
+assembles faster and applies its operator about 55 times more slowly; the second
+fits in a fraction of the memory. Near the million-element target the ACA
+operator is quicker but needs some 419 GB, while the FMM fits in 66 and is about
+1.5 times slower. So the H-matrix is the choice when the operator will be applied
+many times — a rate-and-state sequence, an inversion — and the FMM is the choice
+when the problem would not otherwise fit. Both reproduce the dense LU reference
+on the four-state showcase to about 2 × 10⁻⁶, which is how we know the question
+is one of cost rather than of correctness.

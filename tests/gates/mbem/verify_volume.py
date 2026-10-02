@@ -29,6 +29,10 @@ part of it fails quietly rather than loudly:
   f  the near-field metric is the solver's own: ``clearance_h`` must reproduce
      ``evaluate._warn_near_boundary``'s d/h and compare against the existing
      NEAR_BOUNDARY_H_RATIO, not a second threshold.
+  g  the website's uint8 encoding is lossy by a known amount. The payload the
+     site renders cannot crash on a bad encoding, it just draws the wrong
+     numbers convincingly -- so the error is pinned, and the two encodings
+     someone might "simplify" to are shown losing 99.7 % and 54.7 %.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -77,6 +81,7 @@ TOL_MANU_U = 1.0e-2      # interior u vs A x (P0 boundary integral)
 TOL_MANU_S = 5.0e-2      # interior sigma vs C:A
 TOL_MANU_E = 5.0e-2      # strain vs A_sym, and dilatation vs tr A
 TOL_CLEAR = 1.0e-12      # clearance_h vs the evaluator's own d/h
+TOL_WEB_LOG = 3.0e-2     # log10-uint8 over 5 decades; measured 2.4 %
 
 
 def check(name, ok, extra="") -> bool:
@@ -384,6 +389,61 @@ def f_clearance_is_the_solver_s(model, region, sol, eps) -> None:
           not bool(np.isnan(c_h).any() or np.isnan(c_eps).any()))
 
 
+def g_webexport() -> None:
+    """[g] the website's quantisation is lossy by a KNOWN amount, not silently.
+
+    The payload the site renders is uint8, and a wrong encoding does not crash:
+    it draws a plausible picture of the wrong numbers. The fields span five
+    decades, which is the whole reason the encoding is log10 -- linear uint8
+    loses 99.7 % and even linear uint16 loses 39-54 %, measured. So the gate
+    pins the error of the encoder that is actually used and demonstrates that
+    the alternatives are not usable, in case someone ever "simplifies" it.
+    """
+    print("\n[g] the web payload's encoding")
+    from mbem import webexport as W
+    rng = np.random.default_rng(20261002)
+    v = 10.0 ** rng.uniform(-6.0, -0.8, 20000)       # ~5.2 decades, as measured
+    v[::11] = np.nan                                  # outside the body
+
+    buf, meta = W.encode_log_u8(v)
+    back = W.decode_log_u8(buf, meta)
+    good = np.isfinite(v)
+    rel = float(np.abs(back[good] - v[good]).max() / 1.0) if False else float(
+        np.max(np.abs(back[good] - v[good]) / v[good]))
+    close("log10_u8 round trip", rel, TOL_WEB_LOG)
+    check("absent samples stay absent (NaN -> 0 -> NaN)",
+          np.array_equal(np.isnan(back), np.isnan(v)))
+    check("no sample collides with the no-data level",
+          not bool((np.frombuffer(buf, np.uint8)[good] == W.NODATA).any()))
+
+    # The two encodings that would look reasonable and destroy the data.
+    lo, hi = float(np.nanmin(v)), float(np.nanmax(v))
+    for name, levels in (("linear uint8", 255), ("linear uint16", 65535)):
+        q = np.round((v[good] - lo) / (hi - lo) * levels)
+        bad = float(np.max(np.abs(q / levels * (hi - lo) + lo - v[good]) / v[good]))
+        check(f"{name} would lose the small values", bad > 0.3,
+              f"max rel err {bad * 100:.1f}%")
+
+    c = np.where(rng.random(5000) < 0.1, np.nan, rng.uniform(0.0, 5.0, 5000))
+    buf, meta = W.encode_linear_u8(c, 0.0, W.CLEARANCE_CLAMP)
+    back = W.decode_linear_u8(buf, meta)
+    inside = np.isfinite(c) & (c <= W.CLEARANCE_CLAMP)
+    close("linear_u8 within one level",
+          float(np.abs(back[inside] - c[inside]).max()),
+          W.CLEARANCE_CLAMP / (W.LEVELS - 1))
+    check("values above the clamp saturate, never wrap",
+          bool(np.all(back[np.isfinite(c) & (c > W.CLEARANCE_CLAMP)]
+                      >= W.CLEARANCE_CLAMP - 1e-9)))
+
+    codes = np.where(rng.random(4000) < 0.2, np.nan, rng.integers(0, 3, 4000))
+    buf, meta = W.encode_codes_u8(codes)
+    q = np.frombuffer(buf, np.uint8)
+    check("codes survive exactly", np.array_equal(
+        q[np.isfinite(codes)], codes[np.isfinite(codes)].astype(np.uint8)))
+    check("codes declare a NEAREST sampler", meta["filter"] == "nearest",
+          "interpolating a region code invents regions")
+
+
 def main() -> bool:
     t0 = time.time()
     print("=" * 76)
@@ -398,6 +458,7 @@ def main() -> bool:
     d_eigenstress(model, region, sol, eps)
     e_vti_roundtrip(model, region, sol, eps)
     f_clearance_is_the_solver_s(model, region, sol, eps)
+    g_webexport()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

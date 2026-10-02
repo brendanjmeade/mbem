@@ -1,0 +1,27 @@
+---
+// Sidebar block shared by the home and Concepts pages.
+---
+<p>
+  <b>mbem</b> is a boundary element method for 3-D linear elasticity built on
+  <i>mollified</i> Green's functions: the Kelvin/Somigliana kernels are
+  regularized Cortez-style, <code>r &rarr; (r&sup2; + &epsilon;&sup2;)<sup>1/2</sup></code>,
+  so a fault has a finite width &epsilon; and the displacements and stresses are
+  singular nowhere &mdash; including on the fault itself, where classical
+  dislocation theory returns a value that ordinary integration does not define.
+  Each triangle's contribution is integrated in closed form, which decouples
+  &epsilon; from the mesh size <i>h</i>.
+</p>
+<div class="links">
+  <div>
+    Paper: Meade, B. J. (2026), Three dimensional non-singular mollified elastic
+    dislocation theory for extended width fault zones and inhomogeneous boundary
+    element models, <i>arXiv</i>:2609.15601.
+    <a href="https://arxiv.org/abs/2609.15601">arxiv.org/abs/2609.15601</a>
+  </div>
+  <div>
+    Code: <a href="https://github.com/brendanjmeade/mbem">github.com/brendanjmeade/mbem</a>
+  </div>
+</div>
+<div class="contact">
+  Developed by <a href="https://brendanjmeade.github.io/">Brendan Meade</a>.
+</div>

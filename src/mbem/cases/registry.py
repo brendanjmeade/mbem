@@ -81,7 +81,9 @@ def fault_box_model(bundle: MeshBundle, *, slip_mag: float = 0.01,
 def topo_inclusion_meshes(*, scale: float = 1.0,
                           bump_center=(0.0, -50.0), bump_sigma: float = 30.0,
                           bump_height: float = 2.0,
-                          surface: str = "topo") -> MeshBundle:
+                          surface: str = "topo",
+                          edge_side: float = 80.0,
+                          edge_far: float = 80.0) -> MeshBundle:
     """Host + soft inclusion + surface-breaking fault, with a Gaussian hill.
 
     ``surface`` selects the warped or flat embedding. It is a GEOMETRY
@@ -93,7 +95,8 @@ def topo_inclusion_meshes(*, scale: float = 1.0,
         raise ValueError(f"surface {surface!r} must be 'topo' or 'flat'")
     from mbem.cases.topo_inclusion import build
     (meshes, top_flat, top_topo, fault_flat, fault_topo,
-     s_hat, bump) = build(tuple(bump_center), bump_sigma, bump_height, scale)
+     s_hat, bump) = build(tuple(bump_center), bump_sigma, bump_height, scale,
+                          edge_side=edge_side, edge_far=edge_far)
     meshes = dict(meshes)
     warped = surface == "topo"
     meshes["host_top"] = top_topo if warped else top_flat

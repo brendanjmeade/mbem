@@ -3,8 +3,8 @@
 The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
-and the two kernel copies are frozen oracles; `ddbem` and `fbem` are closed
-(`FINDINGS.md` each). Gates: `python tests/run_all.py`, 43 of them.
+and the two kernel copies are frozen oracles; the two closed lines are recorded in
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 43 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
@@ -58,9 +58,58 @@ the tree again:
   (`msd/CLAUDE.md` rule 4).
 * Higher order (`Patch.order` 1 or 2) pays on traction rows and on the first
   row, not on displacement rows (first-kind traction unknown; cond grows
-  ~15x per order), and only with eps room (`ddbem/FINDINGS.md`).
+  ~15x per order), and only with eps room (`docs/ddbem-findings.md`).
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
+
+## Open — measured, not yet acted on
+
+**THE BOX SIDES CARRY 1.7 % TOP-SURFACE ERROR, AND REMOVING IT COSTS 4.5 %.**
+`docs/fbem-findings.md` recorded an unclaimed result from the closed
+force-element line -- that removing the mesh-size discontinuity at the top rim
+by refining the box SIDES (not the top) was nearly free and worth a lot, was a
+property of the mesh rather than of the formulation, and had never been tried
+with the direct BIE. It has now been tried, and it transfers: measured on
+topo_inclusion with the TOP MESH HELD FIXED at 9 km, so the only thing varying
+is the sides, against the edge_side = 10 km run as reference.
+
+    side   far  unknowns   +dof   host_top L2 (vs 10 km sides)
+      80    80     31,098   +0.0%   1.657e-02      <- the shipping default
+      80    40     31,812   +2.3%   1.696e-02      base only: NO effect
+      40    80     32,490   +4.5%   5.867e-03      sides only: -65 %
+      40    40     33,204   +6.8%   6.137e-03      both: no better than sides
+      20    20     41,592  +33.7%   1.954e-03
+      10    10     74,934 +141.0%   reference
+
+It is ENTIRELY THE SIDES, exactly as the closed line said: the base at 80 -> 40
+moves nothing (-2.3 %, i.e. noise) for its 2.3 % of extra unknowns, while the
+sides at 80 -> 40 remove 65 % of the error for 4.5 %. Conditioning improves too,
+measured with the dense backend: 5.468e5 -> 3.275e5, **1.67x better**. The
+original claim was 22 % and 2.2x; the L2 effect here is larger and the
+conditioning effect smaller.
+
+**Why this deserves attention out of proportion to its size.** 1.7e-02 is
+**two orders of magnitude larger than the far-field operator tolerance** this
+program spends most of its effort on (1e-4), and ~80x the 2e-4 that the
+topography decomposition inherits from cancellation. The default mesh has been
+the dominant error term on the quantity the showcase figure draws, and nothing
+in the gate suite was looking at it -- every parity clause compares an operator
+against another operator on the SAME mesh, so a mesh-induced error is invisible
+to all of them by construction.
+
+**NOT changed: the default.** `edge_side = 80` is what every committed
+`bench-json:` baseline and every number in this file was measured at, so moving
+it would silently invalidate the ladder. The knob is now exposed
+(`mbem.cases.topo_inclusion.build(edge_side=, edge_far=)`, defaults unchanged)
+and `configs/side_grading.py` reproduces the table above. Changing the default
+is a decision to take deliberately, with a ladder rerun attached.
+
+Untested, and the reason the closed line stopped short: true GRADING of the
+sides toward the rim rather than uniform refinement. It would cost less than
+4.5 % for the same gain, but `make_vertical_panel_eq` takes a scalar
+`target_edge` and `inclusion_mesh.py` is a frozen oracle, so it needs a new
+conforming panel mesher -- and `docs/fbem-findings.md` warns that direct-BIE
+conditioning is far more fragile under grading (5.7e19 at beta = 3).
 
 ## Open — correctness
 

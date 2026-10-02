@@ -22,7 +22,7 @@ A direct / displacement-discontinuity (DD) collocation BEM: one DD density `q`
 per boundary element in ONE uniform medium, one code path for P0 / P1 / P2
 Lagrange nodal slip on flat triangles, Cortez-regularised
 (`R = sqrt(r^2 + eps^2)`), on `clq`'s closed-form kernels. Why DD and not the
-indirect single layer: the force-element BEM (`fbem/FINDINGS.md`) has a density
+indirect single layer: the force-element BEM (`fbem-findings.md`) has a density
 unknown with a genuine `rho^(-1/3)` edge singularity on a polyhedron, so its
 free-traction rows stall at O(h^0.31) against the direct BIE's O(h^0.90), and
 neither p-refinement nor grading rescues it; the DD unknown is a displacement,
@@ -34,7 +34,7 @@ does not, and what governs it is how many mollification lengths the collocation
 point is clear of its own element's edge. Over 60 cube solves per order,
 `log(err)` on `log h` alone has R² = 0.00 / 0.02 / 0.02 at P0 / P1 / P2; on
 `log(clearance/eps)` alone, 0.70 / 0.96 / 0.96. At `eps/h = 0.3` P1 and P2 are
-*worse* than P0 at matched unknowns — `fbem/FINDINGS.md` §2, reproduced for DD.
+*worse* than P0 at matched unknowns — `fbem-findings.md` §2, reproduced for DD.
 
 ## The formulation
 

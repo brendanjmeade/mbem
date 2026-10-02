@@ -68,7 +68,8 @@ OUT = pathlib.Path(__file__).parent / "topo_inclusion_fields_mu10.npz"
 
 
 def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
-          bump_height=BUMP_HEIGHT, scale=1.0):
+          bump_height=BUMP_HEIGHT, scale=1.0,
+          edge_side: float = 80.0, edge_far: float = 80.0):
     """fig06 geometry + refinement disk under the bump + the warp.
 
     If the bump's support reaches the fault trace, the fault mesh is
@@ -78,6 +79,13 @@ def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
 
     ``scale`` divides every target edge (the same geometry ~scale^2 times
     finer): the mesh ladder of ``bench_scaling.py --model topo_inclusion``.
+
+    ``edge_side`` / ``edge_far`` default to 80 km, which leaves a 9x size jump
+    against the 9 km top. ``docs/fbem-findings.md`` records, from the closed
+    force-element line, that removing that jump by refining the SIDES costs
+    +2.4 % unknowns for a 22 % drop in top-surface L2 and 2.2x better
+    conditioning -- a property of the mesh rather than of the formulation, never
+    tried with the direct BIE. Exposed so it can be.
     """
     s = float(scale)
     bump = gaussian_bump(bump_center, bump_height, bump_sigma,
@@ -88,7 +96,7 @@ def build(bump_center=BUMP_CENTER, bump_sigma=BUMP_SIGMA,
         inclusion_center_xy=(-100.0, 100.0), inclusion_radius=75.0,
         inclusion_depth=50.0,
         target_edge_inclusion=6.0 / s, target_edge_top=9.0 / s,
-        target_edge_far=80.0 / s, target_edge_side=80.0 / s,
+        target_edge_far=edge_far / s, target_edge_side=edge_side / s,
         fault_trace=fault_trace, fault_edge=4.5 / s,
         host_top_max_edge=20.0 / s,
         top_refine_disks=[(bump_center, bump.support_radius, BUMP_EDGE / s,

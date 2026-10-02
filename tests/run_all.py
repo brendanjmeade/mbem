@@ -63,7 +63,7 @@ def verdict(stdout: str) -> str:
     whose printed verdict disagrees with its exit code is reported as MISMATCH
     rather than quietly trusted, because the two are meant to be one fact and a
     disagreement means one of them is lying. Scraping was the only signal until
-    this run; 24 of 43 gates printed FAIL and exited 0.
+    this run; 24 of the then-43 gates printed FAIL and exited 0.
     """
     for ln in reversed(stdout.splitlines()):
         if ln.startswith(("PASS", "FAIL")):

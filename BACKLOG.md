@@ -4,15 +4,17 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 43 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 44 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
 is `tests/gates/mbem`, `msd/examples` is `studies/mbem`, and
 `moss/mollified_kernel` is `src/moss_kernel`. The paper (`moss/`) and its
 public package (`medt_paper/`) left the repo for
-`~/Desktop/moss-org-paper-archive/`; they are in history and under tag
-`medt_paper-vendored-2026-09-17`. Nothing numeric changed in the move -- the
+`~/Desktop/moss-org-paper-archive/`, and were later removed from every commit
+so this repo could be published; both live in that archive directory and in
+the pre-filter mirror beside it, `moss-org-prefilter.git`, which still carries
+tag `medt_paper-vendored-2026-09-17`. Nothing numeric changed in the move -- the
 17 frozen oracles are pinned by sha256 and all 17 were byte-identical
 afterwards, and the gate stdout was diffed line by line against a baseline
 taken before the first commit.

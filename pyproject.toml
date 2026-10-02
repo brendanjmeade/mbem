@@ -1,26 +1,17 @@
-# Packaging for the mollified BEM / MEDT program.
-#
-# PHASE 1 OF THE MIGRATION: this file packages the tree EXACTLY WHERE IT SITS.
-# Every `package-dir` entry points at the directory the `sys.path.insert` calls
-# were already finding, so `pip install -e .` is a no-op for import resolution
-# -- the editable finder maps each name to the same file. That is deliberate:
-# it makes the first migration commit incapable of breaking a gate, and it lets
-# the 64 `sys.path.insert` calls come out one file at a time while the old
-# paths still work, so a wrong deletion fails in isolation instead of six files
-# later. The directories move in a later phase, by which point nothing computes
-# a path to find them.
+# Packaging for the mollified boundary element method.
 #
 # WHY THE FLAT ORACLES ARE TOP-LEVEL MODULES, not a subpackage: the frozen
 # meshing oracles do `from mollified_bem import TriMesh`, and ~30 files do
-# `import mollified_bem as mb`. Keeping the flat names means the migration
-# edits NO frozen file. A subpackage would require editing them, which the
+# `import mollified_bem as mb`. Keeping the flat names means NO frozen file
+# needed editing. A subpackage would have required it, which the
 # oracles-are-frozen rule forbids.
 #
-# WHY moss's kernel copy is `moss_kernel` and msd's keeps `mollified_kernel`:
-# they are different files (msd's analytical_kernels.py is 49,069 B, moss's is
-# 51,562 B and holds analytical_eigenstress_kernel / eigenstress_batch, which
-# msd's lacks) and the difference IS the point -- the gates compare them
-# entrywise. Two distinct package names let one interpreter hold both, which a
+# WHY THERE ARE TWO KERNEL PACKAGES, `mollified_kernel` and `moss_kernel`:
+# they are different files (the first's analytical_kernels.py is 49,069 B, the
+# second's is 51,562 B and holds analytical_eigenstress_kernel /
+# eigenstress_batch, which the first lacks) and the difference IS the point --
+# the gates compare them entrywise, so neither may be "fixed" to agree with
+# the other. Two distinct package names let one interpreter hold both, which a
 # single name never could.
 
 [build-system]
@@ -33,7 +24,30 @@ version = "0.1.0"
 description = "Mollified boundary element method for 3-D linear elasticity"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy", "scipy", "matplotlib", "numba", "triangle"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Brendan Meade", email = "brendanjmeade@gmail.com" }]
+keywords = [
+    "boundary element method", "elasticity", "regularized stokeslets",
+    "dislocation", "hierarchical matrices", "fast multipole method",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# threadpoolctl is NOT optional: la/hop.py imports it at module scope to pin
+# BLAS to one thread inside the block thread pool. It was missing here while
+# the development environment happened to provide it, so a fresh install broke
+# on the first compressed-backend solve and nowhere earlier.
+dependencies = [
+    "numpy", "scipy", "matplotlib", "numba", "triangle", "threadpoolctl",
+]
+
+[project.urls]
+Homepage = "https://github.com/brendanjmeade/mbem"
+Repository = "https://github.com/brendanjmeade/mbem"
 
 [project.optional-dependencies]
 # cutde anchors the classical-TDE gates (verify_solved_bvp, verify_evaluate_stress)

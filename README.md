@@ -22,7 +22,7 @@ Boundary patches and faults carry a piecewise-constant (P0) density by default
 or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
 collocation at the shrunk element nodes, the free term a shape-function matrix,
 kernels integrated in closed form for every order (`mbem/kernels/tri_nodal.py`,
-gated against the frozen `../clq` oracle).  Higher order pays on traction
+gated against the frozen `src/clq` oracle).  Higher order pays on traction
 (Neumann) rows and is the cure for the first element row of on-fault stress
 below a free surface (beyond ~3-5 eps_top; `tests/gates/mbem/verify_solved_bvp.py` A4);
 the compressed backend is P0-only.
@@ -51,7 +51,7 @@ The live implementation is the **exact finite-triangle** form in
 *approximation*, right deep inside a large element and up to 2x too large at
 element edges; the demos use the exact form through
 `mbem.evaluate._stress_from_source(..., "eigen", ...)`.
-`studies/mbem/demo_anelastic_subtraction.py` shows that the
+`python -m mbem figure anelastic_subtraction` shows that the
 corrected on-fault stress stays finite (bounded, `eps`-independent) while the
 raw value blows up like `1/eps`.
 
@@ -64,7 +64,7 @@ improve under refinement (`tests/gates/mbem/verify_boundary_eigenstress.py`).
 
 The subtracted on-fault elastic stress not only stays finite — at the fault
 interior it **converges to a constant** as `eps -> 0` (observed order `eps^2`),
-and to the *physically correct* value: `studies/mbem/demo_onfault_convergence.py`
+and to the *physically correct* value: `python -m mbem figure onfault_convergence`
 matches it to the finite part of the classical triangular-dislocation stress
 (an independent `cutde` full-space reference) to ~1e-7.  (The interior converges
 to a constant; the genuine elastic field still concentrates at the fault tips,
@@ -81,37 +81,54 @@ free-surface box solve and recovers the half-space dislocation stress.
 ## Layout
 
 ```
-mollified_bem.py          TriMesh, ElasticMaterial, full-space Kelvin kernels
-mollified_kernel/         point-source kernel + analytic triangle integration
+src/mbem/                 region-model BEM solver: dense and block-compressed
+                          backends (far="aca" flat H + ACA, far="fmm" bbFMM),
+                          numba kernels, topography, preconditioned FGMRES
+  backends/               dense and block-compressed assembly
+  model/                  region graph, patches, faults, the free term
+  kernels/                numba kernels, P0/P1/P2 closed forms
+  la/                     ACA, flat H-matrix, bbFMM, FGMRES, preconditioners
+  cases/                  reference models the gates and studies share
+  figures/                the figure makers, in a lazy registry
+src/mollified_kernel/     point-source kernel + analytic triangle integration
   mollified_elastic_kernels.py   regularized Kelvin point kernels
   analytical_kernels.py          analytic per-triangle integration (scalar)
   analytical_batch.py            analytic per-triangle integration (vectorized)
-  mbem/                   region-model BEM solver: dense and block-compressed
-                          backends (far="aca" flat H + ACA, far="fmm" bbFMM),
-                          numba kernels, topography, preconditioned FGMRES
-  mbem/cases/             reference models the gates and studies share
-  moss_kernel/            a second, INDEPENDENT copy of the analytic kernels;
+src/moss_kernel/          a second, INDEPENDENT copy of the analytic kernels;
                           the gates compare the two entrywise
-  clq/                    frozen oracle: separate closed-form derivation
-  local_box_mesh_eq.py    equilateral Delaunay box / fault mesh builders
-  inclusion_mesh.py       host + cylindrical-inclusion mesh builder
-  anelastic.py            anelastic (eigenstrain) eigenstress -> elastic stress
+src/clq/                  frozen oracle: separate closed-form derivation
+src/mollified_bem.py      TriMesh, ElasticMaterial, full-space Kelvin kernels
+src/local_box_mesh.py     box / fault mesh builders
+src/local_box_mesh_eq.py  equilateral Delaunay box / fault mesh builders
+src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
+src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
+src/tde_reference.py      classical triangular-dislocation reference
+configs/                  seven studies, each a Python module declaring a run
 tests/                    run_all.py + test_gates.py; 44 gates (print PASS/FAIL)
-studies/                  runnable demos and bench_scaling.py
-docs/figures/             the curated, tracked figure gallery
+studies/                  bench_scaling.py and the printing quickstarts
+docs/                     clq derivation, the two closed-line findings
 ```
+
+`docs/figures/` is the tracked figure gallery and ships **empty by design** —
+`python -m mbem publish <run-dir>` is what puts a figure there, with the
+provenance of the run that made it. Nothing writes to it as a side effect.
 
 ## Install
 
+Python >= 3.11. MIT licensed.
+
 ```
-pip install -e .                 # numpy scipy matplotlib numba triangle
+pip install -e .                 # numpy scipy matplotlib numba triangle threadpoolctl
 pip install -e '.[tde,test]'     # + cutde (two gates FAIL without it) and pytest
 # plus an OpenMP runtime numba can load (conda-forge llvm-openmp, or brew libomp)
 ```
 
 One editable install and everything imports as a package from any working
-directory. There is no `sys.path` manipulation anywhere in the tree, and adding
-some would be a bug.
+directory. Nothing in the solver's import path manipulates `sys.path`, and
+adding some there would be a bug. Three places legitimately do: the `__main__`
+self-test blocks of the two frozen `analytical_kernels.py` copies, and the gate
+harness (`tests/conftest.py`, plus two `moss_kernel` gates), which has to place
+a specific oracle directory ahead of an identically-named sibling.
 
 numba must resolve its OpenMP threading layer (`numba.threading_layer() ==
 "omp"`) and threadpoolctl must be importable: the compressed backend runs
@@ -127,8 +144,10 @@ under `runs/` (gitignored).
 ```
 python -m mbem run configs/fault_box.py
 python -m mbem run configs/topo_inclusion.py --set surface=flat --set backend=fmm
+python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list
 python -m mbem show <run-dir> --section effective
+python -m mbem verify [-k fmm] [--fast]             # the gates, through the CLI
 ```
 
 A run folder holds `resolved.json` (the spec, the keyword arguments actually
@@ -144,7 +163,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 43 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 44 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 
@@ -225,6 +244,9 @@ python -m mbem run configs/eps_convergence.py --sweep eps=12,8,6,4,3,2
 
 # on-fault shear vs the classical TDE, and the first-row P0/P1 contrast
 python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
+
+# what the coarse box sides cost the top surface, top mesh held fixed
+python -m mbem run configs/side_grading.py --sweep edge_side=80,40,20,10
 ```
 
 `python -m mbem publish <run-dir>` copies chosen figures into the tracked
@@ -237,8 +259,9 @@ The BEM demos run at paper resolution (tens of seconds to a few minutes; the
 four-state topography+inclusion solve is the longest).  The free surfaces are
 fault-ALIGNED (the surface-breaking fault trace is embedded as exact mesh edges
 via `make_top_patch_with_fault`), so no triangle straddles the slip
-discontinuity.  The `--mu-inc 3.0` inclusion is the soft `mu/10` body in the
-showcase.  The `topo_inclusion_showcase` figure draws the three rows of the
+discontinuity.  The inclusion is the soft `mu/10` body in the showcase; any
+model keyword is reachable from the command line as `--set mu_inc=3.0`.
+The `topo_inclusion_showcase` figure draws the three rows of the
 decomposition (raw field / inclusion effect / topography effect) and
 `topo_inclusion_contour` the topography effect alone.
 

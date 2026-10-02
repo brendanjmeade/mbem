@@ -21,7 +21,7 @@ is the bug.
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
 | `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 44 gates in `gates/{mbem,clq,moss_kernel}`. |
-| `configs/` | Six studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
+| `configs/` | Seven studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, all 110 defaults, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
 | `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. |
@@ -29,10 +29,14 @@ is the bug.
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
-The paper and its public reproducibility package are **not here**: `moss/`
-(manuscript, `mhf/`) and `medt_paper/` were moved to
-`~/Desktop/moss-org-paper-archive/` and are recoverable from history and from
-tag `medt_paper-vendored-2026-09-17`. `medt_paper` is published separately
+The paper and its public reproducibility package are **not here, and not in
+history either**: `moss/` (manuscript, `mhf/`) and `medt_paper/` were moved to
+`~/Desktop/moss-org-paper-archive/`, and when this repo was published the two
+were removed from every commit, because a push publishes history and the
+manuscript is unpublished. Both are recoverable from that archive directory and
+from the complete pre-filter mirror beside it,
+`~/Desktop/moss-org-paper-archive/moss-org-prefilter.git` (77 commits, tag
+`medt_paper-vendored-2026-09-17`). `medt_paper` is published separately
 (Zenodo DOI); publishing is a manual export, **never a push**.
 
 ## Running
@@ -52,7 +56,7 @@ python -m mbem verify [-k fmm] [--fast]          # the gates
 
 python tests/run_all.py               # all 44 gates, exit 1 on any FAIL
 pytest -m "not slow"                  # same set, pytest front end
-python studies/mbem/demo_fault_only.py
+python studies/mbem/demo_triangle_quickstart.py   # prints numbers, draws nothing
 ```
 
 `/Users/meade/micromamba/bin/python` on this machine. Numba compiles on first
@@ -67,7 +71,7 @@ rather than skip without it.
    `verify_oracle_provenance` pins every oracle by resolved path AND sha256, so
    a deliberate edit must update `oracle_manifest.json` in the same commit.
 2. **Every gate is `main() -> bool`, prints `PASS:`/`FAIL:` at column 0 as its
-   last such line, and exits on it.** One convention, all 43: the return value
+   last such line, and exits on it.** One convention, all 44: the return value
    is the authority and the printed line cross-checks it, so a gate whose two
    disagree is reported as MISMATCH rather than trusted. Do not write a
    POSIX-style `return 0` for success — under `assert main()` that is exactly
@@ -117,8 +121,9 @@ rather than skip without it.
     layout in clq's node order, collocation at the shrunk nodes, the free term
     the shape-function matrix `N_k(x_c)` times the per-point diagonal. The
     compressed backend is P0-only.
-14. **Git.** One local repo, no remote; the user commits on request.
-15. Figures follow the house matplotlib style (`studies/*/\_paper_style.py`, and
+14. **Git.** `main` is the only branch; the public remote is
+    `github.com/brendanjmeade/mbem`. The user commits on request.
+15. Figures follow the house matplotlib style (`src/mbem/figures/style.py`, and
     the `matplotlib-figure-style` skill). A study writes its figure beside
     itself; `docs/figures/` is the curated tracked gallery and changes only
     deliberately.

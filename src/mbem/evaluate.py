@@ -118,7 +118,9 @@ def _warn_near_boundary(points, region):
             f"{', '.join(names)} (min d/h = {worst:.2f}): the "
             f"piecewise-constant boundary density limits the volume "
             f"representation there (~2e-1 relative stress error at "
-            f"d/h = 0.25 measured); refine the patch or evaluate deeper")
+            f"d/h = 0.25 measured); evaluate deeper, or lower eps -- "
+            f"refining the patch at fixed eps is weak (1.27x for 4x "
+            f"refinement, against 13x for standing off to d/h = 2)")
 
 
 def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr,

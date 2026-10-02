@@ -324,6 +324,39 @@ def e_vti_roundtrip(model, region, sol, eps) -> None:
         check("a 3x3 tensor becomes 6 named components",
               all(f"sigma_{c}" in arrays for c, _i, _j in V.SYM6))
 
+        # INDEPENDENT reader. Everything above proves vti.read inverts
+        # vti.write, which is self-consistency, not correctness: a wrong
+        # header_type, extent convention or appended-offset base would be
+        # symmetric in both and invisible. VTK is the reference implementation
+        # and the only thing that settles whether a viewer can open the file.
+        # vtk is a `[viz]` extra and this clause FAILS without it rather than
+        # skipping, as the cutde gates do.
+        import vtk
+        from vtk.util.numpy_support import vtk_to_numpy
+        rd = vtk.vtkXMLImageDataReader()
+        rd.SetFileName(str(p))
+        rd.Update()
+        img = rd.GetOutput()
+        check("VTK reads it without error", rd.GetErrorCode() == 0,
+              f"error code {rd.GetErrorCode()}")
+        check("VTK agrees on dims, origin, spacing",
+              img.GetDimensions() == grid.dims
+              and img.GetOrigin() == grid.origin
+              and img.GetSpacing() == grid.spacing,
+              f"{img.GetDimensions()} {img.GetOrigin()}")
+        pdata = img.GetPointData()
+        check("VTK sees every array", pdata.GetNumberOfArrays() == len(arrays),
+              f"{pdata.GetNumberOfArrays()} of {len(arrays)}")
+        wrong = []
+        for i in range(pdata.GetNumberOfArrays()):
+            arr = pdata.GetArray(i)
+            ours = back["arrays"][arr.GetName()]
+            if not np.array_equal(vtk_to_numpy(arr).reshape(ours.shape), ours,
+                                  equal_nan=True):
+                wrong.append(arr.GetName())
+        check("VTK's values == ours, array for array", not wrong,
+              f"{wrong[:3]}")
+
 
 def f_clearance_is_the_solver_s(model, region, sol, eps) -> None:
     """[f] clearance_h is the evaluator's own d/h, not a second metric."""

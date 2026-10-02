@@ -810,6 +810,17 @@ HALF_JUMP_MAX_EPS_OVER_H = 0.5
 # local h (mean edge) of a BOUNDARY patch, by exact point-to-triangle
 # distance: the piecewise-constant density limits the representation there
 # (~2e-1 relative stress error at d/h = 0.25 with eps/h = 0.3; ~10 % at 0.5).
+#
+# d/h is a near-boundary DEGRADATION FACTOR, not the absolute accuracy, and it
+# does not govern alone. Measured on the manufactured u = A x box (exact
+# interior stress C:A) over h in (20, 10, 5) km x eps in (0.6, 1.5, 3.6) km,
+# with eps absolute so it is not tied to h by "auto": eps sets a floor that is
+# FLAT IN h and linear in eps -- 7.3e-3 / 1.7e-2 / 4.1e-2 at d/h > 2, moving
+# under 8 % when h halves -- and this ratio bounds a further 3-13x on top of
+# it, worst where the floor is lowest (12.9x at eps = 0.6, 2.9x at 3.6).
+# Binning the residual on d/h leaves a 4.2x spread across (h, eps) and on
+# d/eps a 3.8x spread, so neither is the whole story and the volume sampler
+# writes both clearances.
 NEAR_BOUNDARY_H_RATIO = 0.5
 # Observation points per chunk in the volume sampler (volume.sample). The
 # contraction kernels are O(N_obs) in memory but hold ~4 transient (N,3,3)

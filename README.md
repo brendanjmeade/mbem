@@ -119,7 +119,8 @@ Python >= 3.11. MIT licensed.
 
 ```
 pip install -e .                 # numpy scipy matplotlib numba triangle threadpoolctl
-pip install -e '.[tde,test]'     # + cutde (two gates FAIL without it) and pytest
+pip install -e '.[tde,test,viz]'  # + cutde (two gates FAIL without it), pytest,
+                                  #   and vtk (verify_volume's independent reader)
 # plus an OpenMP runtime numba can load (conda-forge llvm-openmp, or brew libomp)
 ```
 
@@ -217,11 +218,36 @@ not a difference of von Mises values).
 Two arrays decide whether a value is trustworthy. `region` is 0 outside the
 body — points above the topography and outside the box are NaN, because 0 is a
 value. `clearance_h` and `clearance_eps` give each point's distance to the
-nearest element in units of that element's size and of its own eps: within
-`NEAR_BOUNDARY_H_RATIO` the mollified field is not the elastic field. **The
-band is flagged, not blanked**, and it matters — on the showcase model the
-topography effect reads 1287 mm at a point lying on the surface and 39 mm once
-`clearance_h > 0.5`, a factor of 33.
+nearest element in units of that element's size and of its own eps. **Both are
+flagged, never blanked**, and it matters: on the showcase model the topography
+effect reads 1287 mm at a point lying on the surface and 96 mm once
+`clearance_h > 0.5`.
+
+### What the eigenstress subtraction does and does not buy
+
+Subtracting `C:eps*` is what makes a stress *finite and convergent* where the
+singular formulation diverges — on a fault, which is why `_warn_near_boundary`
+exempts faults. It does **not** make the stress exact, and the two limits are
+separable only if eps is given absolutely (`eps="auto"` ties it to 0.1 h).
+Measured on the manufactured `u = A x` box, whose interior stress is exactly
+`C:A`, over h in (20, 10, 5) km x eps in (0.6, 1.5, 3.6) km:
+
+| | eps = 0.6 | eps = 1.5 | eps = 3.6 |
+|---|---|---|---|
+| deep interior (`clearance_h > 2`), h = 10 km | 7.3e-3 | 1.66e-2 | 4.21e-2 |
+| deep interior, h = 5 km | 6.8e-3 | 1.71e-2 | 4.13e-2 |
+| degradation near a boundary (`clearance_h` 0.15-0.3) | 12.9x | 4.7x | 2.9x |
+
+So **eps sets a floor everywhere, flat in h and linear in eps** — about
+`0.5 (eps/L)` for a domain of size L, so 1 % needs eps <~ 0.02 L — and
+proximity to a *solved* boundary degrades it a further 3-13x on top. Neither
+variable governs alone: binning on `clearance_h` leaves a 4.2x spread across
+(h, eps) and on `clearance_eps` a 3.8x spread, which is why both arrays ship.
+
+One practical consequence, against what the warning text advises: at fixed eps,
+refining h by 4x improved the near-boundary residual only 1.27x, while standing
+off from `clearance_h` 0.2 to 2 improved it 13x. Evaluate deeper; refining the
+patch alone barely helps.
 
 Cost is linear in the interior point count and dominated by the stress kernel:
 measured 2.3 ms per point on the 11k-triangle showcase model (0.22 for

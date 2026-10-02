@@ -54,6 +54,11 @@ Repository = "https://github.com/brendanjmeade/mbem"
 # and two demos. Those gates FAIL rather than skip without it, so it is a test
 # requirement, not a convenience.
 tde = ["cutde"]
+# vtk anchors verify_volume's independent-reader clause: the hand-rolled .vti
+# writer is otherwise validated only by its own reader, which cannot see a
+# wrong byte layout because the error would be symmetric. Like cutde, the gate
+# FAILS rather than skips without it. (A trame viewer will extend this extra.)
+viz = ["vtk"]
 # sympy/mpmath are clq's verification-only dependencies, and three of moss's
 # oracle gates need sympy.
 test = ["pytest", "sympy", "mpmath"]

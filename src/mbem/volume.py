@@ -19,6 +19,35 @@ z = 0 plane and a hill above it is inside the warped top patch and is found to
 be inside. An explicit ``z > h(x, y)`` test would be a second statement of the
 surface, right until someone changes the bump.
 
+**What limits a stress value here. THREE things, measured, not assumed.**
+Separating them needs eps given absolutely, because ``eps="auto"`` ties eps to
+h at 0.1 h and then no sweep can tell the two apart. On the manufactured
+``u = A x`` box, whose interior stress is exactly ``C:A`` at any standoff, over
+a 3x3 grid of h in (20, 10, 5) km and eps in (0.6, 1.5, 3.6) km:
+
+* the eigenstress ``C:eps*`` of each smeared jump is **subtracted exactly** --
+  the point of the method, not a caveat. It is written out as its own field so
+  it can be SEEN (85.7 MPa on a surface against 0.03 MPa in the interior on
+  the showcase model), not because it contaminates anything.
+* **eps sets a floor everywhere, including deep in the interior**, and that
+  floor is FLAT IN h: at clearance_h > 2 the relative stress residual is
+  7.3e-3 / 1.7e-2 / 4.1e-2 for eps = 0.6 / 1.5 / 3.6, and halving h from 10 to
+  5 km moves it by under 8 %. Linear in eps, i.e. ~0.5 (eps / L) for a domain
+  of size L. So "the stress is interpretable" does not mean "exact": to get 1 %
+  on this box needs eps <~ 0.02 L.
+* **proximity to a SOLVED boundary degrades it on top of that floor**, by 3-13x
+  at clearance_h in 0.15-0.3, worst where the floor is lowest (12.9x at
+  eps = 0.6, 2.9x at eps = 3.6). A fault is exempt: its slip is PRESCRIBED
+  data, exact at P0, which is why ``_warn_near_boundary`` skips faults and
+  on-fault readout is legitimate.
+
+Neither variable governs alone -- binning the residual on clearance_h leaves a
+4.2x spread across (h, eps) and on clearance_eps a 3.8x spread -- so both
+arrays are written and neither is "the band". Note also what the measurement
+says about the remedy: at fixed eps, refining h 4x improved the near-boundary
+residual only 1.27x, while moving from clearance_h 0.2 to 2 improved it 13x.
+Standing off works; refining the patch barely does.
+
 **``warn_near=False``, deliberately, and the clearance computed here instead.**
 The evaluator's near-boundary warning runs a k=32 exact point-to-triangle
 distance whose temporaries are (N, 32, 3) -- ~8-12 KB per point against ~400 B

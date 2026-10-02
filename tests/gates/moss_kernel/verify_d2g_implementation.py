@@ -7,6 +7,7 @@ import numpy as np
 import sympy as sp
 
 from moss_kernel.mollified_elastic_kernels import kelvin_d2G
+import sys
 
 
 def main():
@@ -55,11 +56,13 @@ def main():
     print(f"\nmax |D2G_num - D2G_sym| = {max_abs:.3e}")
     print(f"max |D2G_sym|           = {max_ref:.3e}")
     print(f"relative                = {max_abs/max_ref:.3e}")
-    if max_abs / max_ref < 1e-12:
+    ok = max_abs / max_ref < 1e-12
+    if ok:
         print("\nPASS: implementation matches Galerkin/Cortez form to machine precision")
     else:
         print("\nFAIL: implementation does NOT match symbolic form")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

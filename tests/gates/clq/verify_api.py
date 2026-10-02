@@ -37,6 +37,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax
 import clq
+import sys
 
 
 def raises(fn, exc=ValueError):
@@ -437,8 +438,8 @@ def main():
     print(f"  worst: order-inference parity {worst_infer:.2e}, eps=0 limit {worst_eps0:.2e}, "
           f"elastic/total split {worst_split:.2e}, partition of unity {worst_pou:.2e}, "
           f"BEM block {worst_block:.2e}, force surface {worst_force:.2e}")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

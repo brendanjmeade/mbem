@@ -296,6 +296,7 @@ def check_eps_convergence():
     ok = bool(orders) and all(o >= 1.8 for o in orders)
     print(f"{'PASS' if ok else 'FAIL'}: eps-convergence order "
           f"min {min(orders) if orders else float('nan'):.2f} (>= 1.8 on every rung)")
+    return ok
 
 
 # ============================================================
@@ -306,8 +307,11 @@ def check_eps_convergence():
 def main():
     check_pde_residual()
     check_boundary_traction()
-    check_eps_convergence()
+    # The eps-convergence clause is the one with a pass/fail threshold; the two
+    # above print residual tables. Returning it is what lets a failure reach the
+    # exit code and a pytest assertion.
+    return check_eps_convergence()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -26,6 +26,7 @@ import numpy as np
 
 from _common import MU, Report
 import clq
+import sys
 
 
 EPS = 1.0e-3
@@ -95,8 +96,8 @@ def main():
         e_big, r_big = jump_error(tri_big, slips[p], pts_big, 0.45)
         rep.check(f"p={p} nu=0.45: jump error at L=100 (deficit O(z0/L))", e_big, 1e-3,
                   f"(recovery ratio {r_big:.5f})")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

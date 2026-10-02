@@ -16,6 +16,7 @@ Uses sympy for exact symbolic differentiation, then evaluates at fixed (x, mu, n
 """
 
 import sympy as sp
+import sys
 
 
 def main():
@@ -98,9 +99,11 @@ def main():
     print("          CODEBASE never.")
     print("=" * 78)
     # The gate: the Galerkin form must satisfy the PDE to machine precision.
-    verdict = "PASS" if worst_galerkin < 1e-12 else "FAIL"
-    print(f"{verdict}: Galerkin PDE residual {worst_galerkin:.2e} (tol 1e-12)")
+    ok = worst_galerkin < 1e-12
+    print(f"{'PASS' if ok else 'FAIL'}: Galerkin PDE residual "
+          f"{worst_galerkin:.2e} (tol 1e-12)")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

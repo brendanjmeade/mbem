@@ -43,6 +43,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax
 import clq
+import sys
 from clq.frame import local_frame
 from clq.moments import gauss_triangle
 from clq.shape import shape_functions, n_nodes
@@ -192,8 +193,8 @@ def main():
             else:
                 rep.check_bool(f"nu={nu:.2f} p=0: lam/mu-swapped pairing is caught (> {TRIPWIRE:.0e})",
                                d > TRIPWIRE, f"(rel diff {d:.2e})")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

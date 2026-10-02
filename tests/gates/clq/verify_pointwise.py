@@ -32,6 +32,7 @@ from __future__ import annotations
 import numpy as np
 import sympy as sp
 import mpmath
+import sys
 
 from _common import MU, Report, relmax
 from clq import pointwise as pw
@@ -179,8 +180,8 @@ def main():
     S_ref2 = np.array([f_S(*mpf_args(p, (*nhat, mu, nu2, eps))) for p in pts], dtype=float)
     rep.check("(d) nu=0.45: dd_stress_point vs C_{mlab} d_b U_aj (sympy)",
               relmax(pw.dd_stress_point(pts, nhat, mu, nu2, eps), S_ref2), 1e-12)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

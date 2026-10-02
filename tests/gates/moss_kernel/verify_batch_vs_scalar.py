@@ -17,6 +17,7 @@ from moss_kernel.analytical_batch import (
     eigenstress_batch,
     kelvin_G_batch,
 )
+import sys
 
 
 def main():
@@ -95,11 +96,13 @@ def main():
 
     # The eigenstress recursion loses relative (not absolute) accuracy in
     # its far tail, identically in both versions, hence the looser bound.
-    if worst < 1e-12 and worst_eig < 1e-10:
+    ok = worst < 1e-12 and worst_eig < 1e-10
+    if ok:
         print("\nPASS: batch and scalar agree to machine precision.")
     else:
         print("\nFAIL: batch and scalar disagree.")
+    return ok
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

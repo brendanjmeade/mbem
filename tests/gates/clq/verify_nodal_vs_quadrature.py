@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import time
+import sys
 
 import numpy as np
 
@@ -153,8 +154,8 @@ def main():
     print(f"  worst: off-plane {worst_off:.3e}, on-plane slip {worst_on:.3e}, "
           f"on-plane force {worst_on_force:.3e}, far producer {worst_far:.3e}"
           f"   ({time.perf_counter() - t0:.1f} s)")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

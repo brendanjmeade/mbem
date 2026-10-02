@@ -25,6 +25,7 @@ import numpy as np
 from _common import TRI, Report, relmax
 from clq.frame import local_frame
 from clq.moments import MomentTable, kernel_degrees, gauss_triangle
+import sys
 
 
 def quad_moments(fr, obs, eps, degrees, n):
@@ -121,8 +122,8 @@ def main():
     tabF_0 = MomentTable(fr, obs_f[[0, 2]], 0.0, degF)
     rep.check("P2 force table, eps=0 off-plane, vs 200x200 Gauss",
               worst(tabF_0, quad_moments(fr, obs_f[[0, 2]], 0.0, tabF_0.degrees, 200)), 1e-11)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

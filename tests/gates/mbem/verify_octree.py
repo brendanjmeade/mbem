@@ -509,10 +509,10 @@ def main() -> int:
             failed.append(name)
     if failed:
         print("\nFAIL: " + "; ".join(failed))
-        return 1
+        return False
     print(f"\nPASS: octree and interaction lists, {len(CHECKS)} checks")
-    return 0
+    return True
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(0 if main() else 1)

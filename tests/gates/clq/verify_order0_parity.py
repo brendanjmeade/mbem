@@ -21,6 +21,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax, msd_analytical, msd_batch, moss_analytical
 import clq
+import sys
 from clq.kernels import nodal_influence
 
 
@@ -92,8 +93,8 @@ def main():
             rep.check(f"nu={nu} {tag}: G vs moss analytical_kelvin_G", relmax(G, Go), 1e-12)
             rep.check(f"nu={nu} {tag}: S vs msd analytical_kelvin_stress", relmax(S, Sm), 1e-12)
             rep.check(f"nu={nu} {tag}: S vs moss analytical_kelvin_stress", relmax(S, So), 1e-12)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

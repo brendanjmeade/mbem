@@ -229,7 +229,8 @@ def main():
     else:
         bad = sum(1 for c in CHECKS if not c)
         print(f"FAIL: DD displacement kernel pairing ({bad} of {len(CHECKS)} checks failed)")
+    return all(CHECKS)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

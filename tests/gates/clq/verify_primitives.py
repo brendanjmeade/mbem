@@ -40,6 +40,7 @@ import mpmath as mp
 
 from _common import Report
 from clq.primitives import antiderivative, edge_table
+import sys
 
 # (m: kmax).  m = 1 up to k = 3 and m = -1 up to k = 1 are reached only by the
 # force element's n = 1 moment row and its I_{-1} seed; see the module docstring.
@@ -260,8 +261,8 @@ def main():
     per_case0 = rho0_check(rep)
     batch_check(rep, per_case)
     mixed_batch_check(rep, per_case, per_case0)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

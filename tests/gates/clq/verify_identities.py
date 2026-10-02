@@ -38,6 +38,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax, random_rotation
 import clq
+import sys
 from clq.kernels import nodal_influence
 
 NU = 0.3
@@ -313,8 +314,8 @@ def main():
         rep.check(f"(8) P{p} force_stress tensor symmetric",
                   relmax(sig_f, np.swapaxes(sig_f, 1, 2)), 1e-14)
 
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

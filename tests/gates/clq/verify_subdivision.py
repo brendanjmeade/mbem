@@ -28,6 +28,7 @@ even with the force fields added.
 from __future__ import annotations
 
 import time
+import sys
 
 import numpy as np
 
@@ -173,8 +174,8 @@ def main():
             mono = all(e[k] > e[k + 1] for k in range(idx_mono, len(N_LIST) - 1))
             rep.check_bool(f"p={p}: {label} error decreasing monotonically from N={MONO_FROM}",
                            mono, f"(order ~ {order_ls:.2f})")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

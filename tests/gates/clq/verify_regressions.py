@@ -33,6 +33,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax
 import clq
+import sys
 from clq.primitives import edge_table
 from clq.kernels import nodal_influence
 from clq.quadrature import quadrature_influence
@@ -142,8 +143,8 @@ def main():
         fh = fn(o, T, s6, MU, 0.3, 30.0, far_field="hybrid")
         rep.check(f"eps = 30 L: {name} hybrid == quadrature producer", relmax(fh, fq), 1e-14)
         rep.check(f"eps = 30 L: {name} analytic vs quadrature", relmax(fa, fq), tol)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

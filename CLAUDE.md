@@ -62,10 +62,16 @@ rather than skip without it.
    entrywise parity. A kernel, mesh or assembly change adds a gate.
    `verify_oracle_provenance` pins every oracle by resolved path AND sha256, so
    a deliberate edit must update `oracle_manifest.json` in the same commit.
-2. **Every gate prints `PASS:`/`FAIL:` at column 0 as its last such line and
-   exits 1 on FAIL.** Gates are spawned as subprocesses, by file path — never
-   imported into a shared interpreter, because the two kernel copies would
-   contend for one module identity and the `defaults` rebinds would leak.
+2. **Every gate is `main() -> bool`, prints `PASS:`/`FAIL:` at column 0 as its
+   last such line, and exits on it.** One convention, all 43: the return value
+   is the authority and the printed line cross-checks it, so a gate whose two
+   disagree is reported as MISMATCH rather than trusted. Do not write a
+   POSIX-style `return 0` for success — under `assert main()` that is exactly
+   inverted. `pytest` imports the gates and asserts on the return value;
+   `tests/run_all.py` spawns them and asserts on the exit code. A gate that
+   must own its interpreter (`verify_oracle_provenance`, which checks WHICH
+   file each oracle import resolves to) is listed in `test_gates.SUBPROCESS_ONLY`
+   with the reason.
 3. **The fault sign is stated once** (`FAULT_ORIENTATION`, `model/core.py`) and
    read through `RegionModel.orientation`. `Patch.value` on a fault is the
    Burgers vector `b = u(+n) - u(-n)`, the same sign as `clq` and cutde. Never

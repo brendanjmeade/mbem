@@ -87,11 +87,11 @@ def main(argv):
              "shapes": {k: v[1] for k, v in cur.items()}}, indent=1, sort_keys=True))
         print(f"regenerated {MANIFEST.name} with {len(cur)} entries -- "
               "the bitwise gate is now pinned to the CURRENT tree")
-        return 0
+        return True
 
     if not MANIFEST.exists():
         print(f"FAIL: baseline bitwise -- no manifest at {MANIFEST}")
-        return 1
+        return False
     man = json.loads(MANIFEST.read_text())
     want, shapes = man["entries"], man.get("shapes", {})
     cur = sweep()
@@ -124,8 +124,8 @@ def main(argv):
     n = len(set(want) & set(cur))
     print(f"{'FAIL' if bad else 'PASS'}: baseline bitwise, U/H/E vs "
           f"{man['baseline_commit']} ({n} arrays)")
-    return 1 if bad else 0
+    return not bad
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(0 if main(sys.argv[1:]) else 1)

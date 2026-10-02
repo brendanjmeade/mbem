@@ -35,6 +35,7 @@ far out; the README "Far field" note has the thin-triangle numbers.
 from __future__ import annotations
 
 import time
+import sys
 
 import numpy as np
 
@@ -207,8 +208,8 @@ def main():
         rep.check(f"p={p}: reference 24x24 vs 40x40 at D/L = 20",
                   ref_self[(p, 20.0)], TOL_REF_SELF)
     print(f"  runtime {time.perf_counter() - t0:.1f} s")
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

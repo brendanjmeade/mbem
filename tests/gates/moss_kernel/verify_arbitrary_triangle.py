@@ -55,6 +55,7 @@ from moss_kernel.analytical_kernels import (
     analytical_kelvin_stress,
     integrate_kelvin_stress_numerical,
 )
+import sys
 
 
 # ----------------------------------------------------------------------
@@ -311,4 +312,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

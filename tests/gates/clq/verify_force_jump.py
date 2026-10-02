@@ -35,6 +35,7 @@ import numpy as np
 
 from _common import MU, Report, relmax
 import clq
+import sys
 from clq.frame import local_frame
 from clq.moments import gauss_triangle
 from clq.pointwise import kelvin_G
@@ -161,8 +162,8 @@ def main():
     check_displacement_continuity(rep)
     check_equilibrium(rep)
     check_far_field(rep)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

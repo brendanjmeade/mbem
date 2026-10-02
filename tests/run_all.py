@@ -57,6 +57,13 @@ def verdict(stdout: str) -> str:
     Column 0 and last: every gate indents its per-clause lines, so an indented
     'PASS' is a clause and not the verdict, and gates that print a mid-run
     verdict are summarised by their final one.
+
+    This is no longer the authority -- every gate now returns its verdict and
+    exits on it, so the exit code decides. It is kept as a CROSS-CHECK: a gate
+    whose printed verdict disagrees with its exit code is reported as MISMATCH
+    rather than quietly trusted, because the two are meant to be one fact and a
+    disagreement means one of them is lying. Scraping was the only signal until
+    this run; 24 of 43 gates printed FAIL and exited 0.
     """
     for ln in reversed(stdout.splitlines()):
         if ln.startswith(("PASS", "FAIL")):
@@ -111,9 +118,10 @@ def main() -> int:
             proc = subprocess.run([sys.executable, str(path)], cwd=str(ROOT),
                                   capture_output=True, text=True,
                                   timeout=a.timeout)
-            v = verdict(proc.stdout)
-            if proc.returncode != 0:
-                v = "FAIL"
+            printed = verdict(proc.stdout)
+            v = "PASS" if proc.returncode == 0 else "FAIL"
+            if printed != v:
+                v = f"MISMATCH({printed}/rc{proc.returncode})"
             tail = proc.stdout.strip().splitlines()[-1:] if v != "PASS" else []
         except subprocess.TimeoutExpired:
             v, tail = "TIMEOUT", []

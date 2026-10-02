@@ -149,10 +149,11 @@ def _ring_clears_the_trace() -> bool:
         Patch(name, mesh, BCType.FREE_TRACTION)
     print(f"  [ok] the refined topo_inclusion geometry ({top.n_triangles} "
           f"host_top triangles) carries no collapsed element")
+    # Printed HERE rather than in __main__, so a caller that imports this gate
+    # and calls main() sees the verdict too -- every other gate prints its own.
+    print(("PASS" if ok else "FAIL") + ": RegionModel fault validation")
     return ok
 
 
 if __name__ == "__main__":
-    passed = main()
-    print(("PASS" if passed else "FAIL") + ": RegionModel fault validation")
-    sys.exit(0 if passed else 1)
+    sys.exit(0 if main() else 1)

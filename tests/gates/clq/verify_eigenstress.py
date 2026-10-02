@@ -41,6 +41,7 @@ import numpy as np
 
 from _common import TRI, MU, Report, relmax, msd_anelastic
 import clq
+import sys
 from clq import pointwise as pw
 from clq.frame import local_frame
 from clq.kernels import nodal_influence
@@ -237,8 +238,8 @@ def main():
     part_b(rep)
     tri, slips, ladder, peaks = part_c(rep)
     part_d(rep, tri, slips, ladder, peaks)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

@@ -39,6 +39,7 @@ import numpy as np
 
 from _common import MU, Report, relmax
 import clq
+import sys
 from clq.frame import local_frame
 from clq.moments import MomentTable, kernel_degrees, h0_floor
 from clq.shape import shape_functions, nodes, barycentric_grid
@@ -298,8 +299,8 @@ def main():
     check_internal_identity(rep)
     check_mixed_batch(rep)
     check_guards(rep)
-    rep.finish()
+    return rep.finish()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

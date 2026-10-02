@@ -38,7 +38,8 @@ single layer is continuous — that was the whole economy of the method.
 
 ## What worked, and is worth remembering
 
-* **It solved the production model.** `medt_paper/topo_inclusion`:
+* **It solved the production model.** The topo_inclusion model
+  (`src/mbem/cases/topo_inclusion.py`):
   22 545 unknowns vs 31 194 (−27.7 %), condition number 2.8e4 vs 4.4–5.8e5,
   both solves in ~25 s, correlation **+0.998** with the cached matching-BC
   solution, amplitude 12.4 % low at ε = 3 km (7.7 % with ε chosen per surface).
@@ -155,7 +156,7 @@ premise. Meanwhile the one decisive advantage (Dirichlet rows) applies to
   `want` keys `G`/`S`, P0/P1/P2, including `eps = 0` evaluated **on** the
   element, which the DD kernels cannot do. Correct, gated, and independent of
   this decision. Kept deliberately.
-* **`clq/verify/verify_baseline_bitwise.py`** — pins `U`/`H`/`E` against 648
+* **`tests/gates/clq/verify_baseline_bitwise.py`** — pins `U`/`H`/`E` against 648
   byte hashes from the pre-force-element tree. Written because the force-element
   work silently moved `U` by ~1e-16 and no existing gate could see it.
 * The measured fact that ε/h governs whether p-refinement pays (§2 above).

@@ -1,10 +1,10 @@
 # ddbem: findings
 
 Closed on 2026-09-19 after its P1/P2 kernels and solver were ported into
-`msd/mbem` (the trunk). The code is in git history at commit `aa80569`. The
+`src/mbem` (the trunk). The code is in git history at commit `aa80569`. The
 convergence study's cached results were deleted with the code; every number
 below is in this file. Slip sign throughout: ddbem/clq slip = u(+n) - u(-n),
-the same as msd/mbem.
+the same as `src/mbem`.
 
 At closure the trunk's P1/P2 solver was compared with ddbem entrywise on the
 80-triangle icosphere with an interior square fault (ddbem's exterior row
@@ -350,7 +350,8 @@ one check by 10 % of its threshold — a coincidence, not a pin.
 * **A free term for a fault that reaches the boundary.** A boundary collocation
   point within ~1 eps of a fault element sees the fault's blob average, not the
   one-sided value the BC means; the model warned, it did not correct. This is
-  the outcrop case in `medt_paper/topo_inclusion`.
+  the outcrop case of the topo_inclusion model
+  (`src/mbem/cases/topo_inclusion.py`).
 * **A smoothing operator for non-zero prescribed traction** — §5 measures the
   cost; free when `t_bar = 0`. **A pin on the shrink default** (above).
 
@@ -372,4 +373,4 @@ Pure Python + numpy: the same P0 slip → displacement matrix takes
 `mbem.kernels.tri_kernels.t_matrix_direct` (numba) 0.012 s at N_tri = 512 and
 0.137 s at 2048 — 930x and 470x faster. A P1/P2 model also collocates at `K`
 points per element, so its matrix is `3 K N_tri` square. That is why the port
-into `msd/mbem` is the trunk and this file is the record.
+into `src/mbem` is the trunk and this file is the record.

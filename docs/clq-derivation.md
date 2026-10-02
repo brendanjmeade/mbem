@@ -2,7 +2,7 @@
 
 This note states the closed-form results implemented in `clq` in the notation
 of the manuscript appendix *Closed-form mollified DD-triangle integration*
-(`moss/manuscript/appendix_kernels.tex`).  Everything reduces to the same
+(not in this repository).  Everything reduces to the same
 three ingredients as the constant-slip case — the Van Oosterom solid angle,
 elementary edge antiderivatives, and the in-plane moment recurrence — carried
 to higher order.  Section numbers in brackets refer to `clq` modules.
@@ -69,7 +69,7 @@ $K_{mn,k} = -C_{mnrs}C_{kjpq}n_j\,\partial_s\partial_q G^\varepsilon_{rp}$
 $\Delta\mathbf u = \mathbf u^{+} - \mathbf u^{-}$ with $+$ the side
 $\hat{\mathbf n}$ points to; $\hat{\mathbf n} = (\mathbf v_2-\mathbf v_1)\times(\mathbf v_3-\mathbf v_1)/|\cdot|$.
 
-*Remark (index pairing).* `msd/mollified_kernel/analytical_kernels.py` (pre-fix)
+*Remark (index pairing).* `src/mollified_kernel/analytical_kernels.py` (pre-fix)
 and its batch/numba twins carried $\lambda$ on the first term of (1.1) and
 $\mu$ on the second; the two forms coincide iff $\lambda=\mu$ ($\nu = 1/4$).
 Convention-free tests that distinguish them: the closed-surface identity
@@ -77,7 +77,7 @@ $\sum_{\mathcal T}\mathbf U = -\mathbf I$ inside a closed mesh, and the
 displacement jump across an element (section 7).  `moss` commit `f721a6a`
 carries (1.1); `msd` is fixed in the same session as this note.
 
-## 2. Nodal slip [`clq/shape.py`]
+## 2. Nodal slip [`src/clq/shape.py`]
 
 Lagrange interpolation of order $p$ on $\mathcal T$: $K=(p+1)(p+2)/2$ nodes at
 barycentric positions $\boldsymbol\alpha/p$, $|\boldsymbol\alpha|=p$, with
@@ -135,7 +135,7 @@ $$
 so that $u_i=\sum_k U^{(k)}_{ij}s_{k,j}$, $\sigma^{\rm tot}_{mn}=\sum_k H^{(k)}_{mn,j}s_{k,j}$ and
 (section 6) $C\!:\!\boldsymbol\varepsilon^*=\sum_k E^{(k)}\big[\lambda(\mathbf s_k\!\cdot\!\hat{\mathbf n})\mathbf I+\mu(\mathbf s_k\hat{\mathbf n}^{\sf T}+\hat{\mathbf n}\mathbf s_k^{\sf T})\big]$.
 
-## 4. In-plane moments to arbitrary order [`clq/moments.py`, `clq/primitives.py`]
+## 4. In-plane moments to arbitrary order [`src/clq/moments.py`, `src/clq/primitives.py`]
 
 Definition (appendix eq. Mab_def), $R_\varepsilon^2=\xi_1^2+\xi_2^2+h_\varepsilon^2$,
 $h_\varepsilon^2=z^2+\varepsilon^2$:
@@ -255,7 +255,7 @@ $\min|u|\ge2\rho_\varepsilon$) or $(u/\rho_\varepsilon)^2$ ($\max|u|\le\rho_\var
 Every regime agrees with a 40-digit reference to rounding
 (`verify_primitives.py`).
 
-## 5. Weighted moments, lift and the closed-form kernels [`clq/kernels.py`]
+## 5. Weighted moments, lift and the closed-form kernels [`src/clq/kernels.py`]
 
 Per node, the shape polynomial shifts the table:
 
@@ -316,7 +316,7 @@ shift of the table (one extra order at every $n$).  **Quadratic slip** adds the
 second-moment shift with the six coefficients of section 2 (two extra orders).
 Constant slip is the case $c_{00}=1$; the three orders share one code path.
 
-## 6. Exact eigenstress of the smeared slip [`clq/api.py`]
+## 6. Exact eigenstress of the smeared slip [`src/clq/api.py`]
 
 Because $G^\varepsilon=G^0*\phi_\varepsilon$, the mollified dislocation field is the
 exact elastic response to the eigenstrain
@@ -336,7 +336,7 @@ the elastic-stress scale (the quantity it is subtracted from), not relative to
 itself.  Infinite-plane limit
 ($\mathcal T\to$ plane, interior points): $E^{(k)}\to\rho_\varepsilon(z)N_k(\mathbf x_\parallel)+\varepsilon^4\nabla^2N_k/(8h_\varepsilon^3)$
 with $\rho_\varepsilon(z)=\tfrac34\varepsilon^4/(z^2+\varepsilon^2)^{5/2}$ — the marginal used by
-`msd/anelastic.py` (`verify_eigenstress.py`).  On the fault the raw kernel
+`src/anelastic.py` (`verify_eigenstress.py`).  On the fault the raw kernel
 peaks at $\tfrac34\mu\,s(\mathbf x)/\varepsilon$; the elastic stress is bounded and
 converges as $\varepsilon\to0$ (`fig_eps_finiteness`).
 
@@ -345,9 +345,9 @@ body force, not an eigenstrain: (1.2) already solves
 $\partial_j\sigma_{ij}+(\phi_\varepsilon*f)_i=0$, so $S^{(k)}$ *is* the elastic
 stress and there is nothing to subtract.  `clq.force_stress` therefore takes no
 `subtract_eigenstress` argument (in contrast with `clq.stress`, whose default is
-the tree-wide policy of `../BACKLOG.md`), and passing one raises.
+the tree-wide policy of `BACKLOG.md`), and passing one raises.
 
-## 7. Identities and limits (all gated in `verify/`)
+## 7. Identities and limits (all gated in `tests/gates/clq/`)
 
 * $\varepsilon\to0$ off the plane: $h_\varepsilon\to|z|$ reproduces the singular closed form
   (allowed in `clq`; $\varepsilon=0$ on the plane raises on every code path).
@@ -379,7 +379,7 @@ the tree-wide policy of `../BACKLOG.md`), and passing one raises.
   pairing, this rejects a swapped displacement contraction (the `msd` pre-fix
   state); the absolute pairing itself is fixed by the Volterra derivation and
   by the convention-free closed-surface closure and jump tests
-  (`msd/verify/verify_dd_pairing.py`, `verify_jump.py`).
+  (`tests/gates/mbem/verify_dd_pairing.py`, `verify_jump.py`).
 * Displacement jump: for interior points of a large element,
   $\mathbf u(\mathbf x+z_0\hat{\mathbf n})-\mathbf u(\mathbf x-z_0\hat{\mathbf n})\to f(z_0/\varepsilon)\,\Delta\mathbf u(\mathbf x)$
   with $f(t)=t(2t^2+3)/(2(1+t^2)^{3/2})$ (the mass of the mollified profile $\rho_\varepsilon$ within $\pm t\varepsilon$, i.e. $2F(t)-1$ with $F$ its CDF), at every $\nu$.
@@ -411,12 +411,12 @@ the tree-wide policy of `../BACKLOG.md`), and passing one raises.
 
 | equation / object | module | gate |
 |---|---|---|
-| $J_m,K_m,P^m_k$, stable differences, solid angle | `clq/primitives.py` | `verify_primitives.py` |
-| seeds, master recurrence, degrees, $W^{(k)}$, far-field producer | `clq/moments.py` | `verify_moments.py`, `verify_far_field.py` |
-| nodes, $N_{\boldsymbol\alpha}$, $c^{(k)}_{ab}$, interpolation, grids | `clq/shape.py` | `verify_identities.py`, `verify_api.py` |
-| lift, $G^1$, $U$, $\overline{\mathcal D}$, $H$, $E$ | `clq/kernels.py` | `verify_nodal_vs_quadrature.py`, `verify_subdivision.py`, `verify_hooke_consistency.py`, `verify_jump.py` |
-| force kernels $G^{(k)}$, $S^{(k)}$, reciprocity (5.1) | `clq/kernels.py` | `verify_force_jump.py`, `verify_identities.py`, `verify_nodal_vs_quadrature.py`, `verify_hooke_consistency.py` |
-| $h_\varepsilon=0$ floor, decoupled seeds, $\rho=0$ primitives | `clq/moments.py`, `clq/primitives.py` | `verify_force_on_element.py`, `verify_primitives.py` |
-| public API, $\boldsymbol\sigma_{\rm el}$, $C\!:\!\boldsymbol\varepsilon^*$ | `clq/api.py` | `verify_api.py`, `verify_eigenstress.py` |
-| point kernels, blob, oracle quadrature | `clq/pointwise.py`, `clq/quadrature.py` | `verify_pointwise.py` |
+| $J_m,K_m,P^m_k$, stable differences, solid angle | `src/clq/primitives.py` | `verify_primitives.py` |
+| seeds, master recurrence, degrees, $W^{(k)}$, far-field producer | `src/clq/moments.py` | `verify_moments.py`, `verify_far_field.py` |
+| nodes, $N_{\boldsymbol\alpha}$, $c^{(k)}_{ab}$, interpolation, grids | `src/clq/shape.py` | `verify_identities.py`, `verify_api.py` |
+| lift, $G^1$, $U$, $\overline{\mathcal D}$, $H$, $E$ | `src/clq/kernels.py` | `verify_nodal_vs_quadrature.py`, `verify_subdivision.py`, `verify_hooke_consistency.py`, `verify_jump.py` |
+| force kernels $G^{(k)}$, $S^{(k)}$, reciprocity (5.1) | `src/clq/kernels.py` | `verify_force_jump.py`, `verify_identities.py`, `verify_nodal_vs_quadrature.py`, `verify_hooke_consistency.py` |
+| $h_\varepsilon=0$ floor, decoupled seeds, $\rho=0$ primitives | `src/clq/moments.py`, `src/clq/primitives.py` | `verify_force_on_element.py`, `verify_primitives.py` |
+| public API, $\boldsymbol\sigma_{\rm el}$, $C\!:\!\boldsymbol\varepsilon^*$ | `src/clq/api.py` | `verify_api.py`, `verify_eigenstress.py` |
+| point kernels, blob, oracle quadrature | `src/clq/pointwise.py`, `src/clq/quadrature.py` | `verify_pointwise.py` |
 | constant-density parity with the frozen oracles ($U$, $H$, $G$, $S$) | — | `verify_order0_parity.py` |

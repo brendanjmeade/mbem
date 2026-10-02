@@ -1,10 +1,11 @@
 # clq — constant, linear and quadratic slip *and force* on an arbitrary triangle, in closed form
 
-**Frozen oracle.** The trunk of the program is `msd/mbem`, whose numba
-general-order kernels (`mbem/kernels/tri_nodal.py`) are gated against `clq`
-at 1e-12 (`msd/verify/verify_nodal_kernels.py`). `clq` is kept as that
-reference and is not developed further; `verify/run_all.py` must stay green.
-The figures of `examples/` are regenerated on demand and not tracked.
+**Frozen oracle.** The trunk of the program is `src/mbem`, whose numba
+general-order kernels (`src/mbem/kernels/tri_nodal.py`) are gated against `clq`
+at 1e-12 (`tests/gates/mbem/verify_nodal_kernels.py`). `clq` is kept as that
+reference and is not developed further; its 16 gates
+(`python tests/run_all.py --suite clq`) must stay green. The figures of
+`studies/clq/` are regenerated on demand and not tracked.
 
 `clq` computes the displacement and stress of a **mollified** (Cortez,
 `R = sqrt(r^2 + eps^2)`) source on one flat triangle in a 3-D elastic full
@@ -13,10 +14,10 @@ space, **analytically**, for a density that varies as a polynomial of degree
 source types share the same machinery: a **dislocation** (slip) source, and a
 **force** source -- the Kelvin single layer, a force per unit area, which is
 what an equivalent-body-force BEM needs for material contrasts and
-topography.  It generalises the constant-slip closed form of the
-`msd`/`moss` research codes (manuscript appendix "Closed-form mollified
+topography.  It generalises the constant-slip closed form of the two
+`*_kernel` oracle packages (manuscript appendix "Closed-form mollified
 DD-triangle integration") by carrying the same edge recurrence two orders
-higher; the derivation is in `docs/derivation.md`.
+higher; the derivation is in `docs/clq-derivation.md`.
 
 ```python
 import numpy as np, clq
@@ -49,17 +50,17 @@ unit); the examples use L = mu = s = 1.
 
 | module | content |
 |---|---|
-| `clq/primitives.py` | edge antiderivatives `J_m, K_m, int u^k/R^m du` for every odd `m` (incl. the new `J_{-1} = int R du`), cancellation-free differences in every regime, solid angle |
-| `clq/moments.py` | in-plane moment table `M_n^{(a,b)}` to arbitrary order by the divergence-theorem recurrence; per-node weighted tables; Gauss far-field producer (hybrid beyond `D_STAR * L`) |
-| `clq/shape.py` | P0/P1/P2 (any order) Lagrange nodes and shape polynomials, interpolation, on-triangle grids |
-| `clq/kernels.py` | lift to tensor moments and the contractions: slip -> displacement (`U`), slip -> total stress (`H`), eigenstress weight (`E`), force -> displacement (`G`), force -> stress (`S`) |
-| `clq/api.py` | `influence`, `displacement`, `stress`, `eigenstress`, `traction`, `force_displacement`, `force_stress` |
-| `clq/pointwise.py`, `clq/quadrature.py` | point kernels and Gauss quadrature used only as oracles |
-| `verify/` | PASS/FAIL gates (`python verify/run_all.py`) |
-| `examples/` | figures for one equilateral triangle and a quickstart |
-| `docs/derivation.md` | the closed-form statement and numerics |
+| `src/clq/primitives.py` | edge antiderivatives `J_m, K_m, int u^k/R^m du` for every odd `m` (incl. the new `J_{-1} = int R du`), cancellation-free differences in every regime, solid angle |
+| `src/clq/moments.py` | in-plane moment table `M_n^{(a,b)}` to arbitrary order by the divergence-theorem recurrence; per-node weighted tables; Gauss far-field producer (hybrid beyond `D_STAR * L`) |
+| `src/clq/shape.py` | P0/P1/P2 (any order) Lagrange nodes and shape polynomials, interpolation, on-triangle grids |
+| `src/clq/kernels.py` | lift to tensor moments and the contractions: slip -> displacement (`U`), slip -> total stress (`H`), eigenstress weight (`E`), force -> displacement (`G`), force -> stress (`S`) |
+| `src/clq/api.py` | `influence`, `displacement`, `stress`, `eigenstress`, `traction`, `force_displacement`, `force_stress` |
+| `src/clq/pointwise.py`, `src/clq/quadrature.py` | point kernels and Gauss quadrature used only as oracles |
+| `tests/gates/clq/` | PASS/FAIL gates (`python tests/run_all.py --suite clq`) |
+| `studies/clq/` | figures for one equilateral triangle and a quickstart |
+| `docs/clq-derivation.md` | the closed-form statement and numerics |
 
-Stress readout policy (tree-wide, see `../BACKLOG.md`): the kernel
+Stress readout policy (tree-wide, see `BACKLOG.md`): the kernel
 returns the TOTAL stress `C:(eps_el + eps*)` of the smeared slip; on the fault
 it is dominated by the eigenstress `C:eps*` ~ (3/4) mu s/eps.  `clq.stress`
 subtracts the **exact** finite-triangle eigenstress
@@ -99,26 +100,25 @@ element carries `int sigma.nhat dS = -int f dS` (gate 1e-6; measured
 
 ## Running
 
-Use any Python 3 with numpy (`requirements.txt`): matplotlib for the
-examples, and sympy + mpmath for three of the gates (`verify_primitives.py`,
-`verify_pointwise.py`, `verify_regressions.py`; they fail on import without
-them).  No install step; run everything from the clq root.
-`verify/run_all.py` starts each gate with the same interpreter it was
-launched with (`sys.executable`).
+`pip install -e .` once and `import clq` works from anywhere; sympy and mpmath
+are needed by three of the gates (`verify_primitives.py`,
+`verify_pointwise.py`, `verify_regressions.py`, which fail on import without
+them) and come with `pip install -e '.[test]'`.  `run_all.py` starts each gate
+with the same interpreter it was launched with (`sys.executable`).
 
 ```bash
-PY=/Users/meade/micromamba/bin/python                   # example (this machine); any such Python works
-cd /Users/meade/Desktop/moss-org/clq
-$PY verify/run_all.py                                   # all gates
-$PY examples/demo_quickstart.py
-$PY examples/demo_onfault_displacement.py               # fig_onfault_displacement
-$PY examples/demo_onfault_stress.py                     # fig_onfault_stress_elastic, fig_onfault_stress_total, fig_nearfault_stress_elastic
-$PY examples/demo_eps_finiteness.py                     # fig_eps_finiteness
-$PY examples/demo_jump_profiles.py                      # fig_jump_profiles
-$PY examples/demo_face_pressure.py                      # fig_slip_contours, fig_face_pressure (mean stress on the fault faces)
+python tests/run_all.py --suite clq                     # all 16 gates
+python studies/clq/demo_quickstart.py
+python studies/clq/demo_onfault_displacement.py         # fig_onfault_displacement
+python studies/clq/demo_onfault_stress.py               # fig_onfault_stress_elastic, fig_onfault_stress_total, fig_nearfault_stress_elastic
+python studies/clq/demo_eps_finiteness.py               # fig_eps_finiteness
+python studies/clq/demo_jump_profiles.py                # fig_jump_profiles
+python studies/clq/demo_face_pressure.py                # fig_slip_contours, fig_face_pressure (mean stress on the fault faces)
+python studies/clq/demo_force_element.py                # the force (single-layer) element
 ```
 
-Figures are written to the clq root as `.png` and `.pdf`.
+Figures are written beside the script, in `studies/clq/`, as `.png` and `.pdf`
+(both gitignored).
 
 | gate | what it checks |
 |---|---|
@@ -142,11 +142,11 @@ Figures are written to the clq root as `.png` and `.pdf`.
 ## Notes
 
 * Correctness finding (2026-09-04): the slip -> displacement contraction in
-  `msd` (scalar, batch and numba T-kernel basis) had lambda and mu swapped
+  the trunk (scalar, batch and numba T-kernel basis) had lambda and mu swapped
   relative to the traction-operator pairing used here (invisible at nu = 1/4).
-  `clq` implements the correct form (`docs/derivation.md`, eq. 1.1) and gates
-  it by Hooke consistency and the displacement-jump test; `msd` is fixed in
-  the same session (`msd/verify/verify_dd_pairing.py`).
+  `clq` implements the correct form (`docs/clq-derivation.md`, eq. 1.1) and gates
+  it by Hooke consistency and the displacement-jump test; the trunk was fixed
+  in the same session (`tests/gates/mbem/verify_dd_pairing.py`).
 * Far field: **use the default `far_field="hybrid"`.** The closed-form
   moments lose digits quickly as the observer's effective distance
   `R = sqrt(D^2 + eps^2)` grows (D from the centroid, L = longest edge).  The

@@ -1,13 +1,14 @@
 # Figure gallery
 
-The **curated** copies of the study figures, one fixed filename per figure, and
-the only figures tracked in git.
+Empty by design. This is where `python -m mbem publish <run-dir>` copies the
+figures you choose to keep, together with a line in `PROVENANCE.tsv` naming the
+run, the commit and the file hash.
 
-A study writes its figures beside itself in `studies/`, which is gitignored. It
-does **not** touch this directory. Promoting a figure here is a deliberate act,
-because the alternative is what this repo did before: every demo overwrote one
-tracked PNG in place, so the committed image was simply the output of whoever
-ran it last, with no record of which code or configuration produced it.
+Nothing writes here as a side effect. Before this, every demo overwrote one
+tracked image in place, so the committed figure was whatever ran last and nothing
+recorded which code, which eps or which backend produced it -- the twelve images
+this directory used to hold were outputs of scripts that no longer exist, with no
+way to tell what they came from. They are in git history if anyone needs them.
 
-PDFs are ignored (regenerable at 500 dpi from the same script); the PNGs are
-what `README.md` displays.
+A run keeps its own figures in its own directory under `runs/`; publishing is the
+deliberate act of promoting one.

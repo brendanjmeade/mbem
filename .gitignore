@@ -26,11 +26,13 @@ studies/**/fig_*.pdf
 studies/**/fig_*.png
 docs/figures/*.pdf
 
-# Solver output npz written by the studies. The DENSE topo_inclusion fields are
-# tracked as the reference the compressed backends are compared against; the
-# per-backend copies and the fig06 assessment are regenerable.
-studies/mbem/topo_inclusion_fields_mu10_*.npz
-studies/mbem/fig06_assessment.npz
+# Solver output npz written by the studies. NOTHING binary is tracked any more:
+# a run's fields belong in its own runs/ directory with the provenance of the
+# solve that made them, and these are all regenerable
+# (python -m mbem.cases.topo_inclusion, ~2 min).
+studies/mbem/*.npz
 
-# bench_scaling's mesh cache (regenerable; the mesher takes 5 min at 168k)
+# bench_scaling's mesh cache defaults to ~/.cache/msd_bench_meshes, OUTSIDE the
+# tree, because the mesher takes ~5 min at 168k and a cache is not source. This
+# rule only covers --mesh-cache being pointed back in here.
 studies/mbem/_cache/

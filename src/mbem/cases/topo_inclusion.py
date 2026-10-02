@@ -31,9 +31,11 @@ second material state exercises ``rebuild_for_materials`` on whichever
 far field was built, which is the one path a single-solve benchmark
 never reaches.
 
-Writes fields to examples/topo_inclusion_fields_mu10.npz (the input to
-render_topo_inclusion.py) for ``dense``, and to a ``_<backend>``-suffixed
-file otherwise, so a cross-backend run never overwrites the reference.
+Writes fields beside this module, ``_<backend>``-suffixed for anything but
+``dense``. This driver predates the config layer and is kept because the gates
+import ``build``/``build_model`` from it; the figure path is
+``mbem run configs/topo_inclusion.py --sweep surface=topo,flat``, which solves
+the same four states as two runs and draws the decomposition across them.
 
 Run:  python -m mbem.cases.topo_inclusion [--backend hmat]
 """

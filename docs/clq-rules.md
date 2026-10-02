@@ -43,7 +43,7 @@ nothing in the code assumes a particular path.
 PY=/Users/meade/micromamba/bin/python     # this machine; any numpy (+sympy, mpmath) Python works
 $PY verify/run_all.py           # every verify_*.py prints one final PASS/FAIL line
 $PY examples/demo_quickstart.py
-$PY examples/demo_onfault_stress.py    # figures go to the clq root as fig_*.png/.pdf
+$PY studies/clq/demo_onfault_stress.py   # figures land beside the script
 ```
 
 Scripts insert the clq root on `sys.path` themselves (`verify/_common.py`,

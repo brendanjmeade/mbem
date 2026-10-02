@@ -75,7 +75,7 @@ slip -> displacement source on the RHS), the eigenstress never enters the solve
 — subtracting it there would be wrong.  It belongs in the **stress readout**:
 `mbem.evaluate_stress` sums the boundary and fault stress kernels and removes the
 fault eigenstress, producing the genuine on-fault elastic (Coulomb) stress the
-BEM previously could not.  `studies/mbem/demo_bem_onfault_stress.py` reads it off a
+BEM previously could not.  `configs/onfault_stress.py` reads it off a
 free-surface box solve and recovers the half-space dislocation stress.
 
 ## Layout
@@ -187,32 +187,65 @@ compression primitive alone.
 
 ## Examples
 
-Run from the package root; each writes `fig_*.png/.pdf` to the repo root.
+Every figure is produced by a named maker, and the output lands in a new
+directory under `runs/` together with the provenance of whatever produced it.
+Three kinds, because the figures are genuinely of three shapes:
 
-| Feature | Script |
-|---|---|
-| Mollified **point-source** kernel (singular vs mollified) | `python studies/mbem/demo_point_kernel.py` |
-| **Triangle full-space solution** — minimal easy-calling | `python studies/mbem/demo_triangle_quickstart.py` |
-| Triangle stress field / integration methods | `python studies/mbem/demo_triangle_field.py` |
-| Mollified field over an `eps` ladder | `python studies/mbem/demo_triangle_eps_sweep.py` |
-| **eps–h convergence** (analytic decoupling) | `python studies/mbem/demo_eps_h_convergence.py` |
-| **BEM eps-convergence** at fixed mesh | `python studies/mbem/demo_bem_eps_convergence.py` |
-| **Fault-only** BEM (displacement + elastic stress) | `python studies/mbem/demo_fault_only.py` |
-| **On-fault stress convergence** (elastic, full-space; ->const, vs classical TDE) | `python studies/mbem/demo_onfault_convergence.py` |
-| **On-fault stress from a BEM solve** (elastic, vs half-space TDE) | `python studies/mbem/demo_bem_onfault_stress.py` |
-| **Fault + inclusion + topography** BEM | `python studies/mbem/make_topo_inclusion.py` then `python studies/mbem/render_topo_inclusion_contour.py --smooth` |
-| **H-matrix** (block-compressed FGMRES vs dense) | `python studies/mbem/demo_hmatrix.py` |
-| **Anelastic term subtraction** (finiteness) | `python studies/mbem/demo_anelastic_subtraction.py` |
+**Model-free** — the kernels alone, no solve:
+
+```
+python -m mbem figure point_kernel            # singular vs mollified point source
+python -m mbem figure triangle_field          # triangle stress field
+python -m mbem figure triangle_eps_sweep      # the field over an eps ladder
+python -m mbem figure eps_h_convergence       # eps-h decoupling (analytic)
+python -m mbem figure anelastic_subtraction   # the anelastic term is finite
+python -m mbem figure onfault_convergence     # on-fault stress -> const, vs TDE
+python studies/mbem/demo_triangle_quickstart.py     # prints numbers, no figure
+```
+
+**One solve:**
+
+```
+python -m mbem run configs/fault_only.py      # displacement + elastic surface stress
+```
+
+**Several runs**, because the quantity drawn is a difference between operators —
+a different mesh, eps or backend is a different operator, so it is a different
+run:
+
+```
+# fault + inclusion + topography: the four-state decomposition
+python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
+
+# the fast operator against the reference, same model and eps
+python -m mbem run configs/backend_agreement.py --sweep backend=hmat,dense
+
+# surface field convergence in eps, at a fixed mesh
+python -m mbem run configs/eps_convergence.py --sweep eps=12,8,6,4,3,2
+
+# on-fault shear vs the classical TDE, and the first-row P0/P1 contrast
+python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
+```
+
+`python -m mbem publish <run-dir>` copies chosen figures into the tracked
+gallery at `docs/figures/` and appends a provenance line naming the run, the
+commit and the file hash. Nothing writes there as a side effect: before this,
+every demo overwrote one tracked image in place, so the committed figure was
+whatever ran last and nothing recorded which code produced it.
 
 The BEM demos run at paper resolution (tens of seconds to a few minutes; the
 four-state topography+inclusion solve is the longest).  The free surfaces are
 fault-ALIGNED (the surface-breaking fault trace is embedded as exact mesh edges
 via `make_top_patch_with_fault`), so no triangle straddles the slip
 discontinuity.  The `--mu-inc 3.0` inclusion is the soft `mu/10` body in the
-showcase; `render_topo_inclusion_contour.py` grids the surface displacements
-(500x500) and draws filled contours for the four-state decomposition (full /
-inclusion-only / topography-only / topography+inclusion).  A simpler
-flat-shaded renderer (`render_topo_inclusion.py`) is also provided.
+showcase.  The `topo_inclusion_showcase` figure draws the three rows of the
+decomposition (raw field / inclusion effect / topography effect) and
+`topo_inclusion_contour` the topography effect alone.
+
+The topography effect differences two fields that agree to 43-72x their
+difference, so it inherits ~2e-4 relative error from fields accurate to ~2e-6.
+That is a property of the quantity, not of the backend: the ACA and FMM far
+fields land in the same place.
 
 The H-matrix demo solves the `mu/10` inclusion with the block-compressed backend
 (`mbem.backends.HBackend(eta=0.8)`, ACA + preconditioned FGMRES) and reproduces

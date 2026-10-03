@@ -253,15 +253,28 @@ Measured on the manufactured `u = A x` box, whose interior stress is exactly
 | deep interior, h = 5 km | 6.8e-3 | 1.71e-2 | 4.13e-2 |
 | degradation near a boundary (`clearance_h` 0.15-0.3) | 12.9x | 4.7x | 2.9x |
 
-So there is a floor everywhere, **flat in h and linear in eps** — about
-`0.5 (eps/L)` for a domain of size L, so 1 % needs eps <~ 0.02 L. It is NOT the
-mollification making this a different problem, which was the first guess: a
-radially symmetric unit-integral blob has zero first moment, so convolving a
-LINEAR field with it returns that field exactly. Imposing a CONSTANT field on
-the same box gives an interior stress error of 3.2e-15 at every eps, and the
-error appears only once the field has a gradient — so the floor is the free
-term, which the calibrated formulation makes exact to zeroth order and no
-further. A property of the formulation, not of the regularization.
+So there is a floor everywhere, and it is **eps/L for the DOMAIN size L** —
+not eps/h. So 1 % needs eps <~ 0.01 L, and refining the mesh does not help.
+Measured, each factor isolated:
+
+| held fixed | varied | result |
+|---|---|---|
+| L, eps | h: 10 -> 5 km | moves under 8 % |
+| L, h | eps x8 | `eps^1.01` at P1 and P2 |
+| eps, eps/h = 0.145 | L: 40 -> 120 km | `err*L/eps` = 1.060, 1.091, 1.101 (`err*h/eps` moves 3x) |
+| L, h, eps | order P0 -> P1 -> P2 | P1 and P2 agree to 0.5 % |
+| L, h, eps | jump calibrated -> half | agree to 9 % |
+| — | a CONSTANT field | 3e-15 at every eps and every order |
+
+It is not the discretization (flat in h), not the density order (P1 == P2), and
+not the calibration (half == calibrated). What is left is the smeared boundary
+itself: in the interior a symmetric unit-integral blob has zero first moment and
+reproduces a linear field exactly, but AT A BOUNDARY the body is on one side
+only, the convolution is truncated, and the effective surface sits O(eps) off —
+which costs a field with a gradient a relative `eps/L`. That last step is an
+inference from the scalings rather than a derivation, but it is what survives
+after order and free term were ruled out, and it predicts the asymmetry below:
+a fault is interior, its blob is two-sided, and this error does not arise there.
 
 Proximity to a *solved* boundary degrades it a further 3-13x on top. Neither
 variable governs alone: binning on `clearance_h` leaves a 4.2x spread across

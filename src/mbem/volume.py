@@ -29,16 +29,24 @@ a 3x3 grid of h in (20, 10, 5) km and eps in (0.6, 1.5, 3.6) km:
   the point of the method, not a caveat. It is written out as its own field so
   it can be SEEN (85.7 MPa on a surface against 0.03 MPa in the interior on
   the showcase model), not because it contaminates anything.
-* a floor that is linear in eps and FLAT IN h: at clearance_h > 2 the relative
-  stress residual is 7.3e-3 / 1.7e-2 / 4.1e-2 for eps = 0.6 / 1.5 / 3.6, and
-  halving h from 10 to 5 km moves it under 8 %. It is NOT the mollification
-  changing the problem, which was the first guess: a radially symmetric
-  unit-integral blob has zero first moment, so convolving a LINEAR field with
-  it returns that field exactly. Measured on the same box, the interior stress
-  error is 3.2e-15 at EVERY eps for a constant field and O(eps) the moment the
-  field has a gradient -- so the floor is the free-term / jump relation, which
-  the calibrated diagonal makes exact to zeroth order only. A property of the
-  formulation, not of the regularization.
+* a floor that is **eps/L**, L the DOMAIN size -- not eps/h, and nothing to do
+  with the mesh. Measured, each holding the others fixed: flat in h (halving h
+  moves it under 8 %); exactly eps^1.01 at P1 and P2; and with eps/h pinned at
+  0.145 while only the box grows, error * L/eps is 1.060 / 1.091 / 1.101 at
+  L = 40 / 80 / 120 km while error * h/eps moves 3x. It survives everything
+  that could have been blamed: P1 and P2 agree with each other to 0.5 %, and
+  jump="half" agrees with "calibrated" to 9 %. For a CONSTANT field it is
+  machine zero (3e-15) at every eps and every order.
+
+  What has that signature is the smeared boundary ITSELF. In the interior a
+  symmetric unit-integral blob has zero first moment and reproduces a linear
+  field exactly; AT A BOUNDARY the body is on one side only, so the convolution
+  is truncated, the cancellation fails, and the effective surface sits O(eps)
+  off. A field with a gradient then carries a relative error ~eps/L. That is an
+  inference from the scalings, not a derivation -- but it is the only candidate
+  left standing after order and free term were both ruled out, and it predicts
+  the asymmetry below: a FAULT is interior, so its blob is two-sided and this
+  error does not arise there.
 * **proximity to a SOLVED boundary degrades it on top of that floor**, by 3-13x
   at clearance_h in 0.15-0.3, worst where the floor is lowest (12.9x at
   eps = 0.6, 2.9x at eps = 3.6). A fault is exempt, and the reason is stronger

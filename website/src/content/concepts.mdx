@@ -131,18 +131,33 @@ boundary — over a grid of element sizes $h$ and widths $\varepsilon$ given
 Read the first two rows: **halving the mesh changes nothing**, while $\varepsilon$
 times 2.4 multiplies the error by 2.4.
 
-It is tempting to call that an intrinsic cost of mollification — the mollified
-problem simply being a different problem from the sharp one. **It is not**, and
-the source picture says why. A radially symmetric blob of unit integral has zero
-first moment, so convolving a *linear* field with it returns that field exactly;
-if the floor were the mollification, it would vanish for $\mathbf{u} =
-\mathbf{A}\mathbf{x}$, which is linear. Imposing a *constant* field on the same
-box instead gives an interior stress error of $3\times10^{-15}$ at **every**
-$\varepsilon$, and the error appears only once the field has a gradient. So the
-floor is the free term — the jump relation that the calibrated formulation makes
-exact to zeroth order and no further. It is a property of how the boundary
-condition is imposed, not of the regularization, and a higher-order calibration
-would move it.
+What that floor *is* took four measurements to pin down, and the first three
+answers were wrong.
+
+It is not the discretization: halving $h$ moves it by under 8 %. It is not the
+density order: P1 and P2 agree with each other to 0.5 %, and P1 represents
+$\mathbf{u} = \mathbf{A}\mathbf{x}$ exactly, so if the floor were the
+piecewise-constant density it would have collapsed. It is not the free term
+either: the calibrated diagonal and the analytic half-jump agree to 9 %. And it
+is not simply "the mollified problem is a different problem" — a symmetric
+unit-integral blob has zero first moment, so a *linear* field convolves to
+itself exactly, and a constant field indeed comes back at $3\times10^{-15}$ for
+every $\varepsilon$ and every order.
+
+What the floor scales with is the **domain**. Holding $\varepsilon/h$ fixed at
+0.145 and growing only the box, the error times $L/\varepsilon$ is 1.060, 1.091,
+1.101 at $L$ = 40, 80, 120 km, while the same error times $h/\varepsilon$ moves
+by a factor of three. So the floor is $\varepsilon/L$, and one per cent asks for
+$\varepsilon \lesssim 0.01\,L$ no matter how fine the mesh.
+
+The reading that survives: **the smeared boundary itself**. In the interior the
+blob is symmetric and preserves linear fields; at a boundary the body lies on
+one side only, the convolution is truncated, the cancellation fails, and the
+effective surface sits $O(\varepsilon)$ away from the nominal one — which costs
+a field with a gradient a relative $\varepsilon/L$. That last step is inference
+from the scalings rather than derivation. But it is what is left after order and
+free term were each ruled out by measurement, and it predicts the asymmetry
+below.
 
 The third row is a different effect again, and here the asymmetry matters. Near
 a boundary whose density was **solved for**, the piecewise-constant

@@ -221,6 +221,30 @@ def b_classification() -> None:
     check("a point just above the hill crest is outside",
           not bool(model.point_in_region("host", above[None])[0]))
 
+    # NO SAMPLE MAY LIE ON A PATCH. A point on the surface has a genuinely
+    # ambiguous solid angle (2 pi, not 0 or 4 pi), so its side is decided by
+    # floating point -- measured 149 of 400 samples on one box face landing
+    # "inside" before make_grid was offset by half a cell. The symptom was a
+    # ragged one-cell jitter along every axis-aligned face, which looks like a
+    # renderer bug and is not one.
+    from mbem.cases.registry import topo_inclusion_meshes as _tim  # noqa: F401
+    grid = V.make_grid(model, 8.0, pad=8.0)
+    worst = np.inf
+    for rr in model.regions:
+        for pp in rr.patches:
+            dd, _ = distance_to_mesh(grid.points, pp.mesh)
+            worst = min(worst, float(dd.min()))
+    check("no grid sample lies ON a patch", worst > 1e-6,
+          f"closest {worst:.4f} km")
+    # On an axis-aligned body the interior mask must be a clean rectangle: a
+    # ragged row width is the tie above, showing up as geometry.
+    code2 = V.classify(model, grid)
+    mid = code2.reshape(grid.shape)[grid.shape[0] // 2] > 0
+    rows = mid.sum(axis=1)
+    occ = rows[rows > 0]
+    check("the interior mask is not ragged", occ.min() == occ.max(),
+          f"row widths {occ.min()}..{occ.max()}")
+
     # And the identity itself, read raw: 4*pi inside, 0 outside.
     inside_pt = np.array([[0.0, 0.0, -100.0]])
     s_in = sum(model.orientation(model.regions[0], p)

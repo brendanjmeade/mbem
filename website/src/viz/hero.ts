@@ -17,9 +17,10 @@ export async function startHero(el: HTMLElement, baseUrl: string) {
   const state = Object.keys(p.manifest.states)
     .find((s) => !s.startsWith("diff_")) ?? Object.keys(p.manifest.states)[0];
   const st = p.manifest.states[state];
-  const key = st.fields["von_mises"] ?? Object.values(st.fields)[0];
+  const key = st.fields["max_shear"] ?? Object.values(st.fields)[0];
 
   const scene = new VolumeScene(el, p);
+  scene.setColormap("plasma");
   const [f, c, r] = await Promise.all([
     p.array(key), p.array(st.clearance_h), p.array(st.region),
   ]);
@@ -36,10 +37,11 @@ export async function startHero(el: HTMLElement, baseUrl: string) {
   const spin = () => {
     if (!idle) return;
     t += 0.0012;
-    const R = p.extent[0] * 1.15;
+    // 1.15 / 0.7: the figure 30 % smaller in frame, so the whole domain fits
+    const R = p.extent[0] * 1.643;
     scene.camera.position.set(
       target.x + R * Math.cos(t), target.y + R * Math.sin(t),
-      target.z + p.extent[2] * 1.35);
+      target.z + p.extent[2] * 1.93);
     scene.camera.lookAt(target);
     scene.render();
     requestAnimationFrame(spin);

@@ -1,0 +1,51 @@
+---
+import Base from "../layouts/Base.astro";
+import About from "../components/About.astro";
+import Running from "../content/running.mdx";
+
+const sections = [
+  { id: "a-run-is-a-python-file", label: "A run is a Python file" },
+  { id: "the-pieces", label: "The pieces" },
+  { id: "what-a-run-leaves-behind", label: "What a run leaves behind" },
+  { id: "sweeps", label: "Sweeps" },
+  { id: "reading-it-back", label: "Reading it back" },
+  { id: "checked-not-trusted", label: "Checked, not trusted" },
+];
+---
+<Base
+  title="mbem — Running"
+  description="How to declare a model in a config module and run it: the Run schema, what a run directory contains, and how sweeps work."
+  current="running"
+>
+  <Fragment slot="sidebar">
+    <h1>Running<span class="sub">declaring and running a model</span></h1>
+    <nav class="toc">
+      <h3>Contents</h3>
+      <ol>
+        {sections.map((s) => <li><a href={`#${s.id}`}>{s.label}</a></li>)}
+      </ol>
+    </nav>
+    <hr />
+    <About />
+  </Fragment>
+
+  <Running />
+
+  <style is:global>
+    .main pre {
+      background: var(--box-bg); border: 1px solid var(--rule);
+      padding: 12px 14px; overflow-x: auto; font-size: 12.5px;
+      line-height: 1.45; margin: 16px 0;
+    }
+    .main code { font-family: var(--mono); font-size: 0.92em; }
+    .main :not(pre) > code {
+      background: var(--box-bg); border: 1px solid var(--rule);
+      padding: 0 3px; border-radius: 2px;
+    }
+    .main table { border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    .main th, .main td {
+      border: 1px solid var(--rule); padding: 5px 9px; text-align: left;
+    }
+    .main th { background: var(--box-bg); font-weight: 600; }
+  </style>
+</Base>

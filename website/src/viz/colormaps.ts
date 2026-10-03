@@ -23,6 +23,13 @@ const RDBU_R: RGB[] = [
   [214, 96, 77], [178, 24, 43], [103, 0, 31],
 ];
 
+const PLASMA: RGB[] = [
+  [13, 8, 135], [57, 4, 158], [92, 1, 166], [123, 3, 167], [152, 20, 157],
+  [176, 42, 143], [197, 64, 128], [215, 87, 113], [230, 111, 98],
+  [241, 137, 83], [249, 165, 68], [253, 194, 55], [252, 225, 56],
+  [240, 249, 33],
+];
+
 // Greyscale with a warm top, for the clearance diagnostic: it is a quality
 // measure, not a field, and should not be mistaken for one.
 const QUALITY: RGB[] = [
@@ -30,7 +37,8 @@ const QUALITY: RGB[] = [
   [181, 54, 122],
 ];
 
-export const MAPS = { viridis: VIRIDIS, rdbu_r: RDBU_R, quality: QUALITY };
+export const MAPS = { viridis: VIRIDIS, plasma: PLASMA, rdbu_r: RDBU_R,
+                      quality: QUALITY };
 export type MapName = keyof typeof MAPS;
 
 /** `(256 * 4)` RGBA bytes, alpha 255, for a `DataTexture`. */

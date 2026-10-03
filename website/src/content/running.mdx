@@ -1,0 +1,149 @@
+## A run is a Python file
+
+A study in mbem is a Python module that declares one `Run`. It is Python rather
+than TOML or YAML because geometry is code — but the module **names** a builder
+rather than describing patches, so it cannot restate the fault sign convention
+or the eps rule. Those are stated once, in the solver, and a config that could
+contradict them would eventually contradict them.
+
+```python
+# configs/fault_only.py
+"""Fault-only mollified BEM: surface displacement and elastic surface stress."""
+from mbem.config import Backend, Geometry, Model, Output, Run
+
+GEOM = dict(half_x=200.0, z_bottom=-100.0, fault_half_len=50.0,
+            fault_depth=25.0, near_field_radius=120.0,
+            edge_fault=6.0, edge_near=15.0, edge_far=35.0, edge_side=35.0)
+
+
+def run_spec(scale: float = 1.0, backend: str = "dense",
+             slip_mag: float = 0.01) -> Run:
+    return Run(
+        name="fault_only",
+        model=Model(geometry=Geometry("fault_box", scale=scale, params=GEOM),
+                    builder="fault_box",
+                    params=dict(slip_mag=slip_mag, mu=30.0, lam=30.0),
+                    eps="auto"),
+        backend=Backend(kind=backend),
+        outputs=Output(save_meshes=True, figures=("fault_only",)),
+        notes="surface displacement + elastic surface stress, fault only",
+        tags=("figure", "fault_box"))
+```
+
+Then
+
+```bash
+python -m mbem run configs/fault_only.py
+```
+
+A module declares **either** a module-level `RUN` or a function
+`run_spec(**kwargs) -> Run`, never both. The function form is what makes
+`--set` and `--sweep` work: its signature *is* the command-line surface, so
+
+```bash
+python -m mbem run configs/fault_only.py --set backend=hmat --set scale=1.6
+python -m mbem run configs/fault_only.py --sweep slip_mag=0.005,0.01,0.02
+```
+
+need no argument parsing of your own, and a misspelled name is rejected against
+the signature rather than silently ignored.
+
+## The pieces
+
+**`Geometry(builder, params, scale)`** names a mesh builder — `fault_box` or
+`topo_inclusion` — and passes it keywords. `scale` divides every target edge
+length, so `scale=2` is a uniformly finer mesh. Geometry changes the operator,
+so two geometries are two runs, never two states.
+
+**`Model(geometry, builder, params, eps)`** turns meshes into a region graph:
+regions, their materials, which patches are free surfaces, which are interfaces,
+where the fault is. `eps` is the mollification width and accepts a scalar, an
+`(N_src,)` array, a per-patch dict, or `"auto"`.
+
+<div class="note">
+<b>eps is per source element.</b> <code>"auto"</code> is 0.1 h on a boundary
+patch, and on a <b>fault</b> one single value, 0.07 min h, because per-element
+widths would smear a uniform slip unequally. What governs the error is a point's
+clearance from element edges in units of eps, not h — so budget eps/h before
+expecting refinement to pay.
+</div>
+
+**`Backend(kind=...)`** is `dense`, `hmat` or `fmm`. Everything else on it
+defaults to `None`, meaning *absent from the call*, so the solver's own default
+stands. That is the only override mechanism: a config passes a keyword, it never
+rebinds a default. The backends bind their defaults at definition time, so a
+rebind would be a silent no-op — the kind of thing that looks like it worked.
+
+**`Solve(rtol=..., ...)`** is the iterative solver, ignored by `dense`.
+
+**`states=(State("het"), State("hom", {"inclusion": HOST}))`** is the one place
+where several solves share one assembly. A state changes only *materials*, and
+the operator is rebuilt for them rather than reassembled. Anything that changes
+the mesh is a different run, not a state.
+
+**`Output(slots, save_fields, save_meshes, figures)`** chooses what is written.
+`slots=()` means **every** slot, which is what `mbem sample` needs — an interior
+point is evaluated from the density on all of them, not just the ones a figure
+draws.
+
+## What a run leaves behind
+
+Each run writes a new directory under `runs/`, named for the UTC time, the run,
+the git hash, and four random hex — the `mkdir` is the collision check.
+
+```
+runs/20261002T153045Z-fault_only-efc201e-a3d5/
+  resolved.json     the spec, the keywords ACTUALLY passed, eps resolved to
+                    numbers per patch, all 111 defaults, the environment
+  report.json       iterations, residuals, phase timings, peak RSS
+  fields_base.npz   the solution, one array per slot
+  meshes.npz        vertices and triangles per patch
+  config.py         a copy, so the run survives editing the original
+  STATUS            one word: RUNNING | OK | FAIL
+  MANIFEST          sha256 and size per file, written LAST
+```
+
+Two of those are deliberate. `STATUS` is a separate one-word file so an
+interrupted run is identifiable without parsing JSON — a crashed run reads
+`RUNNING` forever. And `MANIFEST` is written last, so its presence is itself the
+statement that the run completed.
+
+`resolved.json` records the *effective* call, not the request: `eps="auto"`
+appears as numbers per patch, and every backend keyword the solver received is
+listed. It is JSON rather than TOML because a field left unset is written
+`null`, and "unset, so the default applied" is a distinction TOML cannot
+express — it could only omit the key.
+
+## Sweeps
+
+Repeat `--sweep` for a cartesian product. Each point is a child directory under
+one study, and figures that span the sweep are drawn across them:
+
+```bash
+python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
+python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
+```
+
+A sweep is the right tool whenever the quantity you want is a *difference
+between operators* — a different mesh, eps or backend is a different operator,
+so it cannot be a state.
+
+## Reading it back
+
+```bash
+python -m mbem list                         # runs, newest first
+python -m mbem show <run-dir> --section effective
+python -m mbem run configs/fault_box.py --dry-run    # validate, build nothing
+python -m mbem sample <run-dir> --spacing 8          # a 3-D grid -> .vti
+python -m mbem verify --fast                         # the gates
+```
+
+## Checked, not trusted
+
+`tests/gates/mbem/verify_config.py` proves the config layer cannot drift from
+the code it drives: that a config builds the model the gates build *entrywise*,
+fault Burgers vector bitwise included; that a run mutates no default; that
+`resolved.json` round-trips with `null` surviving; that the dump covers every
+backend keyword by introspection; and that gate-only acceptance criteria are not
+reachable from a config at all — a run that could move its own pass threshold
+could declare its own success.

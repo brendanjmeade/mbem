@@ -49,20 +49,56 @@ layout(location = 0) out vec4 fragColor;
 varying vec3 vBox;
 uniform sampler3D uField, uClear, uRegion;
 uniform sampler2D uLut;
+uniform vec3  uDims;           // (nx, ny, nz), for the texel-centre mapping
 uniform float uThreshold;      // clearance_h, in the clearance array's units
 uniform float uClearScale;     // level -> clearance_h
 uniform bool  uShowOutside;
 void main() {
   if (any(lessThan(vBox, vec3(0.0))) || any(greaterThan(vBox, vec3(1.0)))) discard;
-  float reg = texture(uRegion, vBox).r * 255.0;
+  // vBox puts GRID POINT i at i/(n-1); a TEXEL CENTRE is at (i+0.5)/n. Sampling
+  // at vBox directly stretches the volume by (n-1)/n -- zero error in the
+  // middle, half a texel at each end, which is why the artefact appeared at the
+  // extremes of every axis and nowhere else.
+  vec3 uvw = (vBox * (uDims - 1.0) + 0.5) / uDims;
+  float reg = texture(uRegion, uvw).r * 255.0;
   if (reg < 0.5 && !uShowOutside) discard;       // not in the body at all
-  float f = texture(uField, vBox).r;
+  float f = texture(uField, uvw).r;
   if (f <= 0.0) discard;                          // level 0 is "no data"
-  float clear = texture(uClear, vBox).r * uClearScale;
+  float clear = texture(uClear, uvw).r * uClearScale;
   if (clear < uThreshold) discard;                // flagged, and hidden on ask
   vec3 c = texture(uLut, vec2(f, 0.5)).rgb;
   fragColor = vec4(c, 1.0);
 }`;
+
+/** One-voxel dilation of valid data into the no-data shell.
+ *
+ * A LINEAR sampler blends a boundary texel with its neighbours, and a no-data
+ * neighbour is level 0 -- the bottom of the colour map. Without this, every
+ * surface of the body is fringed with values that are not small, they are
+ * ABSENT, rendered as though they were the minimum. The region mask still
+ * decides what is drawn; this only stops the interpolator reading zeros.
+ */
+function dilate(data: Uint8Array, d: [number, number, number]): Uint8Array {
+  const [nx, ny, nz] = d;
+  const out = data.slice();
+  const at = (x: number, y: number, z: number) => (z * ny + y) * nx + x;
+  for (let z = 0; z < nz; z++)
+    for (let y = 0; y < ny; y++)
+      for (let x = 0; x < nx; x++) {
+        const i = at(x, y, z);
+        if (data[i] !== 0) continue;
+        let sum = 0, n = 0;
+        for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0],
+                                    [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+          const X = x + dx, Y = y + dy, Z = z + dz;
+          if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue;
+          const v = data[at(X, Y, Z)];
+          if (v !== 0) { sum += v; n++; }
+        }
+        if (n) out[i] = Math.round(sum / n);
+      }
+  return out;
+}
 
 function tex3d(data: Uint8Array, d: [number, number, number], smooth: boolean) {
   const t = new Data3DTexture(data, d[0], d[1], d[2]);
@@ -128,6 +164,7 @@ export class VolumeScene {
       uniforms: {
         uOrigin: { value: new Vector3(o[0], o[1], o[2]) },
         uExtent: { value: new Vector3(ex, ey, ez) },
+        uDims: { value: new Vector3(p.dims[0], p.dims[1], p.dims[2]) },
         uField: { value: null }, uClear: { value: null },
         uRegion: { value: null }, uLut: { value: lutTex },
         uThreshold: { value: 0 }, uClearScale: { value: 1 },
@@ -180,9 +217,9 @@ export class VolumeScene {
     (u.uField.value as any)?.dispose?.();
     (u.uClear.value as any)?.dispose?.();
     (u.uRegion.value as any)?.dispose?.();
-    u.uField.value = tex3d(field, d, true);
-    u.uClear.value = tex3d(clear, d, true);
-    u.uRegion.value = tex3d(region, d, false);   // NEAREST: categorical
+    u.uField.value = tex3d(dilate(field, d), d, true);
+    u.uClear.value = tex3d(dilate(clear, d), d, true);
+    u.uRegion.value = tex3d(region, d, false);   // NEAREST: categorical, never dilated
     u.uClearScale.value = clearMax;
     this.render();
   }

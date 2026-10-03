@@ -30,15 +30,7 @@ const PLASMA: RGB[] = [
   [240, 249, 33],
 ];
 
-// Greyscale with a warm top, for the clearance diagnostic: it is a quality
-// measure, not a field, and should not be mistaken for one.
-const QUALITY: RGB[] = [
-  [40, 40, 40], [120, 120, 120], [200, 200, 200], [240, 215, 170],
-  [181, 54, 122],
-];
-
-export const MAPS = { viridis: VIRIDIS, plasma: PLASMA, rdbu_r: RDBU_R,
-                      quality: QUALITY };
+export const MAPS = { viridis: VIRIDIS, plasma: PLASMA, rdbu_r: RDBU_R };
 export type MapName = keyof typeof MAPS;
 
 /** `(256 * 4)` RGBA bytes, alpha 255, for a `DataTexture`. */

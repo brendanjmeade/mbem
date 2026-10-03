@@ -1,11 +1,10 @@
-// Wiring for the Examples viewer: state, field, colour map, slices, threshold.
+// Wiring for the Examples viewer: state, field, colour map, slices.
 //
-// The threshold is the control worth having. Mollified stress near a SOLVED
-// boundary is limited by the piecewise-constant density there, and the payload
-// carries each voxel's clearance in units of the local element size so the
-// visitor can draw their own line. Unfiltered, the topography effect on this
-// model reads 1287 mm at a point lying on the free surface; at clearance 0.5 it
-// reads 96 mm. Nothing is hidden by default -- the slider starts at 0.
+// EVERY element of the body is drawn, always. The near-boundary quality metric
+// is still computed and still written into the .vti, and Concepts explains what
+// it means, but it does not remove anything from the picture: a viewer that
+// silently hides half its cells is worse than one that shows all of them and
+// states the caveat in words.
 
 import { cssGradient, type MapName } from "./colormaps";
 import { VolumeScene } from "./scene";
@@ -53,8 +52,8 @@ export async function startViewer(root: HTMLElement, baseUrl: string) {
   sel("field", fields.map((f) => [f, FIELDS[f]?.label ?? f]), field, (v) => {
     field = v; void refresh();
   });
-  sel("map", [["viridis", "viridis"], ["rdbu_r", "red-blue"],
-              ["quality", "quality"]], map, (v) => {
+  sel("map", [["viridis", "viridis"], ["plasma", "plasma"],
+              ["rdbu_r", "red-blue"]], map, (v) => {
     map = v as MapName; scene.setColormap(map); paintBar();
   });
 
@@ -81,22 +80,6 @@ export async function startViewer(root: HTMLElement, baseUrl: string) {
       scene.setVisible("xyz".indexOf(axis) as 0 | 1 | 2, box.checked));
     wrap.append(box, r, out);
     show();
-  }
-
-  const thrWrap = root.querySelector<HTMLElement>('[data-ctl="threshold"]');
-  let thrOut: HTMLElement | null = null;
-  if (thrWrap) {
-    const r = document.createElement("input");
-    r.type = "range"; r.min = "0"; r.max = "2"; r.step = "0.05"; r.value = "0";
-    thrOut = document.createElement("span");
-    thrOut.className = "val";
-    thrOut.textContent = "0 (show all)";
-    r.addEventListener("input", () => {
-      const v = Number(r.value);
-      scene.setThreshold(v);
-      thrOut!.textContent = v === 0 ? "0 (show all)" : `d/h > ${v.toFixed(2)}`;
-    });
-    thrWrap.append(r, thrOut);
   }
 
   // --- colour bar ---------------------------------------------------------
@@ -127,11 +110,8 @@ export async function startViewer(root: HTMLElement, baseUrl: string) {
     if (!key) { status.textContent = `no ${field} for ${state}`; return; }
     status.textContent = "loading…";
     try {
-      const [f, c, r] = await Promise.all([
-        p.array(key), p.array(st.clearance_h), p.array(st.region),
-      ]);
-      const cmax = p.manifest.arrays[st.clearance_h].max ?? 3;
-      scene.setTextures(f, c, r, cmax);
+      const [f, r] = await Promise.all([p.array(key), p.array(st.region)]);
+      scene.setTextures(f, r);
       paintBar();
       const kind = st.kind === "difference" ? "difference of two runs" : "one solve";
       status.textContent = `${stateLabel(state)} — ${kind}`;

@@ -47,11 +47,9 @@ precision highp float;
 precision highp sampler3D;
 layout(location = 0) out vec4 fragColor;
 varying vec3 vBox;
-uniform sampler3D uField, uClear, uRegion;
+uniform sampler3D uField, uRegion;
 uniform sampler2D uLut;
 uniform vec3  uDims;           // (nx, ny, nz), for the texel-centre mapping
-uniform float uThreshold;      // clearance_h, in the clearance array's units
-uniform float uClearScale;     // level -> clearance_h
 uniform bool  uShowOutside;
 void main() {
   if (any(lessThan(vBox, vec3(0.0))) || any(greaterThan(vBox, vec3(1.0)))) discard;
@@ -64,8 +62,10 @@ void main() {
   if (reg < 0.5 && !uShowOutside) discard;       // not in the body at all
   float f = texture(uField, uvw).r;
   if (f <= 0.0) discard;                          // level 0 is "no data"
-  float clear = texture(uClear, uvw).r * uClearScale;
-  if (clear < uThreshold) discard;                // flagged, and hidden on ask
+  // EVERY element inside the body is drawn. The near-boundary quality metric
+  // is reported in the .vti and discussed in Concepts, but it never removes
+  // anything here: a viewer that silently hides half its data is worse than
+  // one that shows all of it and says what the caveat is.
   vec3 c = texture(uLut, vec2(f, 0.5)).rgb;
   fragColor = vec4(c, 1.0);
 }`;
@@ -165,10 +165,8 @@ export class VolumeScene {
         uOrigin: { value: new Vector3(o[0], o[1], o[2]) },
         uExtent: { value: new Vector3(ex, ey, ez) },
         uDims: { value: new Vector3(p.dims[0], p.dims[1], p.dims[2]) },
-        uField: { value: null }, uClear: { value: null },
-        uRegion: { value: null }, uLut: { value: lutTex },
-        uThreshold: { value: 0 }, uClearScale: { value: 1 },
-        uShowOutside: { value: false },
+        uField: { value: null }, uRegion: { value: null },
+        uLut: { value: lutTex }, uShowOutside: { value: false },
       },
     });
 
@@ -210,17 +208,13 @@ export class VolumeScene {
     if (g.topography) this.overlays.add(topoLines(g.topography));
   }
 
-  setTextures(field: Uint8Array, clear: Uint8Array, region: Uint8Array,
-              clearMax: number) {
+  setTextures(field: Uint8Array, region: Uint8Array) {
     const d = this.p.dims;
     const u = this.mat.uniforms;
     (u.uField.value as any)?.dispose?.();
-    (u.uClear.value as any)?.dispose?.();
     (u.uRegion.value as any)?.dispose?.();
     u.uField.value = tex3d(dilate(field, d), d, true);
-    u.uClear.value = tex3d(dilate(clear, d), d, true);
     u.uRegion.value = tex3d(region, d, false);   // NEAREST: categorical, never dilated
-    u.uClearScale.value = clearMax;
     this.render();
   }
 
@@ -230,11 +224,6 @@ export class VolumeScene {
     t.needsUpdate = true;
     (this.mat.uniforms.uLut.value as DataTexture).dispose();
     this.mat.uniforms.uLut.value = t;
-    this.render();
-  }
-
-  setThreshold(v: number) {
-    this.mat.uniforms.uThreshold.value = v;
     this.render();
   }
 

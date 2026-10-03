@@ -21,14 +21,8 @@ export async function startHero(el: HTMLElement, baseUrl: string) {
 
   const scene = new VolumeScene(el, p);
   scene.setColormap("plasma");
-  const [f, c, r] = await Promise.all([
-    p.array(key), p.array(st.clearance_h), p.array(st.region),
-  ]);
-  scene.setTextures(f, c, r, p.manifest.arrays[st.clearance_h].max ?? 3);
-  // A standoff of half an element: the surface shell is where the
-  // piecewise-constant boundary density limits the readout, and the hero should
-  // not lead with the part of the field that is least trustworthy.
-  scene.setThreshold(0.5);
+  const [f, r] = await Promise.all([p.array(key), p.array(st.region)]);
+  scene.setTextures(f, r);
   scene.start();
 
   // Idle rotation until the visitor touches it, then hand over for good.

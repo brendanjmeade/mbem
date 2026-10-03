@@ -4,7 +4,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
 ---
 <Base
   title="mbem — Examples"
-  description="Move three slices through a stored mollified BEM solution: four material and surface states, three fields, and the near-boundary quality threshold."
+  description="Move three slices through a stored mollified BEM solution: four material and surface states, three fields, and the two difference volumes."
   current="examples"
 >
   <Fragment slot="sidebar">
@@ -22,13 +22,13 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
       sampled on the same grid.
     </p>
     <div class="note">
-      The <b>quality</b> slider is the one to play with. It hides cells closer
-      than <i>d</i>/<i>h</i> to a <b>solved boundary</b> &mdash; never to the
-      fault, whose smearing over &epsilon; is the finite-width fault zone the
-      method is for, not a defect. The topography effect reads 1287&nbsp;mm at a
-      point lying on the free surface and 96&nbsp;mm at
-      <i>d</i>/<i>h</i>&nbsp;&gt;&nbsp;0.5 &mdash; a factor of 33 that is
-      discretization, not physics.
+      <b>Every element is shown.</b> Values within about half an element of a
+      <b>solved boundary</b> are limited by the piecewise-constant density there
+      &mdash; the topography effect reads 1287&nbsp;mm at a point lying on the
+      free surface against 96&nbsp;mm well inside &mdash; but nothing is hidden
+      on that account. The fault is a different case entirely: its smearing over
+      &epsilon; is the finite-width fault zone the method is for, not a defect.
+      See <a href={`${base}concepts/`}>Concepts</a>.
     </div>
     <p class="contact">
       Fields are shown on a <b>log</b> colour scale: they span about five
@@ -41,7 +41,6 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
       <label><span>State</span><span data-ctl="state"></span></label>
       <label><span>Field</span><span data-ctl="field"></span></label>
       <label><span>Colours</span><span data-ctl="map"></span></label>
-      <label><span>Quality</span><span data-ctl="threshold" class="rng"></span></label>
     </div>
     <div data-canvas class="canvas"></div>
     <div data-bar class="bar"></div>

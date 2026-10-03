@@ -1,327 +1,327 @@
 {
  "arrays": {
   "01-topo-het.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.9233891198060302,
-   "log_min": -5.688497720638261,
-   "max": 0.011929187923669815,
-   "min": 2.048812802968314e-06,
-   "sha256": "caeda3a3431c414b"
+   "log_max": -1.7010928277572608,
+   "log_min": -5.830839999880076,
+   "max": 0.019902478903532028,
+   "min": 1.4762503042220487e-06,
+   "sha256": "d86e38d4607b453e"
   },
   "01-topo-het.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.3439257241238787,
-   "log_min": -6.597722385796472,
-   "max": 0.004529750440269709,
-   "min": 2.5250943735954934e-07,
-   "sha256": "7d33a778ca298647"
+   "log_max": -2.310953878162159,
+   "log_min": -7.151823704963743,
+   "max": 0.0048870425671339035,
+   "min": 7.049791861390986e-08,
+   "sha256": "4dfccaa163136c51"
   },
   "01-topo-het.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.684820822116177,
-   "log_min": -5.448927446047096,
-   "max": 0.020662324503064156,
-   "min": 3.556907358870376e-06,
-   "sha256": "28c640d7ec157db5"
+   "log_max": -1.4615817315109032,
+   "log_min": -5.562118866985481,
+   "max": 0.034547630697488785,
+   "min": 2.7408239020587644e-06,
+   "sha256": "e36ff08e82e8a36f"
   },
   "01-topo-hom.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.924969219197054,
-   "log_min": -6.0195398832970906,
-   "max": 0.011885864660143852,
-   "min": 9.560048965795431e-07,
-   "sha256": "05ff2045cef46ecf"
+   "log_max": -1.7006830349105964,
+   "log_min": -6.320747938273108,
+   "max": 0.01992126740515232,
+   "min": 4.778065090249584e-07,
+   "sha256": "d9ba7996d017916b"
   },
   "01-topo-hom.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.3621145580536878,
-   "log_min": -7.007735106568829,
-   "max": 0.004343956243246794,
-   "min": 9.823469326875056e-08,
-   "sha256": "0e8fef60cd6ed230"
+   "log_max": -2.329912742674764,
+   "log_min": -7.589952487313834,
+   "max": 0.004678291268646717,
+   "min": 2.570677004598565e-08,
+   "sha256": "247baba5174d3160"
   },
   "01-topo-hom.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.6864083683342028,
-   "log_min": -5.749381732625272,
-   "max": 0.020586932078003883,
-   "min": 1.7808127950047492e-06,
-   "sha256": "c6529646ccb98273"
+   "log_max": -1.4612734639681362,
+   "log_min": -6.065121079661321,
+   "max": 0.034572161734104156,
+   "min": 8.607537438365398e-07,
+   "sha256": "6f7061c0ca93739b"
   },
   "02-flat-het.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.9234752150793295,
-   "log_min": -5.7076800077674275,
-   "max": 0.011926823295652866,
-   "min": 1.9602885004132986e-06,
-   "sha256": "a1b589120a6f22a4"
+   "log_max": -1.7009752576506334,
+   "log_min": -5.811672010788397,
+   "max": 0.019907867535948753,
+   "min": 1.5428652204718674e-06,
+   "sha256": "cb42d40f06e1ed3e"
   },
   "02-flat-het.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.34429684422312,
-   "log_min": -6.732960221574326,
-   "max": 0.004525881260633469,
-   "min": 1.8494380071842897e-07,
-   "sha256": "ccea65e432154021"
+   "log_max": -2.3111951176963164,
+   "log_min": -7.148736725827451,
+   "max": 0.004884328693151474,
+   "min": 7.100080523514407e-08,
+   "sha256": "1c4122b95d37e6f7"
   },
   "02-flat-het.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.6849077445131824,
-   "log_min": -5.4575913592158685,
-   "max": 0.020658189430832863,
-   "min": 3.486652303763549e-06,
-   "sha256": "430016433b803084"
+   "log_max": -1.4615356061973068,
+   "log_min": -5.548935144200293,
+   "max": 0.03455130010843277,
+   "min": 2.825301862685592e-06,
+   "sha256": "4ad11b60c08bcb39"
   },
   "02-flat-hom.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.9251231271884262,
-   "log_min": -6.015971915955649,
-   "max": 0.011881653219461441,
-   "min": 9.638913525122916e-07,
-   "sha256": "20815b312cbcb11e"
+   "log_max": -1.7006312238788728,
+   "log_min": -6.356032985052096,
+   "max": 0.01992364414036274,
+   "min": 4.4052140424355457e-07,
+   "sha256": "23a1eb165b2fce69"
   },
   "02-flat-hom.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.3639620247933273,
-   "log_min": -7.043280765609424,
-   "max": 0.004325516521930695,
-   "min": 9.0514724604418e-08,
-   "sha256": "8db1b69e76462473"
+   "log_max": -2.3312398423854126,
+   "log_min": -7.276149043026343,
+   "max": 0.004664017353206873,
+   "min": 5.2948170292665964e-08,
+   "sha256": "26831fdfe531ebf0"
   },
   "02-flat-hom.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.6865624269173534,
-   "log_min": -5.755252306045834,
-   "max": 0.020579630509018898,
-   "min": 1.7569026340424898e-06,
-   "sha256": "f6f99102806bc563"
+   "log_max": -1.4612215692096422,
+   "log_min": -6.075522861451327,
+   "max": 0.03457629308104515,
+   "min": 8.40382767819392e-07,
+   "sha256": "4b5203ac84936d0f"
   },
-  "clearance_h.1d560fe24106081c": {
-   "bytes": 73008,
+  "clearance_h.175610b2ce5b1a14": {
+   "bytes": 551412,
    "encoding": "linear_u8",
    "max": 3.0,
    "min": 0.0,
-   "sha256": "1d560fe24106081c"
+   "sha256": "175610b2ce5b1a14"
   },
-  "clearance_h.b51994964c108ddb": {
-   "bytes": 73008,
+  "clearance_h.94aa7efc40a9f4c1": {
+   "bytes": 551412,
    "encoding": "linear_u8",
    "max": 3.0,
    "min": 0.0,
-   "sha256": "b51994964c108ddb"
+   "sha256": "94aa7efc40a9f4c1"
   },
   "diff_01-topo-hom_minus_01-topo-het.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.9578546476633023,
-   "log_min": -6.532072354244232,
-   "max": 0.001101908041164279,
-   "min": 2.937160274996131e-07,
-   "sha256": "8fb190529e58f0d9"
+   "log_max": -2.917487851029771,
+   "log_min": -6.810504808186352,
+   "max": 0.0012092390097677708,
+   "min": 1.5470173764242645e-07,
+   "sha256": "63358ba6c9215283"
   },
   "diff_01-topo-hom_minus_01-topo-het.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.7509003184597876,
-   "log_min": -7.578680928640124,
-   "max": 0.0017745967488735914,
-   "min": 2.6382689810589e-08,
-   "sha256": "c843ee7a49cb8123"
+   "log_max": -2.683349396323791,
+   "log_min": -8.00456028945362,
+   "max": 0.0020732448901981115,
+   "min": 9.895544827998037e-09,
+   "sha256": "68a64a0434485de4"
   },
   "diff_01-topo-hom_minus_01-topo-het.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.6902900507989624,
-   "log_min": -6.291459260798082,
-   "max": 0.002040374791249633,
-   "min": 5.111410246172454e-07,
-   "sha256": "5c7dbf59c1acbe0f"
+   "log_max": -2.651616248778753,
+   "log_min": -6.541348840732001,
+   "max": 0.0022304051090031862,
+   "min": 2.875088114251412e-07,
+   "sha256": "e4c688357e2d89c4"
   },
   "diff_02-flat-het_minus_01-topo-het.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -3.42310166852048,
-   "log_min": -7.430110770017383,
-   "max": 0.00037748381146229804,
-   "min": 3.714404783750069e-08,
-   "sha256": "05b53befc23f576f"
+   "log_max": -2.9443190324770803,
+   "log_min": -7.820114562156346,
+   "max": 0.00113679189234972,
+   "min": 1.5131620401120927e-08,
+   "sha256": "a9a8d4b83f8dce64"
   },
   "diff_02-flat-het_minus_01-topo-het.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -4.033138002548028,
-   "log_min": -8.879551303903392,
-   "max": 9.265353583032265e-05,
-   "min": 1.3196194137421458e-09,
-   "sha256": "7ecc2bf7de650f46"
+   "log_max": -3.9005416730468645,
+   "log_min": -9.055120701643538,
+   "max": 0.00012573561980389059,
+   "min": 8.808040408148088e-10,
+   "sha256": "b5f81fa44fbc8bdd"
   },
   "diff_02-flat-het_minus_01-topo-het.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -3.182618821592874,
-   "log_min": -7.190929991131326,
-   "max": 0.0006567214149981737,
-   "min": 6.442731148581515e-08,
-   "sha256": "bbface456112c5da"
+   "log_max": -2.7038564500966826,
+   "log_min": -7.523444919879363,
+   "max": 0.0019776232074946165,
+   "min": 2.996091552631697e-08,
+   "sha256": "86f8edd7a5441227"
   },
   "diff_02-flat-hom_minus_01-topo-het.max_shear": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.95715375859815,
-   "log_min": -6.596595241515153,
-   "max": 0.0011036877986043692,
-   "min": 2.531656377868785e-07,
-   "sha256": "93771b49f7978060"
+   "log_max": -2.9168237857672676,
+   "log_min": -6.658646076165821,
+   "max": 0.00121108943130821,
+   "min": 2.1945926675925875e-07,
+   "sha256": "0f968ec853f08868"
   },
   "diff_02-flat-hom_minus_01-topo-het.u_mag": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.7517980301597853,
-   "log_min": -7.547153069189703,
-   "max": 0.001770932343788445,
-   "min": 2.83691896640903e-08,
-   "sha256": "14419bf218f00b2c"
+   "log_max": -2.684324572090403,
+   "log_min": -8.062159175846432,
+   "max": 0.0020685947965830564,
+   "min": 8.666441786431278e-09,
+   "sha256": "d59cc77292ab17df"
   },
   "diff_02-flat-hom_minus_01-topo-het.von_mises": {
-   "bytes": 73008,
+   "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.6897262971973905,
-   "log_min": -6.350808247233445,
-   "max": 0.002043025102466345,
-   "min": 4.458530611373135e-07,
-   "sha256": "b6a44cfc714b98b9"
+   "log_max": -2.6509147011256147,
+   "log_min": -6.382725002266799,
+   "max": 0.0022340109571814537,
+   "min": 4.14261904779778e-07,
+   "sha256": "8e87ff43b70604c7"
   },
-  "region.248e65b6ac2cb7d8": {
-   "bytes": 73008,
+  "region.073ac40f2edcf6e8": {
+   "bytes": 551412,
    "encoding": "codes_u8",
    "filter": "nearest",
-   "sha256": "248e65b6ac2cb7d8",
-   "values": [
-    0,
-    1
-   ]
-  },
-  "region.bc6a8c565c716cc8": {
-   "bytes": 73008,
-   "encoding": "codes_u8",
-   "filter": "nearest",
-   "sha256": "bc6a8c565c716cc8",
+   "sha256": "073ac40f2edcf6e8",
    "values": [
     0,
     1,
     2
+   ]
+  },
+  "region.c7f362f9f89ed6ac": {
+   "bytes": 551412,
+   "encoding": "codes_u8",
+   "filter": "nearest",
+   "sha256": "c7f362f9f89ed6ac",
+   "values": [
+    0,
+    1
    ]
   }
  },
  "geometry": "geometry.json",
  "grid": {
   "dims": [
-   52,
-   52,
-   27
+   102,
+   102,
+   53
   ],
-  "n_points": 73008,
+  "n_points": 551412,
   "origin": [
-   -204.0,
-   -204.0,
-   -204.0
+   -202.0,
+   -202.0,
+   -202.0
   ],
   "spacing": [
-   8.0,
-   8.0,
-   8.0
+   4.0,
+   4.0,
+   4.0
   ]
  },
  "levels": 254,
  "nodata": 0,
  "schema": 1,
  "source": {
-  "git": "f9da0c8+dirty",
+  "git": "8c68b01+dirty",
   "sampled_from": "runs/20261002T153045Z-topo_inclusion_topo_hmat-sweep-surface-efc201e-dirty-ec3f",
-  "volume_run": "20261003T025731Z-volume-topo_inclusion_topo_hmat-f9da0c8-dirty-3b40"
+  "volume_run": "20261003T043705Z-volume-topo_inclusion_topo_hmat-8c68b01-dirty-3579"
  },
  "states": {
   "01-topo-het": {
-   "clearance_h": "clearance_h.b51994964c108ddb",
+   "clearance_h": "clearance_h.94aa7efc40a9f4c1",
    "fields": {
     "max_shear": "01-topo-het.max_shear",
     "u_mag": "01-topo-het.u_mag",
     "von_mises": "01-topo-het.von_mises"
    },
    "kind": "state",
-   "region": "region.bc6a8c565c716cc8"
+   "region": "region.073ac40f2edcf6e8"
   },
   "01-topo-hom": {
-   "clearance_h": "clearance_h.b51994964c108ddb",
+   "clearance_h": "clearance_h.94aa7efc40a9f4c1",
    "fields": {
     "max_shear": "01-topo-hom.max_shear",
     "u_mag": "01-topo-hom.u_mag",
     "von_mises": "01-topo-hom.von_mises"
    },
    "kind": "state",
-   "region": "region.bc6a8c565c716cc8"
+   "region": "region.073ac40f2edcf6e8"
   },
   "02-flat-het": {
-   "clearance_h": "clearance_h.1d560fe24106081c",
+   "clearance_h": "clearance_h.175610b2ce5b1a14",
    "fields": {
     "max_shear": "02-flat-het.max_shear",
     "u_mag": "02-flat-het.u_mag",
     "von_mises": "02-flat-het.von_mises"
    },
    "kind": "state",
-   "region": "region.bc6a8c565c716cc8"
+   "region": "region.073ac40f2edcf6e8"
   },
   "02-flat-hom": {
-   "clearance_h": "clearance_h.1d560fe24106081c",
+   "clearance_h": "clearance_h.175610b2ce5b1a14",
    "fields": {
     "max_shear": "02-flat-hom.max_shear",
     "u_mag": "02-flat-hom.u_mag",
     "von_mises": "02-flat-hom.von_mises"
    },
    "kind": "state",
-   "region": "region.bc6a8c565c716cc8"
+   "region": "region.073ac40f2edcf6e8"
   },
   "diff_01-topo-hom_minus_01-topo-het": {
-   "clearance_h": "clearance_h.1d560fe24106081c",
+   "clearance_h": "clearance_h.175610b2ce5b1a14",
    "fields": {
     "max_shear": "diff_01-topo-hom_minus_01-topo-het.max_shear",
     "u_mag": "diff_01-topo-hom_minus_01-topo-het.u_mag",
     "von_mises": "diff_01-topo-hom_minus_01-topo-het.von_mises"
    },
    "kind": "difference",
-   "region": "region.248e65b6ac2cb7d8"
+   "region": "region.c7f362f9f89ed6ac"
   },
   "diff_02-flat-het_minus_01-topo-het": {
-   "clearance_h": "clearance_h.1d560fe24106081c",
+   "clearance_h": "clearance_h.175610b2ce5b1a14",
    "fields": {
     "max_shear": "diff_02-flat-het_minus_01-topo-het.max_shear",
     "u_mag": "diff_02-flat-het_minus_01-topo-het.u_mag",
     "von_mises": "diff_02-flat-het_minus_01-topo-het.von_mises"
    },
    "kind": "difference",
-   "region": "region.248e65b6ac2cb7d8"
+   "region": "region.c7f362f9f89ed6ac"
   },
   "diff_02-flat-hom_minus_01-topo-het": {
-   "clearance_h": "clearance_h.1d560fe24106081c",
+   "clearance_h": "clearance_h.175610b2ce5b1a14",
    "fields": {
     "max_shear": "diff_02-flat-hom_minus_01-topo-het.max_shear",
     "u_mag": "diff_02-flat-hom_minus_01-topo-het.u_mag",
     "von_mises": "diff_02-flat-hom_minus_01-topo-het.von_mises"
    },
    "kind": "difference",
-   "region": "region.248e65b6ac2cb7d8"
+   "region": "region.c7f362f9f89ed6ac"
   }
  }
 }

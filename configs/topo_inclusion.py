@@ -26,14 +26,23 @@ HOST = Material(mu=30.0, lam=30.0)
 
 
 def run_spec(surface: str = "topo", backend: str = "hmat",
-             scale: float = 1.0, mu_inc: float = 3.0) -> Run:
+             scale: float = 1.0, mu_inc: float = 3.0,
+             edge_side: float = 80.0, edge_far: float = 80.0) -> Run:
+    """``edge_side``/``edge_far`` default to 80 km, which is what every stored
+    measurement was taken at -- but they are the coarsest thing in the model by
+    far (152 triangles for four faces of a 400 x 200 km box, mean h = 72 km),
+    and ``docs/fbem-findings.md`` records that halving them removes most of the
+    top-surface error for a few per cent more unknowns. Exposed so a run can
+    refine them without editing the case."""
     return Run(
         name=f"topo_inclusion_{surface}_{backend}",
         model=Model(
             geometry=Geometry("topo_inclusion", scale=scale,
                               params=dict(surface=surface,
                                           bump_center=(0.0, -50.0),
-                                          bump_sigma=30.0, bump_height=2.0)),
+                                          bump_sigma=30.0, bump_height=2.0,
+                                          edge_side=edge_side,
+                                          edge_far=edge_far)),
             builder="topo_inclusion",
             params=dict(mu_inc=mu_inc),
             eps="auto"),

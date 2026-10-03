@@ -2,7 +2,7 @@
 
 Guidance for Claude Code in this repo: a research package for the **mollified
 boundary element method (mbem)** and mollified elastic dislocation theory, built
-on the Cortez regularization `r -> sqrt(r^2 + eps^2)` of the Kelvin/Somigliana
+on the Cortez blob regularization of the Kelvin/Somigliana
 kernels. 3-D linear elasticity, full space, no half space, no viscoelasticity,
 no LaTeX. `README.md` has the physics and references; `BACKLOG.md` is the one
 status document and history lives in `git log`.

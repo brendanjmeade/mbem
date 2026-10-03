@@ -8,9 +8,19 @@ satisfies the regularized Cauchy-Navier equation
 where L_ij = mu nabla^2 delta_ij + (lambda+mu) d_i d_j and
 phi^(C)(R) = 15 eps^4 / (8 pi R_eps^7) is the Cortez (2001) blob.
 
-Compares against the codebase form (no eps^2 term) and the manuscript form
-(coefficient 1 instead of 2(1-nu)). Only the Galerkin form should give
-machine-precision residuals.
+Compared against two forms that are wrong in instructive ways: the NAIVE
+substitution r -> R_eps (no eps^2 term at all), which is what a reader usually
+assumes "mollified" means; and coefficient 1 instead of 2(1-nu), which is the
+value 2(1-nu) takes AT nu = 1/2. Only the Galerkin form gives
+machine-precision residuals -- and the coefficient-1 form does not become right
+in the incompressible limit either, because the coefficient error (1-2nu)
+vanishes exactly as fast as lam = 2 mu nu/(1-2nu) diverges.
+
+(The second was labelled "the manuscript form" here. That is stale and unfair to
+the manuscript, which carries 2(1-nu) and says of it: "not a free constant ...
+required to satisfy the governing Navier equations ... marks the mollified
+Kelvin Green's function as distinct from the unmollified case in a way other
+than the denominators containing r.")
 
 Uses sympy for exact symbolic differentiation, then evaluates at fixed (x, mu, nu, eps).
 """
@@ -37,14 +47,14 @@ def main():
         return 1 if i == j else 0
 
     # Three candidate forms
-    def G_codebase(i, j):
+    def G_naive(i, j):
         return C1 * ((3 - 4 * nu) * kron(i, j) / Re + d[i] * d[j] / Re3)
 
-    def G_manuscript(i, j):
-        return G_codebase(i, j) + C1 * eps**2 * kron(i, j) / Re3
+    def G_coef1(i, j):
+        return G_naive(i, j) + C1 * eps**2 * kron(i, j) / Re3
 
     def G_galerkin(i, j):
-        return G_codebase(i, j) + C1 * 2 * (1 - nu) * eps**2 * kron(i, j) / Re3
+        return G_naive(i, j) + C1 * 2 * (1 - nu) * eps**2 * kron(i, j) / Re3
 
     # Cortez blob phi^(C)(R) = 15 eps^4 / (8 pi R_eps^7)
     phi_C = 15 * eps**4 / (8 * sp.pi * Re7)
@@ -76,8 +86,8 @@ def main():
 
     worst_galerkin = 0.0
     for label, G_func in [
-        ("CODEBASE (no eps^2 term) ", G_codebase),
-        ("MANUSCRIPT (coef 1)      ", G_manuscript),
+        ("NAIVE r -> R_eps         ", G_naive),
+        ("COEF 1 (nu=1/2 value)    ", G_coef1),
         ("GALERKIN  (coef 2(1-nu)) ", G_galerkin),
     ]:
         print(f"\n--- {label} ---")
@@ -94,9 +104,11 @@ def main():
                 worst_galerkin = max(worst_galerkin, max_abs)
 
     print("\n" + "=" * 78)
-    print("Expected: GALERKIN ~ machine precision at every nu;")
-    print("          MANUSCRIPT (coef 1) only at nu near 1/2;")
-    print("          CODEBASE never.")
+    print("Expected: GALERKIN ~ machine precision at every nu; the other two")
+    print("          NEVER, including as nu -> 1/2. The coefficient error is")
+    print("          (1-2nu), which vanishes there, but lam = 2 mu nu/(1-2nu)")
+    print("          diverges at the same rate, so their product is O(1):")
+    print("          measured flat at 6.42e-2 -> 6.80e-2 from nu=0.25 to 0.4999.")
     print("=" * 78)
     # The gate: the Galerkin form must satisfy the PDE to machine precision.
     ok = worst_galerkin < 1e-12

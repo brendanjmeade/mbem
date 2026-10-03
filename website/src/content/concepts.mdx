@@ -19,19 +19,54 @@ predicts diverges as you approach it rather than converging to anything.
 
 ## Mollification
 
-Both follow from the same source, so both yield to the same fix. Replace the
-distance in the Green's function with a regularized distance,
+Both follow from the same source, so both yield to the same fix — but not the
+fix that first suggests itself. The obvious move is to soften the kernel
+directly: replace the distance $r$ wherever it appears in the Green's function
+with
 
 $$
-r \;\longrightarrow\; r_\varepsilon \;=\; \sqrt{r^{2} + \varepsilon^{2}},
+R_\varepsilon \;=\; \sqrt{r^{2} + \varepsilon^{2}}.
 $$
 
-the regularization Cortez introduced for Stokes flow. The parameter
-$\varepsilon$ has units of length, and it is the **width of the fault zone** —
-not a numerical fudge, but the physical scale over which slip is distributed. The
-mollified kernels are smooth everywhere; there is no singular surface integral
-left to regularize, and the stress at a point on the fault is an ordinary
-integral with an ordinary value.
+That does produce a smooth function. It is not a solution of anything, and it is
+not what Cortez did.
+
+**Cortez's construction regularizes the source, not the kernel.** Replace the
+point force $\delta(\mathbf{x})$ with a smooth, radially symmetric blob
+$\phi_\varepsilon$ of unit integral, and then solve the elastostatic equations
+*exactly* with that forcing. What comes back is a Green's function that is
+smooth everywhere **and** satisfies a partial differential equation — the
+regularized Cauchy–Navier equation,
+
+$$
+\mathcal{L}_{ik}\,G^{\varepsilon}_{kj} \;=\; -\,\delta_{ij}\,\phi_\varepsilon,
+\qquad
+\phi_\varepsilon(r) \;=\; \frac{15\,\varepsilon^{4}}{8\pi R_\varepsilon^{7}} .
+$$
+
+For that blob, the regularized Kelvin solution is
+
+$$
+G^{\varepsilon}_{ij} \;=\; \frac{1}{16\pi\mu(1-\nu)}
+\left[(3-4\nu)\frac{\delta_{ij}}{R_\varepsilon}
+ \;+\; \frac{d_i d_j}{R_\varepsilon^{3}}
+ \;+\; 2(1-\nu)\,\varepsilon^{2}\frac{\delta_{ij}}{R_\varepsilon^{3}}\right].
+$$
+
+The first two terms are the classical Kelvin solution carrying $R_\varepsilon$
+in place of $r$ — the naive substitution. **The third term is the point.** It
+has no singular counterpart, it vanishes as $\varepsilon \to 0$, and it is what
+the blob convolution contributes. Drop it and the residual in the regularized
+Cauchy–Navier equation is of order $10^{-2}$; keep it and the residual is
+$10^{-16}$ at every Poisson ratio, which the repository checks symbolically in
+`verify_pde_residual`. A kernel that merely looks smooth is not the same object
+as one that solves the equations, and only the second lets you integrate over
+the element the observation point sits on.
+
+So $\varepsilon$ is not a numerical fudge. It has units of length and it is the
+**width of the fault zone** — the physical scale over which slip is distributed
+— and the stress at a point on the fault is now an ordinary integral with an
+ordinary value.
 
 What makes this practical rather than merely tidy is that each triangle's
 contribution is integrated **analytically** — in closed form, for a density that

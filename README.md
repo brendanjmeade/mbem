@@ -1,14 +1,29 @@
 # mbem — mollified full-space boundary element method
 
 A clean, self-contained implementation of a **mollified boundary element method
-(BEM)** for 3-D linear elasticity, in the full space.  Singular Kelvin/Somigliana
-kernels are regularized Cortez-style,
+(BEM)** for 3-D linear elasticity, in the full space.  Following Cortez, the
+regularization is applied to the SOURCE, not to the kernel: the point force is
+replaced by a smooth blob `phi_eps` of unit integral and the elastostatic
+equations are then solved exactly, giving
 
 ```
-r  ->  r_eps = sqrt(r^2 + eps^2),
+G_ij = C1 [ (3-4nu) delta_ij / R_eps  +  d_i d_j / R_eps^3
+                                      +  2(1-nu) eps^2 delta_ij / R_eps^3 ]
+
+  R_eps = sqrt(r^2 + eps^2),  C1 = 1/(16 pi mu (1-nu)),
+  L_ik G_kj = -delta_ij phi_eps,  phi_eps = 15 eps^4 / (8 pi R_eps^7).
 ```
 
-which removes the singular surface integrals and lets the mollification width
+The first two terms are the classical Kelvin solution carrying `R_eps` in place
+of `r`.  **The third has no singular counterpart** and is what the blob
+convolution contributes: without it the regularized Cauchy-Navier residual is
+~1e-2, with it ~1e-16 at every Poisson ratio
+(`tests/gates/moss_kernel/verify_pde_residual.py`, symbolically).  Simply
+substituting `r -> R_eps` gives a smooth function that solves nothing, and it is
+the PDE, not the smoothness, that licenses integrating over the element the
+observation point lies on.
+
+This removes the singular surface integrals and lets the mollification width
 `eps` and the mesh size `h` be chosen independently.  Each triangle's kernel
 contribution is integrated **analytically**, so (following Ferranti & Cortez)
 `eps` is decoupled from `h` — there is no quadrature error tying them together.

@@ -3,13 +3,14 @@
 ---
 <p>
   <b>mbem</b> is a boundary element method for 3-D linear elasticity built on
-  <i>mollified</i> Green's functions: the Kelvin/Somigliana kernels are
-  regularized Cortez-style, <code>r &rarr; (r&sup2; + &epsilon;&sup2;)<sup>1/2</sup></code>,
-  so a fault has a finite width &epsilon; and the displacements and stresses are
-  singular nowhere &mdash; including on the fault itself, where classical
-  dislocation theory returns a value that ordinary integration does not define.
-  Each triangle's contribution is integrated in closed form, which decouples
-  &epsilon; from the mesh size <i>h</i>.
+  <i>mollified</i> Green's functions. Following Cortez, the point force is
+  replaced by a smooth blob of width &epsilon; and the elastostatic equations
+  are then solved <i>exactly</i> &mdash; so the kernels are singular nowhere and
+  still satisfy a PDE, which softening the kernel by hand would not. A fault
+  therefore has a finite width &epsilon;, and stress is defined on the fault
+  itself, where classical dislocation theory returns a value that ordinary
+  integration does not define. Each triangle's contribution is integrated in
+  closed form, which decouples &epsilon; from the mesh size <i>h</i>.
 </p>
 <div class="links">
   <div>

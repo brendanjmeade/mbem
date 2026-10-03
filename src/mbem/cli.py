@@ -331,7 +331,7 @@ def cmd_sample(a) -> int:
         code, dt = V.timed(f"{child.name}: classify",
                            lambda: V.classify(model, grid), log=print)
         report["phases"][f"classify:{child.name}"] = dt
-        (c_h, c_eps), dt = V.timed(f"{child.name}: clearance",
+        (c_h, c_eps, c_fault), dt = V.timed(f"{child.name}: clearance",
                                    lambda: V.clearance(model, grid, eps),
                                    log=print)
         report["phases"][f"clearance:{child.name}"] = dt
@@ -352,7 +352,8 @@ def cmd_sample(a) -> int:
                                  eigenstress=not a.no_eigenstress), log=print)
             report["phases"][f"sample:{tag}"] = dt
             saved[tag] = (fields, code)
-            arrays = V.as_vti_arrays(grid, fields, code, c_h, c_eps)
+            arrays = V.as_vti_arrays(grid, fields, code, c_h, c_eps,
+                                     c_fault)
             p = vti.write(out / f"volume_{runner._slug(tag)}.vti", grid.origin,
                           grid.spacing, grid.dims, arrays)
             print(f"  wrote {p.name}  ({p.stat().st_size / 1e6:.1f} MB)")
@@ -371,7 +372,7 @@ def cmd_sample(a) -> int:
             both = (ca > 0) & (cb > 0)
             d = V.difference(fa, fb, both)
             arrays = V.as_vti_arrays(grid, d, both.astype(np.int8),
-                                     c_h, c_eps)
+                                     c_h, c_eps, c_fault)
             name = f"diff_{runner._slug(k)}_minus_{runner._slug(base)}.vti"
             p = vti.write(out / name, grid.origin, grid.spacing, grid.dims,
                           arrays)

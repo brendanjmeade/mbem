@@ -209,4 +209,14 @@ def export(volume_dir, out_dir, fields=DEFAULT_FIELDS, model=None) -> dict:
         man["geometry"] = "geometry.json"
     (out_dir / "manifest.json").write_text(json.dumps(man, indent=1,
                                                       sort_keys=True) + "\n")
+    # Prune arrays this export did not write. Keys for region and clearance are
+    # CONTENT HASHES, so changing what they mean renames them and the old files
+    # would otherwise linger -- dead weight in every clone of the site, and
+    # indistinguishable from live data.
+    keep = {f"{k}.bin" for k in man["arrays"]} | {"manifest.json",
+                                                  "geometry.json"}
+    stale = [q for q in out_dir.iterdir() if q.is_file() and q.name not in keep]
+    for q in stale:
+        q.unlink()
+    man["pruned"] = sorted(q.name for q in stale)
     return man

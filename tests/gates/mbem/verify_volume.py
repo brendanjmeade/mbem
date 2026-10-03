@@ -240,7 +240,7 @@ def c_manufactured(model, region, sol, eps) -> None:
     mat = region.material
     grid = V.make_grid(model, 5.0)
     code = V.classify(model, grid)
-    c_h, _ = V.clearance(model, grid, eps)
+    c_h, _, _ = V.clearance(model, grid, eps)
     f = V.sample(model, sol, eps, grid, code)
 
     # Interior AND clear of the boundary: the P0 density limits the
@@ -304,9 +304,9 @@ def e_vti_roundtrip(model, region, sol, eps) -> None:
     import xml.dom.minidom
     grid = V.make_grid(model, 10.0)
     code = V.classify(model, grid)
-    c_h, c_eps = V.clearance(model, grid, eps)
+    c_h, c_eps, c_fault = V.clearance(model, grid, eps)
     f = V.sample(model, sol, eps, grid, code)
-    arrays = V.as_vti_arrays(grid, f, code, c_h, c_eps)
+    arrays = V.as_vti_arrays(grid, f, code, c_h, c_eps, c_fault)
     with tempfile.TemporaryDirectory(prefix="mbem_vti_") as tmp:
         p = vti.write(f"{tmp}/v.vti", grid.origin, grid.spacing, grid.dims,
                       arrays)
@@ -367,15 +367,16 @@ def f_clearance_is_the_solver_s(model, region, sol, eps) -> None:
     """[f] clearance_h is the evaluator's own d/h, not a second metric."""
     print("\n[f] the near-field metric is the one already in defaults")
     grid = V.make_grid(model, 7.0)
-    c_h, c_eps = V.clearance(model, grid, eps)
+    c_h, c_eps, c_fault = V.clearance(model, grid, eps)
     # Recompute exactly as evaluate._warn_near_boundary does: min over
     # BOUNDARY patches of d / element_size.
     ref = np.full(grid.points.shape[0], np.inf)
     for p in region.patches:
         d, idx = distance_to_mesh(grid.points, p.mesh)
         ref = np.minimum(ref, d / kb.element_sizes(p.mesh)[idx])
-    # The sampler also includes faults (this model has none), so on a
-    # fault-free model the two must agree exactly.
+    # clearance_h is BOUNDARY-ONLY by construction, exactly as
+    # _warn_near_boundary is, so this is an identity on any model rather than a
+    # coincidence on a fault-free one.
     close("clearance_h == _warn_near_boundary's d/h",
           float(np.abs(c_h - ref).max()), TOL_CLEAR)
     check("clearance_eps differs from clearance_h (eps is not h)",

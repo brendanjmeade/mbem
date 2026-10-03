@@ -29,17 +29,22 @@ a 3x3 grid of h in (20, 10, 5) km and eps in (0.6, 1.5, 3.6) km:
   the point of the method, not a caveat. It is written out as its own field so
   it can be SEEN (85.7 MPa on a surface against 0.03 MPa in the interior on
   the showcase model), not because it contaminates anything.
-* **eps sets a floor everywhere, including deep in the interior**, and that
-  floor is FLAT IN h: at clearance_h > 2 the relative stress residual is
-  7.3e-3 / 1.7e-2 / 4.1e-2 for eps = 0.6 / 1.5 / 3.6, and halving h from 10 to
-  5 km moves it by under 8 %. Linear in eps, i.e. ~0.5 (eps / L) for a domain
-  of size L. So "the stress is interpretable" does not mean "exact": to get 1 %
-  on this box needs eps <~ 0.02 L.
+* a floor that is linear in eps and FLAT IN h: at clearance_h > 2 the relative
+  stress residual is 7.3e-3 / 1.7e-2 / 4.1e-2 for eps = 0.6 / 1.5 / 3.6, and
+  halving h from 10 to 5 km moves it under 8 %. It is NOT the mollification
+  changing the problem, which was the first guess: a radially symmetric
+  unit-integral blob has zero first moment, so convolving a LINEAR field with
+  it returns that field exactly. Measured on the same box, the interior stress
+  error is 3.2e-15 at EVERY eps for a constant field and O(eps) the moment the
+  field has a gradient -- so the floor is the free-term / jump relation, which
+  the calibrated diagonal makes exact to zeroth order only. A property of the
+  formulation, not of the regularization.
 * **proximity to a SOLVED boundary degrades it on top of that floor**, by 3-13x
   at clearance_h in 0.15-0.3, worst where the floor is lowest (12.9x at
-  eps = 0.6, 2.9x at eps = 3.6). A fault is exempt: its slip is PRESCRIBED
-  data, exact at P0, which is why ``_warn_near_boundary`` skips faults and
-  on-fault readout is legitimate.
+  eps = 0.6, 2.9x at eps = 3.6). A fault is exempt, and the reason is stronger
+  than "its slip is prescribed data": the method regularizes the SOURCE, so the
+  fault's smearing over eps IS the finite-width fault zone the method exists to
+  represent, while a boundary patch's smearing has no physical warrant.
 
 Neither variable governs alone -- binning the residual on clearance_h leaves a
 4.2x spread across (h, eps) and on clearance_eps a 3.8x spread -- so both
@@ -144,33 +149,52 @@ def classify(model, grid: Grid) -> np.ndarray:
 
 
 def clearance(model, grid: Grid, eps) -> tuple:
-    """``(clearance_h, clearance_eps)``, each ``(N,)``, min over all patches.
+    """``(clearance_h, clearance_eps, fault_eps)``, each ``(N,)``.
 
-    Two metrics because the repo states the near-field condition two ways and
-    each answers a different question. ``clearance_h`` is distance over element
-    size, exactly what ``evaluate._warn_near_boundary`` computes and compares
-    against ``NEAR_BOUNDARY_H_RATIO``; ``clearance_eps`` is distance over that
-    element's own eps, which is what rule 5 names as the thing that governs the
-    error. They are not interchangeable: ``eps="auto"`` is 0.1 h per element on
-    a boundary patch but ONE value of 0.07 min(h) on a fault, so the two
-    disagree by more than a constant factor wherever a fault is involved.
+    BOUNDARIES AND FAULTS ARE SEPARATED, because eps means opposite things at
+    the two and one minimum over both would conflate them.
 
-    Faults are included here even though the evaluator's warning skips them --
-    on-fault evaluation is legitimate, but a viewer should still be able to see
-    where the fault's own mollification reaches.
+    The method regularizes the SOURCE: every jump is spread over eps, the
+    boundary's ``u_p`` as much as a fault's slip. On a FAULT that smearing is
+    the physical claim -- a fault zone of finite width is what the method is
+    for -- so a point 2 eps from the fault is reading the model, not an
+    artefact. On a boundary patch nothing says the free surface is smeared over
+    eps; there the spreading is a numerical device and inside ~eps of it you
+    are inside an artificial layer. A single minimum would flag the fault zone,
+    the most defensible part of the field, as low quality.
+
+    So the first two run over BOUNDARY PATCHES ONLY, which also makes
+    ``clearance_h`` exactly ``evaluate._warn_near_boundary``'s metric rather
+    than accidentally close to it -- that function skips faults for this same
+    reason. ``fault_eps`` is reported separately and is NOT a defect measure:
+    small means inside the fault zone, which is where the method earns its
+    keep.
+
+    ``clearance_h`` is distance over element size, compared against
+    ``NEAR_BOUNDARY_H_RATIO``, and tracks the P0 density staircase;
+    ``clearance_eps`` is distance over that element's own eps and says whether
+    you are inside the smeared boundary layer. Measurement says neither governs
+    the error alone (4.2x and 3.8x spread), which is what two live mechanisms
+    look like.
     """
     n = grid.points.shape[0]
     c_h = np.full(n, np.inf)
     c_eps = np.full(n, np.inf)
+    c_fault = np.full(n, np.inf)
+
+    def _eps_of(patch, idx):
+        return np.broadcast_to(np.atleast_1d(kb.resolve_patch_eps(eps, patch)),
+                               (patch.mesh.n_triangles,))[idx]
+
     for r in model.regions:
-        for p in list(r.patches) + list(r.faults):
+        for p in r.patches:
             d, idx = distance_to_mesh(grid.points, p.mesh)
-            h = kb.element_sizes(p.mesh)[idx]
-            e = np.broadcast_to(np.atleast_1d(kb.resolve_patch_eps(eps, p)),
-                                (p.mesh.n_triangles,))[idx]
-            c_h = np.minimum(c_h, d / h)
-            c_eps = np.minimum(c_eps, d / e)
-    return c_h, c_eps
+            c_h = np.minimum(c_h, d / kb.element_sizes(p.mesh)[idx])
+            c_eps = np.minimum(c_eps, d / _eps_of(p, idx))
+        for f in r.faults:
+            d, idx = distance_to_mesh(grid.points, f.mesh)
+            c_fault = np.minimum(c_fault, d / _eps_of(f, idx))
+    return c_h, c_eps, c_fault
 
 
 def _strain(sig: np.ndarray, mu: float, lam: float) -> np.ndarray:
@@ -291,7 +315,8 @@ def difference(fa: dict, fb: dict, inside: np.ndarray) -> dict:
 
 
 def as_vti_arrays(grid: Grid, fields: dict, code: np.ndarray,
-                  c_h: np.ndarray, c_eps: np.ndarray) -> dict:
+                  c_h: np.ndarray, c_eps: np.ndarray,
+                  c_fault: np.ndarray = None) -> dict:
     """Flatten to the name -> ``(nz, ny, nx, ...)`` dict the writer wants.
 
     Tensors are split into the six independent components under their usual
@@ -310,6 +335,8 @@ def as_vti_arrays(grid: Grid, fields: dict, code: np.ndarray,
     arrays["region"] = grid.fold(code.astype(float))
     arrays["clearance_h"] = grid.fold(c_h)
     arrays["clearance_eps"] = grid.fold(c_eps)
+    if c_fault is not None:
+        arrays["fault_eps"] = grid.fold(c_fault)
     return arrays
 
 

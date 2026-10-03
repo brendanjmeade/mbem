@@ -253,11 +253,29 @@ Measured on the manufactured `u = A x` box, whose interior stress is exactly
 | deep interior, h = 5 km | 6.8e-3 | 1.71e-2 | 4.13e-2 |
 | degradation near a boundary (`clearance_h` 0.15-0.3) | 12.9x | 4.7x | 2.9x |
 
-So **eps sets a floor everywhere, flat in h and linear in eps** — about
-`0.5 (eps/L)` for a domain of size L, so 1 % needs eps <~ 0.02 L — and
-proximity to a *solved* boundary degrades it a further 3-13x on top. Neither
+So there is a floor everywhere, **flat in h and linear in eps** — about
+`0.5 (eps/L)` for a domain of size L, so 1 % needs eps <~ 0.02 L. It is NOT the
+mollification making this a different problem, which was the first guess: a
+radially symmetric unit-integral blob has zero first moment, so convolving a
+LINEAR field with it returns that field exactly. Imposing a CONSTANT field on
+the same box gives an interior stress error of 3.2e-15 at every eps, and the
+error appears only once the field has a gradient — so the floor is the free
+term, which the calibrated formulation makes exact to zeroth order and no
+further. A property of the formulation, not of the regularization.
+
+Proximity to a *solved* boundary degrades it a further 3-13x on top. Neither
 variable governs alone: binning on `clearance_h` leaves a 4.2x spread across
 (h, eps) and on `clearance_eps` a 3.8x spread, which is why both arrays ship.
+
+**A fault is exempt**, and for a stronger reason than its slip being prescribed
+data. Because the regularization is applied to the SOURCE, a fault's smearing
+over eps IS the finite-width fault zone the method exists to represent, so a
+point 2 eps from the fault is reading the model. A boundary patch's smearing
+has no such warrant — the free surface is not physically smeared — so within
+~eps of it you are inside a layer the numerics invented. The same quantity,
+distance in units of eps, is physics at one and an artefact at the other, which
+is why `clearance_h`/`clearance_eps` are measured to BOUNDARIES only and
+`fault_eps` is reported separately and is not a defect measure.
 
 One practical consequence, against what the warning text advises: at fixed eps,
 refining h by 4x improved the near-boundary residual only 1.27x, while standing

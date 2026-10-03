@@ -23,8 +23,10 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
     </p>
     <div class="note">
       The <b>quality</b> slider is the one to play with. It hides cells closer
-      than <i>d</i>/<i>h</i> to a solved boundary. The topography effect reads
-      1287&nbsp;mm at a point lying on the free surface and 96&nbsp;mm at
+      than <i>d</i>/<i>h</i> to a <b>solved boundary</b> &mdash; never to the
+      fault, whose smearing over &epsilon; is the finite-width fault zone the
+      method is for, not a defect. The topography effect reads 1287&nbsp;mm at a
+      point lying on the free surface and 96&nbsp;mm at
       <i>d</i>/<i>h</i>&nbsp;&gt;&nbsp;0.5 &mdash; a factor of 33 that is
       discretization, not physics.
     </div>

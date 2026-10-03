@@ -129,17 +129,36 @@ boundary — over a grid of element sizes $h$ and widths $\varepsilon$ given
 | extra factor near a boundary | 12.9 × | 4.7 × | 2.9 × |
 
 Read the first two rows: **halving the mesh changes nothing**, while $\varepsilon$
-times 2.4 multiplies the error by 2.4. The accuracy floor is set by the fault-zone
-width and is roughly $0.5\,(\varepsilon/L)$ for a domain of size $L$ — so one per
-cent on this box asks for $\varepsilon \lesssim 0.02\,L$. That the floor is flat
-in $h$ is precisely the decoupling claim, seen from the error side.
+times 2.4 multiplies the error by 2.4.
 
-The third row is a separate effect. Near a boundary whose density was **solved
-for** rather than prescribed, the piecewise-constant representation of that
-density limits the readout, and the error rises by a further factor of three to
-thirteen. A fault is exempt: its slip is data, exact on each element, which is
-why on-fault evaluation is legitimate while evaluation half an element from a
-free surface is not.
+It is tempting to call that an intrinsic cost of mollification — the mollified
+problem simply being a different problem from the sharp one. **It is not**, and
+the source picture says why. A radially symmetric blob of unit integral has zero
+first moment, so convolving a *linear* field with it returns that field exactly;
+if the floor were the mollification, it would vanish for $\mathbf{u} =
+\mathbf{A}\mathbf{x}$, which is linear. Imposing a *constant* field on the same
+box instead gives an interior stress error of $3\times10^{-15}$ at **every**
+$\varepsilon$, and the error appears only once the field has a gradient. So the
+floor is the free term — the jump relation that the calibrated formulation makes
+exact to zeroth order and no further. It is a property of how the boundary
+condition is imposed, not of the regularization, and a higher-order calibration
+would move it.
+
+The third row is a different effect again, and here the asymmetry matters. Near
+a boundary whose density was **solved for**, the piecewise-constant
+representation of that density limits the readout and the error rises by a
+further factor of three to thirteen.
+
+**A fault is exempt, and for a stronger reason than it being prescribed data.**
+Because the regularization is applied to the source, the fault's slip is spread
+over $\varepsilon$ — and that spreading *is* the finite-width fault zone the
+method exists to represent. A point two $\varepsilon$ from the fault is reading
+the model, not an artefact of it. At a free surface the same spreading has no
+such warrant: the ground surface is not smeared over $\varepsilon$, so within
+that distance you are inside a layer the numerics invented. The same quantity,
+distance in units of $\varepsilon$, is physics on one side and an artefact on
+the other — which is why this site's viewer thresholds on distance to
+*boundaries* only, and never hides the fault zone.
 
 Neither distance alone governs it — binning the error on $d/h$ leaves a 4.2×
 spread across $(h, \varepsilon)$ and on $d/\varepsilon$ a 3.8× spread — so both

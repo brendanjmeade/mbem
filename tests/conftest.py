@@ -9,7 +9,7 @@ free have to be arranged explicitly.
    package name keeps them distinct, so ``mbem``'s and ``moss_kernel``'s
    same-named gates are different modules and neither shadows the other.
 
-2. SIBLING IMPORTS. Three gates import ``_sphere`` and one imports
+2. SIBLING IMPORTS. Four gates import ``_sphere`` and one imports
    ``verify_hbackend``, which worked only because a script's own directory is
    ``sys.path[0]``. Each gate directory is put on the path here instead, once.
 

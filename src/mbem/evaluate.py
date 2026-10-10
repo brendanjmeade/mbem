@@ -153,6 +153,14 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     """Displacement at interior ``points`` (N,3) of ``region``.
 
     ``solution`` is the slot dict returned by a backend solve.
+
+    INTERIOR is the word that matters: a point ON a boundary patch comes back
+    at HALF the interior limit. The representation is the field inside the body
+    and zero outside, so a point inside the mollified layer reads the average
+    of the two one-sided limits. It is an identity, not an error -- no eps,
+    order or refinement moves it (``verify_solved_bvp`` B7 pins it) -- so on a
+    boundary read the SOLVED DENSITY instead: ``solution["u:<patch>"]`` IS the
+    physical displacement there, and needs no evaluation.
     """
     region = _region(model, region)
     if region.faults:
@@ -448,6 +456,15 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     wants both -- the elastic stress to look at and ``C:eps*`` to see what the
     mollification put there -- and differencing two separate calls would redo
     the ``dd`` kernel, the dominant cost.
+
+    **Stress ON a boundary is HALF the interior limit** -- the representation
+    is the field inside the body and zero outside, so a point inside the
+    mollified layer reads the average of the two one-sided limits. An identity,
+    not an error: measured 0.4947-0.5052 of the exact value across eps, order,
+    nu and jump convention, and no refinement moves it (``verify_solved_bvp``
+    B7). Unlike displacement there is no density to read instead, since stress
+    needs the derivative of one, so a boundary value has to come from standing
+    off: the interior limit is back to within 1 % by ~4 eps deep.
     """
     region = _region(model, region)
     if region.faults:

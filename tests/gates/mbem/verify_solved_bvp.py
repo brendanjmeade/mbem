@@ -44,7 +44,21 @@ It uses THREE anchors because they fail differently:
      materials B4 cannot tell which region's material an interface block was
      assembled with.  B6 splits the Anchor A fault box by a same-material
      interface below the fault tip and requires the two-region solve to
-     reproduce the one-region solve (fault-in-multi-region assembly).  Tight
+     reproduce the one-region solve (fault-in-multi-region assembly).  B7
+     pins the one IDENTITY either readout obeys on a boundary -- a point ON a
+     patch returns HALF the interior limit, displacement and stress alike, at
+     every eps, order, nu and jump -- and is the only check here that evaluates
+     a readout at a point lying on a patch that carries a LIVE density (A4 sits
+     on the fault, and anchor C's face points sit on patches whose density is
+     zero), so nothing else constrains the readout there.  B8 repeats the
+     uniform strain with a TRACE, which is the only way lam appears at all:
+     ``STRAIN_A`` is trace-free, so ``C:A = 2 mu A`` and B2-B7 are lam-BLIND
+     rather than lam-insensitive -- with lam DOUBLED, B2's two checks still
+     PASS.  B9 is the ESHELBY sphere: a spherical inhomogeneity whose interior
+     strain is analytically uniform and known in closed form, which adds a
+     CURVED interface, a region bounded by one CLOSED interface, and an
+     external analytic reference for a material contrast (elsewhere only the
+     legacy moss solver serves as an oracle).  Tight
      enough to catch what anchor A's few-percent truncation floor would hide:
      BC application, the free term, the interface orientation sign, per-patch
      eps routing, per-region materials.
@@ -70,6 +84,8 @@ Seeded defects (one at a time, in a sandbox copy) and the anchors that fail:
   interface-only sigma      (generate_system)        B4 only
   interface G with the wrong region's material       B5 only
   fault RHS skipped on INTERFACE rows                B6 only
+  eigenstress dropped in the stress readout          A4 + B7
+  lam doubled in the uniform-strain BVP              B8 + B9 (B2 PASSES)
 
 The anchors run at nu = 1/4 AND nu != 1/4 (0.30, 0.45) -- the lam/mu pairing
 is invisible at nu = 1/4, which is how a swapped kernel shipped for months --
@@ -95,6 +111,7 @@ from local_box_mesh_eq import (                                   # noqa: E402
 )
 from mbem.backends.dense import AssembledDense                    # noqa: E402
 from mbem.evaluate import evaluate_displacement, evaluate_stress  # noqa: E402
+from mbem.volume import _strain                                   # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.model import (                                          # noqa: E402
     BCType,
@@ -104,6 +121,7 @@ from mbem.model import (                                          # noqa: E402
     generate_system,
 )
 from tde_reference import classical_tde_stress                    # noqa: E402
+from _sphere import icosphere                 # sibling; see tests/conftest.py
 
 CHECKS = []
 
@@ -166,6 +184,10 @@ EPS_B = 1.25                                        # eps/h = 0.125
 EPS_B_DICT = {"top": 1.0, "sides": 1.6, "base": 0.8}   # per-patch eps routing
 # u = A x, A symmetric -> sigma = lam tr(A) I + 2 mu A is CONSTANT, so the
 # traction is piecewise constant and exactly representable at P0.
+# NOTE this A is TRACE-FREE (2 + 1 - 3 = 0), so that first term is identically
+# zero and sigma = 2 mu A: every clause that uses STRAIN_A is lam-BLIND, not
+# merely lam-insensitive. B8 runs STRAIN_V, which has a trace, and the
+# measurement block above it records what that buys.
 STRAIN_A = 1.0e-4 * np.array([[2.0, -1.0, 0.5],
                               [-1.0, 1.0, -1.5],
                               [0.5, -1.5, -3.0]])
@@ -193,6 +215,102 @@ TOL_TRANSP_UIF = 2.5e-2  # measured worst 1.1e-2; dropping the fault term from
 #                          the interface rows gives 0.58 while the two interior
 #                          checks above barely move (the fault field is weak
 #                          22 km below the tip), so this is the one that sees it
+
+# B7, the on-boundary HALF.  The direct representation is the field INSIDE the
+# body and ZERO outside (Betti with the source outside gives c u + H u - G t =
+# 0), so a readout evaluated inside a mollified layer -- a point ON a patch --
+# returns the average of the two one-sided limits: HALF the interior value, for
+# displacement and stress alike.  It is an IDENTITY, not an error; no eps,
+# order, nu or jump convention moves it.  That is exactly why it needs pinning:
+# nothing else in the suite constrains what a readout does on a boundary, and a
+# factor there would read as a plausible near-surface artefact rather than a
+# bug.  The reference is the exact C:A, so the solve and the readout are
+# constrained together, and these are the only sample points in this gate that
+# lie ON a patch carrying a live density.
+# Measured over NU_LIST x JUMPS x P0/P1 x HALF_EPS_OVER_H (24 cases), the
+# projection ratio of each readout onto the exact field:
+#   stress ON the boundary        worst |r - 1/2| = 5.3e-3
+#   displacement ON the boundary  worst |r - 1/2| = 6.3e-3
+#   either field, ~4 eps deep     min r = 0.9901 -- the interior limit returns
+# Tripwire: with the eigenstress NOT subtracted the stress ratio spreads to
+# -0.168 .. 0.608, median |r - 1/2| = 0.137, 11x the tolerance below.  The
+# MEDIAN is gated rather than the worst case because the defect is not
+# universal -- 4 of the 24 un-subtracted cases land near 1/2 anyway, so a
+# per-case tripwire would be flaky.
+HALF_BARY = np.array([0.55, 0.28, 0.17])   # NOT a collocation point at any
+#                         order: P0 sits at the centroid, P1/P2 at the shrunk
+#                         vertices and edge midpoints
+HALF_EPS_OVER_H = (0.1, 0.025)
+HALF_DEEP_Z = 3.0        # km, ~4 eps_top at eps/h = 0.1 on the BOX_EDGE mesh
+TOL_HALF_SIG = 1.2e-2    # |ratio - 1/2|, measured worst 5.3e-3
+TOL_HALF_U = 1.5e-2      # measured worst 6.3e-3
+TOL_HALF_DEEP = 0.97     # ratio at HALF_DEEP_Z must EXCEED this (worst 0.9901)
+TOL_HALF_TRIP = 0.05     # tripwire: the median |ratio - 1/2| with the
+#                          eigenstress left in must EXCEED this (measured 0.137)
+
+# B8, a VOLUMETRIC strain. STRAIN_A above is TRACE-FREE (2 + 1 - 3 = 0), so
+# C:A = 2 mu A and lam multiplies ZERO. B2/B3/B4/B6 are therefore not merely
+# insensitive to lam, they are BLIND to it: with tr A = 0, u = A x is an exact
+# solution for ANY material and the prescribed traction 2 mu A.n carries no lam
+# either, so the whole BVP is lam-degenerate. Measured: with lam DOUBLED in the
+# model, B2's two checks read 0.0031 (tol 1.0e-2) and 0.094 (tol 0.12) and BOTH
+# STILL PASS. B5's bimaterial shear is lam-independent by construction too, so
+# nothing in this gate pinned lam on the solved-BVP path. This clause puts a
+# trace in the field, which is the whole of the fix. ``verify_volume`` states
+# the same tr(A) != 0 requirement for its own readout check; what is additional
+# here is that the BVP, not just the comparison, loses lam when tr A = 0.
+# Which readout carries lam, measured on this box (sensitivity = d err per unit
+# FRACTIONAL lam error):
+#   interior u            sens 0.000  -- exactly blind, the Dirichlet data pins it
+#   recovered t, edges cut sens 0.355  -- would catch ~29 %
+#   interior sigma, hydrostatic  sens 0.702  -- catches ~4 %, so it is gated
+# Baselines over the three nu at EPS_B / calibrated: hydrostatic 0.0141-0.0167,
+# recovered traction 0.0210-0.0777. (EPS_B_DICT reads 0.0215 / 0.0838; it is not
+# run, because three solves already buy the finding.) The hydrostatic error runs
+# ~15x the deviatoric on this box (0.0167 against 0.0006) and converges at clean
+# first order -- a harder quantity, not a defect.
+STRAIN_V = 1.0e-4 * np.array([[2.0, -1.0, 0.5],
+                              [-1.0, 1.0, -1.5],
+                              [0.5, -1.5, -1.0]])    # trace +2e-4: lam is live
+TOL_VOL_S = 3.5e-2      # interior hydrostatic stress, measured worst 1.67e-2
+TOL_VOL_T = 0.16        # recovered traction, edges cut, measured worst 7.8e-2
+VOL_LAM_TRIP = 0.04     # the tripwire's injected lam error, +4 % (reads 0.0442)
+
+# B9, the ESHELBY sphere: a spherical INHOMOGENEITY under uniform load. Eshelby
+# gives the strain inside an ellipsoidal inhomogeneity as UNIFORM and equal to a
+# closed-form concentration of the remote strain. Four things no other clause in
+# this gate covers:
+#   * a CURVED interface -- every other interface here is a flat rectangle;
+#   * a region bounded by ONE CLOSED interface and nothing else, a topology the
+#     live inclusion case lacks (its cylinder meets the free surface);
+#   * an EXTERNAL ANALYTIC reference for a two-region material contrast, where
+#     the only other check is against the legacy moss solver as an oracle;
+#   * a REFERENCE-FREE check, since uniformity is a prediction by itself: the
+#     spread of the interior strain about its own mean is an error with no
+#     reference value, and it converges fastest of the three (0.0058 -> 0.0016
+#     over one sphere refinement).
+# The outer box is Dirichlet (u = E0 x) rather than truly remote, so there is an
+# O((a/L)^3) truncation; measured at L/a = 4, 6, 8, 12 the deviatoric error goes
+# 0.0178, 0.0111, 0.0085, 0.0083, so L/a = 8 sits on its plateau.
+# Measured at ESH_LEVEL / ESH_EDGE (2408 triangles, 2.6 s): uniformity 0.0016,
+# hydrostatic 0.0295, deviatoric 0.0045, whole tensor 0.0107. The hydrostatic
+# error again runs ~7x the deviatoric, and that is NOT the inclusion -- the same
+# asymmetry sits in B8's homogeneous box.
+# ESH_MAT_INC has mu != lam DELIBERATELY: a lam<->mu swap in the inclusion moves
+# A_hyd 6.5 % and A_dev 22.6 %, so the deviatoric check catches it -- but with
+# the two equal that swap would be a no-op and the clause would be blind to it.
+ESH_A = 1.0             # km, sphere radius
+ESH_L = 8.0             # km, cube half-width: L/a = 8, on the truncation plateau
+ESH_EDGE = 2.0          # km, outer box target edge
+ESH_LEVEL = 3           # icosphere subdivisions: 1280 triangles
+ESH_MAT_HOST = mb.ElasticMaterial(mu=30.0, lam=45.0)     # nu = 0.30, not 1/4
+ESH_MAT_INC = mb.ElasticMaterial(mu=8.0, lam=20.0)       # mu != lam on purpose
+ESH_E0 = STRAIN_V       # a trace is needed for the hydrostatic factor to exist
+TOL_ESH_UNIF = 4.0e-3   # interior strain spread about its mean, worst 1.6e-3
+TOL_ESH_DEV = 1.0e-2    # deviatoric concentration, measured worst 4.5e-3
+TOL_ESH_HYD = 6.0e-2    # hydrostatic concentration, measured worst 2.95e-2
+TOL_ESH_ALL = 2.5e-2    # whole tensor, measured worst 1.07e-2
+TOL_ESH_XCHK = 1.0e-12  # the two closed forms of each factor must agree
 
 # ---------------------------------------------------------------- anchor C --
 # a 10 x 10 km vertical fault (8 triangles) centred in the closed box, >= 15 km
@@ -505,24 +623,25 @@ def _rim_distance(mesh):
     return np.minimum(BOX_L - np.abs(c[:, 0]), BOX_L - np.abs(c[:, 1]))
 
 
-def _exact_u(x):
-    return np.asarray(x, float) @ STRAIN_A.T
+def _exact_u(x, A=STRAIN_A):
+    return np.asarray(x, float) @ A.T
 
 
-def _exact_sigma(mat):
-    return mat.lam * np.trace(STRAIN_A) * np.eye(3) + 2.0 * mat.mu * STRAIN_A
+def _exact_sigma(mat, A=STRAIN_A):
+    return mat.lam * np.trace(A) * np.eye(3) + 2.0 * mat.mu * A
 
 
-def _exact_t(mesh, mat):
+def _exact_t(mesh, mat, A=STRAIN_A):
     n, _ = mesh.normals_and_areas()
-    return n @ _exact_sigma(mat).T
+    return n @ _exact_sigma(mat, A).T
 
 
-def _build_box_model(box, mat, bcs, values, faults=()):
+def _build_box_model(box, mat, bcs, values, faults=(), order_top=0):
     patches = [Patch(k, box[k],
                      BCType.PRESCRIBED_DISPLACEMENT if bcs[k] == "d"
                      else BCType.FREE_TRACTION,
-                     value=values[k])
+                     value=values[k],
+                     order=order_top if k == "top" else 0)
                for k in ("top", "sides", "base")]
     region = Region("block", mat, patches,
                     probe_point=np.array([1.0, 2.0, -0.5 * BOX_H]),
@@ -804,6 +923,240 @@ def b_fault_interface_transparency(meshes):
                   relerr(s2["u:iface"], u1_if), TOL_TRANSP_UIF)
 
 
+def _half_samples(top):
+    """One point per top triangle at ``HALF_BARY``, kept to the middle of the
+    patch so the box rim plays no part."""
+    v = np.asarray(top.vertices, float)[np.asarray(top.triangles)]
+    pts = np.einsum("tki,k->ti", v, HALF_BARY)
+    keep = ((np.abs(pts[:, 0]) < 0.6 * BOX_L)
+            & (np.abs(pts[:, 1]) < 0.6 * BOX_L))
+    return pts[keep]
+
+
+def _half_ratio(model, region, sol, eps, q, mat, subtract=True):
+    """Projection of each readout onto its exact field: 1 in the interior, 1/2
+    on a patch.  A projection rather than a per-point ratio because u = A x
+    vanishes near the origin, where a pointwise ratio is small-denominator
+    noise rather than a measurement."""
+    sx = np.broadcast_to(_exact_sigma(mat), (q.shape[0], 3, 3))
+    sig = evaluate_stress(model, region, sol, q, eps,
+                          subtract_anelastic=subtract, warn_near=False)
+    u = evaluate_displacement(model, region, sol, q, eps, warn_near=False)
+    ue = _exact_u(q)
+    return (float(np.sum(sig * sx) / np.sum(sx * sx)),
+            float(np.sum(u * ue) / np.sum(ue * ue)))
+
+
+def b_boundary_half(box):
+    """A readout ON a patch returns HALF the interior limit (constants above)."""
+    print("\n[B7] IDENTITY: a readout ON a patch == HALF the interior limit")
+    top = box["top"]
+    pts = _half_samples(top)
+    h = kb.element_sizes(top)
+    on_s, on_u, deep, trip = [], [], [], []
+    for nu in NU_LIST:
+        mat = material(nu)
+        vals = {"top": _exact_t(top, mat),
+                "sides": _exact_t(box["sides"], mat),
+                "base": _exact_u(box["base"].centroids())}
+        for order_top in (0, 1):
+            model, region = _build_box_model(
+                box, mat, dict(top="t", sides="t", base="d"), vals,
+                order_top=order_top)
+            system = generate_system(model)
+            for jump in JUMPS:
+                for frac in HALF_EPS_OVER_H:
+                    eps = {"top": frac * h, "sides": "auto", "base": "auto"}
+                    sol = AssembledDense(system, eps, "direct",
+                                         jump=jump).solve()
+                    q = pts.copy()
+                    q[:, 2] = 0.0
+                    rs, ru = _half_ratio(model, region, sol, eps, q, mat)
+                    on_s.append(rs - 0.5)
+                    on_u.append(ru - 0.5)
+                    trip.append(abs(_half_ratio(model, region, sol, eps, q,
+                                                mat, subtract=False)[0] - 0.5))
+                    q[:, 2] = -HALF_DEEP_Z
+                    deep.extend(_half_ratio(model, region, sol, eps, q, mat))
+
+    n = len(on_s)
+    print(f"  {n} cases: nu in {NU_LIST}, both jumps, P0 and P1 top, "
+          f"eps/h in {HALF_EPS_OVER_H}")
+    print(f"  {pts.shape[0]} points per case, on the top patch at barycentric "
+          f"({', '.join(f'{b:g}' for b in HALF_BARY)}) -- no collocation "
+          f"point among them")
+    print(f"  stress       ratio ON the boundary: "
+          f"{0.5 + min(on_s):.4f} .. {0.5 + max(on_s):.4f}")
+    print(f"  displacement ratio ON the boundary: "
+          f"{0.5 + min(on_u):.4f} .. {0.5 + max(on_u):.4f}")
+    print(f"  both fields at z = -{HALF_DEEP_Z:g} km:      "
+          f"{min(deep):.4f} .. {max(deep):.4f}")
+    check(f"B7 stress ON a patch == 1/2 C:A        ({n} cases)",
+          max(abs(v) for v in on_s), TOL_HALF_SIG, "{:.4f}")
+    check(f"B7 displacement ON a patch == 1/2 A x  ({n} cases)",
+          max(abs(v) for v in on_u), TOL_HALF_U, "{:.4f}")
+    check_true(f"B7 interior limit recovered {HALF_DEEP_Z:g} km deep",
+               min(deep) > TOL_HALF_DEEP,
+               f"min ratio {min(deep):.4f} > {TOL_HALF_DEEP}")
+    check_true("B7 tripwire: eigenstress left in BREAKS the half",
+               float(np.median(trip)) > TOL_HALF_TRIP,
+               f"median |r - 1/2| {np.median(trip):.4f} > {TOL_HALF_TRIP}")
+
+
+def _volumetric_score(box, obs, mat_model, mat_true, masks, u_ex):
+    """One all-Dirichlet solve with ``mat_model``, scored against ``mat_true``.
+
+    The two differ only for the tripwire, which injects a lam error through the
+    material input rather than by mutating any code.
+    """
+    keys = ("top", "sides", "base")
+    model, region = _build_box_model(
+        box, mat_model, dict(top="d", sides="d", base="d"), u_ex)
+    sol = AssembledDense(generate_system(model), EPS_B, "direct",
+                         jump="calibrated").solve()
+    t_ex = {k: _exact_t(box[k], mat_true, STRAIN_V) for k in keys}
+    num = sum(float(np.sum((sol[f"t:{k}"][masks[k]]
+                            - t_ex[k][masks[k]]) ** 2)) for k in keys)
+    den = sum(float(np.sum(t_ex[k][masks[k]] ** 2)) for k in keys)
+    sig = evaluate_stress(model, region, sol, obs, EPS_B, warn_near=False)
+    tr_ex = float(np.trace(_exact_sigma(mat_true, STRAIN_V))) / 3.0
+    hyd = float(abs(np.median(np.trace(sig, axis1=1, axis2=2) / 3.0) / tr_ex
+                    - 1.0))
+    return hyd, float(np.sqrt(num / den))
+
+
+def b_volumetric_strain(box, obs):
+    """A manufactured strain WITH A TRACE, so lam is in the answer at all."""
+    print("\n[B8] MANUFACTURED: VOLUMETRIC uniform strain -- lam is live")
+    keys = ("top", "sides", "base")
+    masks = {k: _edge_distance(box[k]) > BOX_EDGE for k in keys}
+    u_ex = {k: _exact_u(box[k].centroids(), STRAIN_V) for k in keys}
+    print(f"  tr(STRAIN_V) = {np.trace(STRAIN_V):+.1e} "
+          f"(STRAIN_A is {np.trace(STRAIN_A):+.1e}, which is why lam vanishes "
+          f"from B2-B6)")
+    worst_h = worst_t = 0.0
+    for nu in NU_LIST:
+        mat = material(nu)
+        hyd, tr = _volumetric_score(box, obs, mat, mat, masks, u_ex)
+        worst_h, worst_t = max(worst_h, hyd), max(worst_t, tr)
+        print(f"  nu={nu:.2f}: interior sigma hydrostatic {hyd:.4f}, "
+              f"recovered t (edges cut) {tr:.4f}")
+    check(f"B8 interior tr(sigma) == tr(C:A)     ({len(NU_LIST)} nu)",
+          worst_h, TOL_VOL_S, "{:.4f}")
+    check(f"B8 recovered t == C:A (edges cut)    ({len(NU_LIST)} nu)",
+          worst_t, TOL_VOL_T, "{:.4f}")
+    # The tripwire IS the justification: a clause that could not see a small
+    # lam error would leave the blind spot exactly where it was.
+    mat = material(NU_LIST[1])                      # 0.30, the mid rung
+    bad = mb.ElasticMaterial(mu=mat.mu,
+                             lam=mat.lam * (1.0 + VOL_LAM_TRIP))
+    hyd_bad, _ = _volumetric_score(box, obs, bad, mat, masks, u_ex)
+    check_true(f"B8 tripwire: a +{VOL_LAM_TRIP * 100:.0f}% lam error BREAKS it",
+               hyd_bad > TOL_VOL_S,
+               f"{hyd_bad:.4f} > {TOL_VOL_S} (clean run {worst_h:.4f})")
+
+
+def _esh_box(L, edge):
+    """A cube CENTRED on the origin, so the sphere sits in its middle (the
+    anchor-B box has its top at z = 0, where a centred sphere would breach it)."""
+    xr = yr = (-L, L)
+    return {"top": make_rectangular_patch_eq(xr, yr, L, edge, normal_up=True),
+            "base": make_rectangular_patch_eq(xr, yr, -L, edge,
+                                              normal_up=False),
+            "sides": _panels((-L, L), half=L, edge=edge)}
+
+
+def _eshelby_sphere_factors(mat0, mat1):
+    """Hydrostatic and deviatoric strain concentration for a SPHERE.
+
+    From the Eshelby tensor eigenvalues written in ``(mu, lam)`` -- never
+    through ``1/(1-2nu)``, so both stay finite as nu -> 1/2 -- plus the
+    textbook closed forms in ``(K, mu)``, returned so the gate can cross-check
+    its own reference algebra. A gate whose reference is wrong is worse than no
+    gate, and these two derivations share no step.
+    """
+    mu0, lam0, mu1, lam1 = mat0.mu, mat0.lam, mat1.mu, mat1.lam
+    S_h = (3.0 * lam0 + 2.0 * mu0) / (3.0 * (lam0 + 2.0 * mu0))
+    S_d = 2.0 * (3.0 * lam0 + 8.0 * mu0) / (15.0 * (lam0 + 2.0 * mu0))
+    K0, K1 = lam0 + 2.0 * mu0 / 3.0, lam1 + 2.0 * mu1 / 3.0
+    A_h = 1.0 / (1.0 + S_h * (K1 - K0) / K0)
+    A_d = 1.0 / (1.0 + S_d * (mu1 - mu0) / mu0)
+    alt_h = (3.0 * K0 + 4.0 * mu0) / (3.0 * K1 + 4.0 * mu0)
+    alt_d = (5.0 * mu0 * (3.0 * K0 + 4.0 * mu0)
+             / (mu0 * (9.0 * K0 + 8.0 * mu0) + 6.0 * mu1 * (K0 + 2.0 * mu0)))
+    return A_h, A_d, alt_h, alt_d
+
+
+def _esh_interior(n=300, frac=0.55):
+    """A ball of probe points well inside the sphere: uniformity is an INTERIOR
+    statement, and the interface carries the usual eps-limited band."""
+    rng = np.random.default_rng(1957)                # Eshelby (1957)
+    d = rng.normal(size=(n, 3))
+    d /= np.linalg.norm(d, axis=1)[:, None]
+    r = frac * ESH_A * rng.uniform(0.0, 1.0, n) ** (1.0 / 3.0)
+    return d * r[:, None]
+
+
+def b_eshelby_sphere():
+    """Spherical inhomogeneity against Eshelby (constants and measurements
+    above): a curved interface, an enclosed region, an analytic reference."""
+    print("\n[B9] EXTERNAL ANALYTIC: Eshelby sphere -- curved interface, "
+          "enclosed region")
+    A_h, A_d, alt_h, alt_d = _eshelby_sphere_factors(ESH_MAT_HOST, ESH_MAT_INC)
+    check(f"B9 the two closed forms of A_hyd/A_dev agree",
+          abs(A_h - alt_h) + abs(A_d - alt_d), TOL_ESH_XCHK, "{:.2e}")
+
+    bx = _esh_box(ESH_L, ESH_EDGE)
+    unit = icosphere(ESH_LEVEL)
+    sph = mb.TriMesh(
+        vertices=np.ascontiguousarray(ESH_A * np.asarray(unit.vertices, float)),
+        triangles=np.ascontiguousarray(np.asarray(unit.triangles)))
+    iface = Patch("iface", sph, BCType.INTERFACE)        # ONE shared object
+    outer = [Patch(k, bx[k], BCType.PRESCRIBED_DISPLACEMENT,
+                   value=_exact_u(bx[k].centroids(), ESH_E0))
+             for k in ("top", "base", "sides")]
+    host = Region("host", ESH_MAT_HOST, outer + [iface],
+                  probe_point=np.array([0.7, 0.6, 0.5]) * ESH_L)
+    inc = Region("inclusion", ESH_MAT_INC, [iface],
+                 probe_point=np.zeros(3))
+    model = RegionModel([host, inc])
+    n_tri = sph.n_triangles + sum(bx[k].n_triangles for k in bx)
+    print(f"  L/a = {ESH_L / ESH_A:g}, sphere {sph.n_triangles} tris, "
+          f"{n_tri} total; host mu/lam {ESH_MAT_HOST.mu:g}/"
+          f"{ESH_MAT_HOST.lam:g}, inclusion {ESH_MAT_INC.mu:g}/"
+          f"{ESH_MAT_INC.lam:g}")
+    print(f"  Eshelby concentration: A_hyd {A_h:.4f}, A_dev {A_d:.4f}")
+
+    sol = AssembledDense(generate_system(model), "auto", "direct",
+                         jump="calibrated").solve()
+    q = _esh_interior()
+    sig = evaluate_stress(model, inc, sol, q, "auto", warn_near=False)
+    # volume._strain is the one Hooke inversion in the tree, so this gates it
+    # as well rather than restating it here
+    e = _strain(sig, ESH_MAT_INC.mu, ESH_MAT_INC.lam)
+
+    tr3_0 = float(np.trace(ESH_E0)) / 3.0
+    dev_0 = ESH_E0 - tr3_0 * np.eye(3)
+    e_ref = A_h * tr3_0 * np.eye(3) + A_d * dev_0
+    e_mean = e.mean(axis=0)
+    unif = float(np.linalg.norm(e - e_mean, axis=(1, 2)).max()
+                 / np.linalg.norm(e_mean))
+    tr3 = np.trace(e, axis1=1, axis2=2) / 3.0
+    dev = e - tr3[:, None, None] * np.eye(3)
+    err_h = float(abs(np.median(tr3) / (A_h * tr3_0) - 1.0))
+    err_d = float(np.linalg.norm(np.median(dev, axis=0) - A_d * dev_0)
+                  / np.linalg.norm(A_d * dev_0))
+    err_all = float(np.linalg.norm(e_mean - e_ref) / np.linalg.norm(e_ref))
+    check("B9 interior strain is UNIFORM (no reference)", unif,
+          TOL_ESH_UNIF, "{:.4f}")
+    check("B9 deviatoric concentration == A_dev e0'", err_d,
+          TOL_ESH_DEV, "{:.4f}")
+    check("B9 hydrostatic concentration == A_hyd tr(e0)/3", err_h,
+          TOL_ESH_HYD, "{:.4f}")
+    check("B9 whole interior strain == Eshelby", err_all,
+          TOL_ESH_ALL, "{:.4f}")
+
+
 # ============================================================== ANCHOR C =====
 
 def c_fault_amplitude():
@@ -891,6 +1244,9 @@ def main():
     b_two_region_interface(sbox, obs_pair)
     b_bimaterial_shear(sbox, obs_pair)
     b_fault_interface_transparency(meshes)
+    b_boundary_half(box)
+    b_volumetric_strain(box, obs)
+    b_eshelby_sphere()
     c_fault_amplitude()
 
     print("-" * 76)

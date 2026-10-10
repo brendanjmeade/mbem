@@ -172,17 +172,39 @@ the model, not an artefact of it. At a free surface the same spreading has no
 such warrant: the ground surface is not smeared over $\varepsilon$, so within
 that distance you are inside a layer the numerics invented. The same quantity,
 distance in units of $\varepsilon$, is physics on one side and an artefact on
-the other — which is why this site's viewer thresholds on distance to
-*boundaries* only, and never hides the fault zone.
+the other — which is why both distances are written into every voxel of the
+volumes this site ships, and why the fault zone is drawn like any other part of
+the model.
 
 Neither distance alone governs it — binning the error on $d/h$ leaves a 4.2×
 spread across $(h, \varepsilon)$ and on $d/\varepsilon$ a 3.8× spread — so both
-are reported per voxel, and the
-[Examples](../examples/) page lets you threshold on the first and watch the
-surface shell disappear. One practical consequence, measured: at fixed
-$\varepsilon$, refining $h$ by four improved the near-boundary error by only
-1.27×, while standing off from $d/h = 0.2$ to $2$ improved it thirteenfold.
-**Evaluate deeper; refining the patch alone barely helps.**
+are reported per voxel rather than combined into one score. One practical
+consequence, measured: at fixed $\varepsilon$, refining $h$ by four improved the
+near-boundary error by only 1.27×, while standing off from $d/h = 0.2$ to $2$
+improved it thirteenfold. **Evaluate deeper; refining the patch alone barely
+helps.**
+
+### Exactly on a boundary, you get exactly half
+
+Take that to its limit and something clean happens. The representation formula
+returns the field *inside* the body and **zero** outside it, so a point sitting
+in the middle of a mollified layer — a point exactly on a patch — reads the
+average of the two one-sided limits: half the true value.
+
+It is an identity, not an error. Measured against a manufactured solution whose
+stress is known in closed form, the ratio to the exact value is 0.4947–0.5052
+for stress and 0.4937–0.4990 for displacement, across Poisson's ratio, both jump
+conventions, P0 and P1 densities, and $\varepsilon$ spanning 4× — 24 cases, none
+of which budges off $\tfrac{1}{2}$. No refinement moves it, because nothing is
+broken: that is simply what the formula returns there. By about $4\varepsilon$
+deep the interior limit is back to within 1 %.
+
+For displacement this is a curiosity rather than a trap, because on a boundary
+you never need to evaluate: the solved density **is** the displacement there.
+Stress has no such shortcut — it needs the derivative of a density — so a
+surface stress has to come from standing off, and a reader who evaluates at
+$d = 0$ and finds everything half as large has found the formula working, not
+failing.
 
 ## Solving it at scale
 

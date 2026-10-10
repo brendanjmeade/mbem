@@ -1,12 +1,13 @@
 // Three orthogonal slices through the volume, in a rotatable 3-D scene.
 //
 // Each slice is one quad whose fragment shader samples a 3-D texture at the
-// fragment's own position in the box. That is why the threshold and the colour
-// map are instant: they are uniforms, and nothing is recomputed on the CPU when
-// a slider moves. Rebuilding a 2-D texture per slice would also have worked at
-// this grid size, but it puts the controls on the wrong side of a 53x53 loop.
+// fragment's own position in the box. That is why the slice planes and the
+// colour map are instant: they are uniforms, and nothing is recomputed on the
+// CPU when a slider moves. Rebuilding a 2-D texture per slice would also have
+// worked at this grid size, but it puts the controls on the wrong side of a
+// 102x102 loop.
 //
-// Three textures, not one packed RGBA: `region` is a CATEGORICAL code and must
+// Two textures, not one packed RGBA: `region` is a CATEGORICAL code and must
 // use a NEAREST sampler, because linearly interpolating it invents regions that
 // do not exist between the real ones. Filtering is per-sampler, not per-channel,
 // so it cannot share a texture with the fields.

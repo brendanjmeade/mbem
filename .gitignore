@@ -36,3 +36,7 @@ studies/mbem/*.npz
 # tree, because the mesher takes ~5 min at 168k and a cache is not source. This
 # rule only covers --mesh-cache being pointed back in here.
 studies/mbem/_cache/
+
+# user-supplied Taiwan Earthquake Model meshes (the two LVF files live in mhs)
+taiwanmeshes/
+taiwanmeshes.zip

@@ -1,4 +1,5 @@
 from .core import (
+    FAULT_KINDS,
     FAULT_ORIENTATION,
     BCType,
     Patch,
@@ -6,12 +7,16 @@ from .core import (
     RegionModel,
     patch_solid_angle,
 )
+from .shared_nodes import SharedNodes, build_shared_nodes
 from .layout import Slot, UnknownLayout
-from .equations import BlockTerm, RhsTerm, BlockSystem, generate_system
+from .equations import (BlockTerm, RhsTerm, RhsValue, BlockSystem, generate_system,
+                        apply_fault_rows, traction_row_frame)
 
 __all__ = [
-    "FAULT_ORIENTATION",
+    "FAULT_KINDS", "FAULT_ORIENTATION",
     "BCType", "Patch", "Region", "RegionModel", "patch_solid_angle",
+    "SharedNodes", "build_shared_nodes",
     "Slot", "UnknownLayout",
-    "BlockTerm", "RhsTerm", "BlockSystem", "generate_system",
+    "BlockTerm", "RhsTerm", "RhsValue", "BlockSystem", "generate_system",
+    "apply_fault_rows", "traction_row_frame",
 ]

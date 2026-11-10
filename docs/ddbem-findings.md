@@ -346,7 +346,12 @@ one check by 10 % of its threshold — a coincidence, not a pin.
   `3 K N_tri` collocation rows against `3 n_global` unknowns: over-determined,
   needing one collocation point per *global* node (ambiguous normal at an edge)
   or a least-squares / Galerkin solve. That is where higher-order DD actually
-  pays (continuous P1 is 1.52 unknowns per triangle against P0's 3); open.
+  pays (continuous P1 is 1.52 unknowns per triangle against P0's 3). CLOSED
+  for faults on 2026-10-17: `mbem` collocates a continuous P2 fault AT its
+  shared nodes (the node-averaged normal; the kink is what mollification
+  bounds), `layout="continuous"` in `model/shared_nodes.py`, gated by
+  `verify_penny_crack`. Still open for boundary patches, whose free term has
+  no shared-node form.
 * **A free term for a fault that reaches the boundary.** A boundary collocation
   point within ~1 eps of a fault element sees the fault's blob average, not the
   one-sided value the BC means; the model warned, it did not correct. This is

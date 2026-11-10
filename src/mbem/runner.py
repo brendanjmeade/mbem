@@ -112,6 +112,7 @@ def _model_fingerprint(model, system) -> dict:
     join key that proves two runs used the same geometry however their builder
     parameters were spelled.
     """
+    from mbem.model import BCType
     regions = []
     for r in model.regions:
         patches = []
@@ -119,7 +120,11 @@ def _model_fingerprint(model, system) -> dict:
             v, t = p.mesh.vertices, p.mesh.triangles
             patches.append({
                 "name": p.name, "bc": str(p.bc).split(".")[-1],
-                "order": int(p.order), "n_triangles": int(p.n_triangles),
+                "order": int(p.order), "layout": p.layout,
+                "n_dofs": int(p.n_dofs), "n_triangles": int(p.n_triangles),
+                "allow_opening": bool(p.allow_opening),
+                "n_locked": (int(p.locked_mask(r.patches).sum())
+                             if p.bc is BCType.FAULT_TRACTION else None),
                 "sigma": float(model.orientation(r, p))
                          if p in r.patches else None,
                 "mesh_sha256": hashlib.sha256(

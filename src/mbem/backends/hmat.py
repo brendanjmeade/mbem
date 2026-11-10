@@ -22,7 +22,7 @@ import numpy as np
 from .. import defaults
 from ..kernels import KERNEL_T, KERNEL_U, kernel_coeffs
 from ..kernels import basis as kb
-from ..la.hop import PairCompressed, require_order0
+from ..la.hop import PairCompressed, require_compressible
 from ..la.preconditioner import BlockGaussSeidel
 from ..la.solver import RecycleSpace, fgmres
 from ..model.equations import (BlockSystem, add_block_diagonal,
@@ -147,6 +147,7 @@ class HBackend:
         self.verbose = verbose
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledH":
+        require_compressible(system.model)       # before any tree is built
         if self.far == "fmm":
             return self._assemble_fmm(system, eps)
         return AssembledH(system, eps, self.opts, self.verbose,
@@ -224,7 +225,7 @@ class AssembledH:
                             warn_collocation_near_fault, warn_half_jump_eps)
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
-        require_order0(system.model)
+        require_compressible(system.model)
         require_anchor_or_deflate(system, jump, deflate)
         warn_half_jump_eps(system, eps, jump)
         warn_collocation_near_fault(system, eps)

@@ -10,7 +10,10 @@ of W_k.  Nodes: p = 0 centroid; p = 1 v1, v2, v3; p = 2 v1, v2, v3, m12, m23,
 m31.  Column 3 * (K * s + k) + j (element s, node k, component j); densities
 (K * N_s, 3).  Basis slots and signs are tri_kernels' (U: [I1 d, eps^2 I3 d,
 T2_3]; T: [N[P1..P3], R[P1..P3]]), so basis.u_coeffs / t_coeffs recombine them
-unchanged.  Order 0 routes to tri_kernels' pair code.
+unchanged.  Order 0 routes to tri_kernels' pair code, except
+``traction_matrix`` (stress at a field point dotted with that point's normal,
+columns scattered to shared nodes by an ``ids`` table), which runs the nodal
+machinery at every order.
 """
 
 from __future__ import annotations
@@ -1169,6 +1172,61 @@ def _stress_contract_nodal(x_field, tri_verts, normals, eps_arr, density, mu, nu
     return sig
 
 
+@njit(cache=True, parallel=True)
+def _traction_matrix_nodal(x_field, n_field, tri_verts, normals, eps_arr, ids, n_cols,
+                           mu, nu, lam, spec, which):
+    """Traction rows (3 N_f, 3 n_cols): sigma(x_f) . n_field[f] per unit nodal
+    density, columns scattered by ``ids`` (N_s, K) to 3 ids[s, k] + j.
+    which: 0 = slip -> ELASTIC traction (total minus eigenstress, one pass over
+    the same W), 1 = force -> traction, 2 = eigenstress traction alone,
+    3 = slip -> TOTAL traction (eigenstress left in: the gate's tripwire).
+    Field-parallel: a thread owns its three rows, so the scatter needs no
+    atomics and the element-major transient is never allocated."""
+    K = spec[0][1]
+    N_f = x_field.shape[0]
+    N_s = tri_verts.shape[0]
+    GEO, OK = _nodal_frames(tri_verts)
+    out = np.zeros((3 * N_f, 3 * n_cols))
+    for f in prange(N_f):
+        W, M, BN1, BN2, BD, P, C, PQ, PW, SER = _scratch(K, spec[3].shape[1])
+        H = np.empty((3, 3, 3)); HE = np.empty((3, 3, 3))
+        T2_5 = np.empty((3, 3)); T2_7 = np.empty((3, 3))
+        T4_7 = np.empty((3, 3, 3, 3)); ID2G = np.empty((3, 3, 3, 3))
+        B = np.empty((3, 3, 3)); T35 = np.empty((3, 3, 3)); G1 = np.empty((3, 3, 3))
+        obs = x_field[f]
+        nf0 = n_field[f, 0]; nf1 = n_field[f, 1]; nf2 = n_field[f, 2]
+        for s in range(N_s):
+            if not OK[s]:
+                continue
+            geo = GEO[s]
+            bas = geo[0:9].reshape((3, 3))
+            eps = eps_arr[s]
+            z = _pair_tables(tri_verts[s], geo, obs, eps, spec,
+                             W, M, BN1, BN2, BD, P, C, PQ, PW, SER)
+            for k in range(K):
+                if which == 0:
+                    _dd_stress_node(W, k, z, bas, normals[s], eps, mu, nu, lam, H,
+                                    T2_5, T2_7, T4_7, ID2G, B)
+                    _eigen_node(W, k, normals[s], eps, mu, lam, HE)
+                    for i in range(3):
+                        for m in range(3):
+                            for j in range(3):
+                                H[i, m, j] -= HE[i, m, j]
+                elif which == 1:
+                    _kelvin_stress_node(W, k, z, bas, eps, mu, nu, lam, H, T35, G1)
+                elif which == 2:
+                    _eigen_node(W, k, normals[s], eps, mu, lam, H)
+                else:
+                    _dd_stress_node(W, k, z, bas, normals[s], eps, mu, nu, lam, H,
+                                    T2_5, T2_7, T4_7, ID2G, B)
+                col = 3 * ids[s, k]
+                for i in range(3):
+                    for j in range(3):
+                        out[3 * f + i, col + j] += (nf0 * H[i, 0, j] + nf1 * H[i, 1, j]
+                                                    + nf2 * H[i, 2, j])
+    return out
+
+
 # ---------------------------------------------------------------------
 # Public drivers: tri_kernels' contracts plus ``order``; order 0 stays on
 # tri_kernels' pair code.
@@ -1303,3 +1361,44 @@ def eigenstress_contract(x_field, tri_verts, normals, eps_arr, density, mu, lam,
     _check_shape(tri_verts)
     return _stress_contract_nodal(x_field, tri_verts, normals, eps_arr, density,
                                   mu, _nu(mu, lam), lam, _spec(order, KE), 2)
+
+
+_TRACTION_KINDS = {"slip": (KH, 0), "force": (KS, 1), "eigen": (KE, 2),
+                   "total": (KH, 3)}
+
+
+def traction_matrix(x_field, n_field, tri_verts, normals, eps_arr, ids, n_cols,
+                    mu, lam, order, which="slip"):
+    """Traction rows (3 N_f, 3 n_cols) of a nodal density: the stress at each
+    field point dotted with that point's ``n_field`` (N_f, 3), columns
+    scattered by ``ids`` (N_s, K) so that entry (3 f + i, 3 ids[s, k] + j)
+    accumulates sigma_im n_m per unit density_j of node k of element s. The
+    identity layout ``ids = arange(K N_s).reshape(N_s, K)`` reproduces the
+    element-major column order of the contracts; a shared-node layout adds the
+    columns of coincident nodes. ``which``: "slip" is the ELASTIC traction of a
+    slip density (total minus eigenstress, one pass over the same moment
+    tables), "force" the Kelvin single layer's, "eigen" the eigenstress
+    traction alone, "total" the slip density's TOTAL traction (eigenstress
+    left in; a gate tripwire, never a solve). Order 0 runs the same nodal
+    machinery
+    (verify_nodal_kernels [ii] pins it to tri_kernels). Material as (mu, lam).
+    The (N_f, 3, 3, 3 K N_s) stress matrix is never materialised."""
+    flags, w = _TRACTION_KINDS[which]
+    K = n_nodes(order)
+    tri_verts = np.ascontiguousarray(np.asarray(tri_verts, float))
+    N_s = tri_verts.shape[0]
+    ids = np.ascontiguousarray(np.asarray(ids, dtype=np.int64))
+    if ids.shape != (N_s, K):
+        raise ValueError(f"ids shape {ids.shape} != ({N_s}, {K})")
+    if ids.size and (ids.min() < 0 or ids.max() >= n_cols):
+        raise ValueError(f"ids must index 0 .. n_cols - 1 = {int(n_cols) - 1}")
+    if order:
+        _check_shape(tri_verts)
+    if which == "force":
+        normals = np.zeros((N_s, 3))
+    return _traction_matrix_nodal(
+        np.ascontiguousarray(np.asarray(x_field, float)),
+        np.ascontiguousarray(np.asarray(n_field, float)),
+        tri_verts, np.ascontiguousarray(np.asarray(normals, float)),
+        np.ascontiguousarray(np.asarray(eps_arr, float)), ids, int(n_cols),
+        float(mu), _nu(mu, lam), float(lam), _spec(order, flags), w)

@@ -53,16 +53,26 @@ def _dof_idx(elems: np.ndarray) -> np.ndarray:
     return (3 * elems[:, None] + np.arange(3)[None, :]).ravel()
 
 
-def require_order0(model) -> None:
+def require_compressible(model) -> None:
     """The compressed path (PairCompressed, HBackend, DisplacementEvaluator)
-    is P0-only: one centroid per element on both sides of every pair. Raise
-    at construction on any patch or fault of ``model`` with order > 0."""
+    is P0, discontinuous, prescribed-slip only: one centroid per element on
+    both sides of every pair, and no traction row. Raise at construction on
+    any patch or fault of ``model`` with order > 0, a continuous layout or a
+    FAULT_TRACTION bc -- before any tree is built."""
+    from ..model.core import BCType
     for r in model.regions:
         for p in list(r.patches) + list(r.faults):
             if p.order:
                 raise NotImplementedError(
                     "compressed backend: order > 0 patches are not supported; "
                     f"use DenseBackend (patch '{p.name}' has order {p.order})")
+            if p.bc is BCType.FAULT_TRACTION or p.continuous:
+                raise NotImplementedError(
+                    "compressed backend: a FAULT_TRACTION or continuous fault "
+                    f"needs DenseBackend(mode='direct') (fault '{p.name}')")
+
+
+require_order0 = require_compressible          # the former name
 
 
 class _BasisEval:

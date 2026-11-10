@@ -170,4 +170,6 @@ def _burgers(run, bundle):
     model_fn = cfg.resolve(run.resolved["spec"]["model"]["builder"],
                            cfg.MODEL_BUILDERS)
     mdl = model_fn(bundle, **run.resolved["spec"]["model"]["params"])
-    return mdl.regions[0].faults[0].value_array()
+    # density(): the element-major Burgers vector of a PRESCRIBED fault; a
+    # FAULT_TRACTION fault refuses here rather than hand its target over as slip.
+    return mdl.regions[0].faults[0].density()

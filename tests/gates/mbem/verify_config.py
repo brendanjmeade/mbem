@@ -7,9 +7,10 @@ in one place, the eps rule in one place and every tolerance in
 a slip-pairing sign error is invisible at nu = 1/4. So:
 
   a  the model a CONFIG builds is the model the GATES build, entrywise. Not
-     "similar": same patch names, BCs, orders, inferred sigma, unknown count,
-     and the same fault Burgers vector array. This is why a config names a
-     builder instead of describing patches.
+     "similar": same patch names, BCs, orders, layouts, dof counts, inferred
+     sigma, unknown count, and the same fault value array (the Burgers vector,
+     or a traction fault's target). For the fault box and for the penny crack.
+     This is why a config names a builder instead of describing patches.
   b  a run does not mutate ``defaults``. The backends bind their defaults from
      it at def time, so a config that appeared to override one by rebinding
      would be a silent lie; overriding means passing a keyword, and a field
@@ -24,6 +25,10 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      could move BENCH_* or *_PARITY* could declare its own success.
   f  a run directory is complete and self-describing: STATUS, MANIFEST whose
      hashes match, and the fields npz.
+  h  a traction-BC fault survives the run path: configs/penny.py through
+     runner.execute records bc FAULT_TRACTION, layout continuous, n_dofs and
+     the locked count in the fingerprint, ONE numeric eps for the fault, the
+     slot "b:penny", and writes it to the fields npz with (n_dofs, 3) rows.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -55,6 +60,35 @@ def check(name, ok, extra="") -> bool:
     return ok
 
 
+def _same_model(label: str, direct, via) -> None:
+    sd, sv = generate_system(direct), generate_system(via)
+    check(f"{label}: same unknown count", sd.layout.n_unknowns == sv.layout.n_unknowns,
+          f"{sd.layout.n_unknowns}")
+    check(f"{label}: same slot names",
+          [s.name for s in sd.layout.slots] == [s.name for s in sv.layout.slots])
+
+    def describe(m):
+        return [(r.name, r.material.mu, r.material.lam,
+                 tuple((p.name, str(p.bc), p.order, p.layout, p.n_dofs, p.n_triangles,
+                        float(m.orientation(r, p))) for p in r.patches),
+                 tuple((f.name, str(f.bc), f.order, f.layout, f.n_dofs, f.allow_opening,
+                        f.n_triangles) for f in r.faults))
+                for r in m.regions]
+    check(f"{label}: same regions, patches, BCs, orders, layouts, dofs and sigma",
+          describe(direct) == describe(via))
+
+    fd = [f for r in direct.regions for f in r.faults]
+    fv = [f for r in via.regions for f in r.faults]
+    check(f"{label}: same number of faults", len(fd) == len(fv), f"{len(fd)}")
+    same = len(fd) == len(fv) and all(
+        np.array_equal(x.value_array(), y.value_array())
+        for x, y in zip(fd, fv))
+    # Bitwise, not to a tolerance: this is the Burgers vector (or the traction
+    # target), and a tolerance would accept a sign flip on a component that
+    # happens to be small.
+    check(f"{label}: fault value array bitwise identical", same)
+
+
 def a_same_model() -> None:
     """[a] config builder == the builder the gates call, entrywise."""
     print("\n[a] the config path builds the gates' model")
@@ -64,32 +98,13 @@ def a_same_model() -> None:
                         edge_fault=4.0, edge_near=25.0, edge_far=50.0,
                         edge_side=50.0),
         0.01, ElasticMaterial(mu=30.0, lam=30.0))
-    via = fault_box_model(fault_box_meshes())
-
-    sd, sv = generate_system(direct), generate_system(via)
-    check("same unknown count", sd.layout.n_unknowns == sv.layout.n_unknowns,
-          f"{sd.layout.n_unknowns}")
-    check("same slot names",
-          [s.name for s in sd.layout.slots] == [s.name for s in sv.layout.slots])
-
-    def describe(m):
-        return [(r.name, r.material.mu, r.material.lam,
-                 tuple((p.name, str(p.bc), p.order, p.n_triangles,
-                        float(m.orientation(r, p))) for p in r.patches),
-                 tuple((f.name, f.order, f.n_triangles) for f in r.faults))
-                for r in m.regions]
-    check("same regions, patches, BCs, orders and inferred sigma",
-          describe(direct) == describe(via))
-
-    fd = [f for r in direct.regions for f in r.faults]
-    fv = [f for r in via.regions for f in r.faults]
-    check("same number of faults", len(fd) == len(fv), f"{len(fd)}")
-    same = len(fd) == len(fv) and all(
-        np.array_equal(x.value_array(), y.value_array())
-        for x, y in zip(fd, fv))
-    # Bitwise, not to a tolerance: this is the Burgers vector, and a tolerance
-    # would accept a sign flip on a component that happens to be small.
-    check("fault Burgers vector bitwise identical", same)
+    _same_model("fault_box", direct, fault_box_model(fault_box_meshes()))
+    from mbem.cases import penny
+    from mbem.cases.registry import penny_meshes, penny_model
+    mat = ElasticMaterial(mu=30.0, lam=30.0)
+    direct = penny.build_model(penny.penny_mesh(1.0, 1.0 / 8.0, "cdt"), mat,
+                               drop=penny.stress_drop(30.0, 30.0, 1e-3, 1.0), order=2)
+    _same_model("penny", direct, penny_model(penny_meshes()))
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -238,6 +253,32 @@ def f_run_dir_complete(run_dir: pathlib.Path, report: dict) -> None:
               f"{len(z.files)} slot(s)")
 
 
+def h_penny_run(run_dir: pathlib.Path) -> None:
+    """[h] a traction-BC fault through the run path."""
+    print("\n[h] configs/penny.py through runner.execute")
+    run = cfg.load(CONFIGS / "penny.py")
+    report = runner.execute(run, run_dir, CONFIGS / "penny.py")
+    check("the penny run finished", report["status"] == "OK", report["status"])
+    resolved = json.loads((run_dir / "resolved.json").read_text())
+    entries = [p for r in resolved["model"]["regions"] for p in r["patches"]]
+    f = [p for p in entries if p["name"] == "penny"]
+    check("the fingerprint has the fault, bc FAULT_TRACTION, layout continuous",
+          len(f) == 1 and f[0]["bc"] == "FAULT_TRACTION" and f[0]["layout"] == "continuous",
+          f"{f[0]['bc'] if f else '-'} / {f[0]['layout'] if f else '-'}")
+    check("n_dofs and n_locked recorded (shared nodes, the locked rim)",
+          bool(f) and f[0]["n_dofs"] > f[0]["n_triangles"] and f[0]["n_locked"] > 0,
+          f"n_dofs {f[0]['n_dofs'] if f else '-'}, locked {f[0]['n_locked'] if f else '-'}")
+    eps = resolved["effective"]["eps"]["penny"]
+    check("one numeric eps on the fault (min == max)",
+          isinstance(eps.get("mean"), float) and eps["min"] == eps["max"], f"{eps.get('mean')}")
+    check('slot "b:penny" in the layout', "b:penny" in resolved["model"]["slots"],
+          f"{resolved['model']['slots']}")
+    with np.load(run_dir / "fields_base.npz") as z:
+        ok = "b:penny" in z.files and z["b:penny"].shape == (f[0]["n_dofs"], 3) if f else False
+        check("fields npz holds b:penny with (n_dofs, 3) rows", ok,
+              f"{z['b:penny'].shape if 'b:penny' in z.files else z.files}")
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -253,6 +294,9 @@ def main() -> bool:
         d_effective_covers_backend(run_dir)
         e_gate_criteria_unreachable()
         f_run_dir_complete(run_dir, report)
+        penny_dir = pathlib.Path(tmp) / "penny"
+        penny_dir.mkdir()
+        h_penny_run(penny_dir)
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

@@ -78,6 +78,10 @@ def check_resolve():
     fa = kb.resolve_patch_eps("auto", Patch("f", mesh, BCType.FAULT))
     ok &= fa.shape == (n,) and np.all(fa == fa[0]) and np.isclose(
         fa[0], defaults.FAULT_EPS_OVER_H * h.min())
+    # and the same one value on a FAULT_TRACTION fault (a shared node's row
+    # sees several elements; a per-element width would be ill-defined)
+    ft = kb.resolve_patch_eps("auto", Patch("f", mesh, BCType.FAULT_TRACTION))
+    ok &= np.array_equal(ft, fa)
     print(f"    auto eps range: [{auto.min():.3f}, {auto.max():.3f}] "
           f"(EPS_OVER_H={defaults.EPS_OVER_H})")
 

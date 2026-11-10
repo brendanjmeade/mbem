@@ -30,7 +30,12 @@ FAULTS get an orientation too — see ``FAULT_ORIENTATION`` below. It is
 the ONE statement of the fault sign convention in msd; every site that
 needs it calls ``RegionModel.orientation`` and uses the same ``-sigma``
 expression a boundary patch uses, so there is no second place to get it
-wrong. Runtime guard: ``mbem.selfcheck``.
+wrong. Runtime guard: ``mbem.selfcheck``. Both fault kinds (prescribed
+slip, FAULT; solved slip, FAULT_TRACTION) answer alike.
+
+A region with NO boundary patch is the whole space: nothing to close, every
+point inside, and its faults the only sources or unknowns (the penny-crack
+gate lives there). It must have at least one fault.
 """
 
 from __future__ import annotations
@@ -64,6 +69,19 @@ class BCType(enum.Enum):
     PRESCRIBED_DISPLACEMENT = "prescribed_displacement"  # u prescribed; t unknown
     INTERFACE = "interface"                      # u, t unknown; shared by 2 regions
     FAULT = "fault"                              # prescribed slip; interior source
+    FAULT_TRACTION = "fault_traction"            # traction change prescribed; slip unknown
+
+
+#: The two fault kinds. Both live in ``Region.faults``, both carry
+#: FAULT_ORIENTATION, both take one eps per fault; they differ in what is
+#: known on them (the slip, or the traction it must produce).
+FAULT_KINDS = (BCType.FAULT, BCType.FAULT_TRACTION)
+
+#: A point this close to a boundary patch, in units of the nearest element's
+#: edge, lies ON it: a fault element centroid there is refused (the solid
+#: angle is ambiguous), a traction fault's boundary NODE there is a trace on
+#: that patch and stays free (``Patch.locked_mask``).
+_ON_PATCH_TOL = 1e-9
 
 
 # THE FAULT SIGN CONVENTION, stated once. A fault is interior to its region
@@ -84,27 +102,58 @@ class Patch:
     ``value`` is the prescribed quantity: traction for FREE_TRACTION,
     displacement for PRESCRIBED_DISPLACEMENT, slip for FAULT (the Burgers
     vector ``value = b = u(+n face) - u(-n face)`` with ``n`` the stored
-    normal -- the sign clq and cutde use); ``None`` means zeros. It is a NODAL
-    density of the patch's Lagrange order: a (3,) constant, an (N_tri, 3)
-    per-element array (every node of the element), a (K N_tri, 3) nodal
-    array, or a callable sampled at the nodes -- ``f(points (M, 3)) -> (M, 3)``,
-    or ``f(points, normals)`` with the element normal at every node (a
-    traction datum). Patch identity (``is``) is what links an INTERFACE
-    patch shared by two regions -- share the object.
+    normal -- the sign clq and cutde use), and for FAULT_TRACTION the
+    prescribed traction CHANGE at the collocation nodes, the datum its solved
+    slip must produce (a drop ``dtau`` along ``s`` is ``value = -dtau s``);
+    ``None`` means zeros. It is a NODAL datum of the patch's layout: a (3,)
+    constant, an (N_tri, 3) per-element array (every node of the element;
+    discontinuous layout only), an (n_dofs, 3) nodal array, or a callable
+    sampled at the dof nodes -- ``f(points (M, 3)) -> (M, 3)``, or
+    ``f(points, normals)`` with the normal at every node (a traction datum).
+    ``value_array()`` is that datum at the dof nodes; ``density()`` is the
+    element-major (K N_tri, 3) form the kernels take. Patch identity
+    (``is``) is what links an INTERFACE patch shared by two regions -- share
+    the object.
 
-    ``order`` in {0, 1, 2} (K = 1, 3, 6 nodes per element) sets the
-    DISCONTINUOUS nodal layout: row K s + k is node k of element s in the
-    kernels' node order (P0 centroid; P1 v1, v2, v3; P2 v1, v2, v3, m12, m23,
-    m31), matching the kernel column layout 3 (K s + k) + j. One collocation
-    point per node, pulled toward the centroid by
-    ``defaults.COLLOCATION_SHRINK_BY_ORDER`` (the basis does not move), so
-    the system stays square. At P0 the node IS the centroid.
+    ``order`` in {0, 1, 2} (K = 1, 3, 6 nodes per element) and ``layout``:
+
+    * ``"discontinuous"`` (default): row K s + k is node k of element s in
+      the kernels' node order (P0 centroid; P1 v1, v2, v3; P2 v1, v2, v3,
+      m12, m23, m31), matching the kernel column layout 3 (K s + k) + j. One
+      collocation point per node, pulled toward the centroid by
+      ``defaults.COLLOCATION_SHRINK_BY_ORDER`` (the basis does not move), so
+      the system stays square. At P0 the node IS the centroid.
+    * ``"continuous"`` (order 2, faults only): one value per SHARED node
+      (welded vertices, then edge midpoints; ``model/shared_nodes.py``),
+      ``n_dofs`` of them; element s reads its six through ``column_ids()``,
+      so the slip is continuous across every edge by construction. The
+      collocation points are the shared nodes themselves, unshrunk: the
+      point of the layout, legal because the mollified kernel bounds the
+      gradient kink there. Faults only, because a boundary row's free term
+      is spread over its own element's columns (``collocation_shape``) and a
+      shared node has no own element; a fault row has no free term.
+
+    FAULT_TRACTION: the slip is an unknown of the solve (slot ``"b"``, three
+    Cartesian components per node) and the rows are the elastic traction at
+    the nodes, equal to ``value``. ``allow_opening=False`` (default) enforces
+    the two tangential components and constrains ``b . n = 0``; the value may
+    then carry no normal component (project it, or set ``allow_opening=True``
+    to enforce all three). ``locked``: nodes whose slip is fixed at zero -- a
+    bool mask over the dof nodes, a callable of their coordinates, or
+    ``None`` for the default: every boundary node of a continuous fault that
+    does not lie on a boundary patch of its region (a crack front inside the
+    body locks; a trace on the free surface stays free), and nothing at P0.
+    Allowed: order 0 discontinuous (centroid collocation, the P0 control) and
+    order 2 continuous.
     """
     name: str
     mesh: object              # TriMesh-compatible (vertices, triangles, ...)
     bc: BCType
     value: object = None
     order: int = 0
+    layout: str = "discontinuous"
+    allow_opening: bool = False
+    locked: object = None
 
     def __post_init__(self):
         if self.order != int(self.order):       # 1.5 must not truncate to P1
@@ -112,6 +161,37 @@ class Patch:
                              f"0, 1 or 2 (got {self.order!r})")
         self.order = int(self.order)
         n_nodes(self.order)                     # raises unless 0, 1, 2
+        if self.layout not in ("discontinuous", "continuous"):
+            raise ValueError(f"patch '{self.name}': layout must be "
+                             f"'discontinuous' or 'continuous' (got {self.layout!r})")
+        if self.layout == "continuous":
+            if self.bc not in FAULT_KINDS:
+                raise ValueError(
+                    f"patch '{self.name}': a continuous layout is for faults "
+                    f"only (bc {self.bc.value}): a boundary row's free term is "
+                    f"spread over its own element's columns, which a shared "
+                    f"node does not have, and unshrunk hypersingular boundary "
+                    f"rows are singular (docs/ddbem-findings.md)")
+            if self.order != 2:
+                raise ValueError(
+                    f"patch '{self.name}': a continuous layout is P2 only "
+                    f"(got order {self.order}): continuous P1 measured 15-22 % "
+                    f"too stiff and first order on the penny crack, and P0 "
+                    f"has no shared node")
+        if self.bc is BCType.FAULT_TRACTION:
+            ok = ((self.order == 0 and self.layout == "discontinuous")
+                  or (self.order == 2 and self.layout == "continuous"))
+            if not ok:
+                raise ValueError(
+                    f"patch '{self.name}': a FAULT_TRACTION fault is order 0 "
+                    f"discontinuous (centroid collocation) or order 2 "
+                    f"continuous (shared nodes); got order {self.order} "
+                    f"{self.layout} -- discontinuous P1/P2 traction rows "
+                    f"collocate at shrunk nodes and are not gated")
+        elif self.allow_opening or self.locked is not None:
+            raise ValueError(f"patch '{self.name}': allow_opening and locked "
+                             f"apply to a FAULT_TRACTION fault only")
+        self._shared = None
         self._refuse_degenerate()
 
     def _refuse_degenerate(self) -> None:
@@ -149,8 +229,46 @@ class Patch:
 
     @property
     def n_nodes(self) -> int:
-        """K * N_tri: density rows / collocation points of the patch."""
+        """K * N_tri: density rows of the patch (the kernels' element-major
+        layout), at either layout."""
         return n_nodes(self.order) * self.mesh.n_triangles
+
+    @property
+    def continuous(self) -> bool:
+        return self.layout == "continuous"
+
+    @property
+    def shared(self):
+        """The shared-node table of a continuous patch, built once per
+        patch (``model/shared_nodes.py``); None for the discontinuous layout."""
+        if not self.continuous:
+            return None
+        if self._shared is None:
+            from .shared_nodes import build_shared_nodes
+            self._shared = build_shared_nodes(self.mesh, self.order)
+        return self._shared
+
+    @property
+    def n_dofs(self) -> int:
+        """Dof nodes: the shared nodes of a continuous patch, else the
+        K N_tri density rows. Slots are 3 n_dofs; collocation points
+        n_dofs."""
+        return self.shared.n if self.continuous else self.n_nodes
+
+    def column_ids(self):
+        """(N_tri, K) shared-node id of every element node (continuous), or
+        None: the kernels' own element-major columns."""
+        return self.shared.ids if self.continuous else None
+
+    def expand(self, values) -> np.ndarray:
+        """Dof-node values (n_dofs, 3) -> the element-major density (K N_tri, 3)."""
+        if self.continuous:
+            return self.shared.expand(values)
+        v = np.asarray(values, float)
+        if v.shape != (self.n_nodes, 3):
+            raise ValueError(f"patch '{self.name}': values must be "
+                             f"({self.n_nodes}, 3), got {v.shape}")
+        return np.ascontiguousarray(v)
 
     def _points(self, lam) -> np.ndarray:
         """Points (K N_tri, 3) at barycentric ``lam`` (K, 3) of every element,
@@ -159,47 +277,121 @@ class Patch:
         return np.einsum("kv,svc->skc", lam, tv).reshape(-1, 3)
 
     def nodes(self) -> np.ndarray:
-        """Node coordinates (K N_tri, 3); at P0 the mesh's own centroids."""
+        """Node coordinates (K N_tri, 3) of the element-major layout; at P0
+        the mesh's own centroids. (A continuous patch's dof nodes are
+        ``shared.coords``; this is still its density's node table.)"""
         if self.order == 0:
             return np.asarray(self.mesh.centroids(), float)
         return self._points(lagrange_nodes(self.order))
 
     def collocation_points(self) -> np.ndarray:
-        """Collocation points (K N_tri, 3): the nodes pulled toward the
-        centroid by ``COLLOCATION_SHRINK_BY_ORDER[order]``."""
+        """Collocation points (n_dofs, 3): the nodes pulled toward the
+        centroid by ``COLLOCATION_SHRINK_BY_ORDER[order]``, or, continuous,
+        the shared nodes themselves."""
+        if self.continuous:
+            return self.shared.coords
         t = defaults.COLLOCATION_SHRINK_BY_ORDER[self.order]
         if t == 0.0:
             return self.nodes()
         return self._points(lagrange_nodes(self.order, t))
 
+    def collocation_normals(self) -> np.ndarray:
+        """Unit normals (n_dofs, 3) at the collocation points: the element
+        normal at every node, or the node normals of a continuous patch."""
+        if self.continuous:
+            return self.shared.normals
+        normals, _ = self.mesh.normals_and_areas()
+        return np.ascontiguousarray(np.repeat(np.asarray(normals, float),
+                                              n_nodes(self.order), axis=0))
+
     def collocation_shape(self) -> np.ndarray:
         """N[kc, k] = N_k(x_c) (K, K): the shape functions at the collocation
         points, which spread a row's free term over its element's nodes.
-        The identity at P0 and at shrink 0."""
+        The identity at P0 and at shrink 0. A continuous patch has no free
+        term to spread and refuses."""
+        if self.continuous:
+            raise ValueError(f"patch '{self.name}': a continuous patch has no "
+                             f"free term (fault rows carry none) and no "
+                             f"collocation shape")
         t = defaults.COLLOCATION_SHRINK_BY_ORDER[self.order]
         return lagrange_shape(self.order, lagrange_nodes(self.order, t))
 
     def value_array(self) -> np.ndarray:
-        """The prescribed value as a nodal density (K N_tri, 3) (docstring)."""
-        K = n_nodes(self.order)
-        if self.value is None:
-            return np.zeros((self.n_nodes, 3))
-        if callable(self.value):
-            normals, _ = self.mesh.normals_and_areas()
-            v = np.asarray(_call_value(self.value, self.nodes(),
-                                       np.repeat(normals, K, axis=0)), dtype=float)
-            if v.shape != (self.n_nodes, 3):
-                raise ValueError(
-                    f"patch '{self.name}': callable value returned {v.shape}, "
-                    f"expected {(self.n_nodes, 3)}")
-            return np.ascontiguousarray(v)
-        v = np.asarray(self.value, dtype=float)
-        if K > 1 and v.shape == (self.n_nodes, 3):
-            return np.ascontiguousarray(v)
-        v = np.broadcast_to(v, (self.n_triangles, 3))
-        if K > 1:
-            v = np.repeat(v, K, axis=0)
-        return np.ascontiguousarray(v)
+        """The prescribed datum at the dof nodes, (n_dofs, 3) (docstring)."""
+        if self.continuous:
+            sh = self.shared
+            n = sh.n
+            if self.value is None:
+                v = np.zeros((n, 3))
+            elif callable(self.value):
+                v = np.asarray(_call_value(self.value, sh.coords, sh.normals),
+                               dtype=float)
+                if v.shape != (n, 3):
+                    raise ValueError(
+                        f"patch '{self.name}': callable value returned "
+                        f"{v.shape}, expected {(n, 3)} (one row per shared node)")
+            else:
+                v = np.asarray(self.value, dtype=float)
+                if v.shape == (3,):
+                    v = np.broadcast_to(v, (n, 3))
+                elif v.shape != (n, 3):
+                    raise ValueError(
+                        f"patch '{self.name}': a continuous patch takes a (3,) "
+                        f"constant, an ({n}, 3) shared-node array or a "
+                        f"callable; got {v.shape} (a per-element or "
+                        f"element-major array has no shared-node meaning)")
+            v = np.ascontiguousarray(v)
+        else:
+            K = n_nodes(self.order)
+            if self.value is None:
+                v = np.zeros((self.n_nodes, 3))
+            elif callable(self.value):
+                normals, _ = self.mesh.normals_and_areas()
+                v = np.asarray(_call_value(self.value, self.nodes(),
+                                           np.repeat(normals, K, axis=0)), dtype=float)
+                if v.shape != (self.n_nodes, 3):
+                    raise ValueError(
+                        f"patch '{self.name}': callable value returned {v.shape}, "
+                        f"expected {(self.n_nodes, 3)}")
+                v = np.ascontiguousarray(v)
+            else:
+                v = np.asarray(self.value, dtype=float)
+                if not (K > 1 and v.shape == (self.n_nodes, 3)):
+                    v = np.broadcast_to(v, (self.n_triangles, 3))
+                    if K > 1:
+                        v = np.repeat(v, K, axis=0)
+                v = np.ascontiguousarray(v)
+        if self.bc is BCType.FAULT_TRACTION and not self.allow_opening:
+            self._refuse_normal_component(v)
+        return v
+
+    def _refuse_normal_component(self, v: np.ndarray) -> None:
+        """With ``allow_opening=False`` only the tangential traction is
+        enforced: a value with a normal component would be projected
+        silently, so it is refused instead."""
+        scale = float(np.max(np.abs(v))) if v.size else 0.0
+        if scale == 0.0:
+            return
+        nn = np.einsum("ij,ij->i", v, self.collocation_normals())
+        worst = float(np.max(np.abs(nn)))
+        if worst > defaults.TRACTION_VALUE_NORMAL_TOL * scale:
+            raise ValueError(
+                f"fault '{self.name}': the traction value has a normal "
+                f"component ({worst:.2e} against |value| {scale:.2e}) but "
+                f"allow_opening=False enforces the tangential components "
+                f"only: project the value onto the tangent plane, or set "
+                f"allow_opening=True to enforce all three")
+
+    def density(self) -> np.ndarray:
+        """The prescribed value as the kernels' element-major density
+        (K N_tri, 3): ``expand(value_array())``. A FAULT_TRACTION fault has
+        no prescribed density (its slip is solved) and refuses."""
+        if self.bc is BCType.FAULT_TRACTION:
+            raise ValueError(
+                f"fault '{self.name}' is a FAULT_TRACTION fault: its slip is "
+                f"solved, not prescribed -- read solution['b:{self.name}'] "
+                f"(dof nodes) or expand() it")
+        return self.expand(self.value_array())
 
     def collocation_values(self, nodal) -> np.ndarray:
         """A nodal density (K N_tri, 3) interpolated to the collocation
@@ -209,15 +401,80 @@ class Patch:
         return np.einsum("ck,skj->scj", self.collocation_shape(),
                          v).reshape(-1, 3)
 
+    def integrate(self, values) -> np.ndarray:
+        """Integral over the patch of a dof-node field (n_dofs, 3) -> (3,):
+        at P0 the centroid value times the area, at P1 the vertex rule, at
+        P2 the midpoint rule (A/3 times the three edge-node values, exact
+        for quadratics) -- the moment of a slip field, at either layout."""
+        if self.continuous:
+            return self.shared.integrate(values)
+        K = n_nodes(self.order)
+        v = np.asarray(values, float)
+        if v.shape != (self.n_nodes, 3):
+            raise ValueError(f"patch '{self.name}': values must be "
+                             f"({self.n_nodes}, 3), got {v.shape}")
+        v = v.reshape(self.n_triangles, K, 3)
+        _, areas = self.mesh.normals_and_areas()
+        areas = np.asarray(areas, float)
+        if self.order == 2:
+            per = v[:, 3:6].sum(axis=1) / 3.0
+        elif self.order == 1:
+            per = v[:, 0:3].sum(axis=1) / 3.0
+        else:
+            per = v[:, 0]
+        return (areas[:, None] * per).sum(axis=0)
+
+    def locked_mask(self, patches=()) -> np.ndarray:
+        """(n_dofs,) bool, FAULT_TRACTION only: the nodes whose slip is fixed
+        at zero (docstring). ``patches`` are the boundary patches of the
+        owning region, which the default rule needs to tell a crack front
+        from a trace."""
+        if self.bc is not BCType.FAULT_TRACTION:
+            raise ValueError(f"patch '{self.name}': locked nodes are a "
+                             f"FAULT_TRACTION notion")
+        n = self.n_dofs
+        if self.locked is None:
+            if not self.continuous:
+                return np.zeros(n, bool)
+            sh = self.shared
+            mask = sh.boundary.copy()
+            idx = np.flatnonzero(mask)
+            if idx.size and patches:
+                from ..geometry import distance_to_mesh
+                pts = sh.coords[idx]
+                on = np.zeros(idx.size, bool)
+                for p in patches:
+                    d, near = distance_to_mesh(pts, p.mesh)
+                    tv = np.asarray(p.mesh.vertices, float)[
+                        np.asarray(p.mesh.triangles)[near]]
+                    h = np.linalg.norm(tv[:, 1] - tv[:, 0], axis=1)
+                    on |= d < _ON_PATCH_TOL * h
+                mask[idx[on]] = False
+            return mask
+        if callable(self.locked):
+            m = np.asarray(self.locked(self.collocation_points()), bool).reshape(-1)
+        else:
+            m = np.asarray(self.locked, bool).reshape(-1)
+        if m.shape != (n,):
+            raise ValueError(f"patch '{self.name}': locked mask must have "
+                             f"{n} entries (one per dof node), got {m.shape}")
+        return m
+
 
 @dataclass(eq=False)
 class Region:
     name: str
     material: object                    # ElasticMaterial-compatible (mu, lam)
-    patches: list                       # boundary Patches, declaration order
-    probe_point: np.ndarray             # strictly interior point
+    patches: list                       # boundary Patches, declaration order; [] = the full space
+    probe_point: np.ndarray             # strictly interior point (unused for the full space)
     faults: list = field(default_factory=list)
     orientation_overrides: dict = field(default_factory=dict)  # name -> +-1
+
+    @property
+    def is_full_space(self) -> bool:
+        """No boundary patch: the whole space, its faults the only sources
+        or unknowns."""
+        return len(self.patches) == 0
 
 
 def _solid_angle_sum(mesh, x: np.ndarray) -> float:
@@ -276,11 +533,11 @@ class RegionModel:
         Because faults answer here, every call site uses the same
         ``-sigma`` expression and no site carries a sign of its own.
         """
-        if patch.bc is BCType.FAULT:
+        if patch.bc in FAULT_KINDS:
             if not any(f is patch for f in region.faults):
                 raise ValueError(
-                    f"patch '{patch.name}' is a FAULT but is not a fault of "
-                    f"region '{region.name}'")
+                    f"patch '{patch.name}' is a {patch.bc.name} but is not a "
+                    f"fault of region '{region.name}'")
             return FAULT_ORIENTATION
         return self._sigma[(region.name, patch.name)]
 
@@ -316,12 +573,21 @@ class RegionModel:
                     and len(regs) != 1:
                 raise ValueError(f"patch '{p.name}' ({p.bc.value}) must belong "
                                  f"to exactly 1 region, found {len(regs)}")
-            if p.bc is BCType.FAULT:
+            if p.bc in FAULT_KINDS:
                 raise ValueError(f"fault patch '{p.name}' belongs in "
                                  f"Region.faults, not Region.patches")
 
-        # Orientation inference + closure check
+        # Orientation inference + closure check (a region with no boundary
+        # patch is the full space: nothing to close, but it must carry a
+        # fault, or there is nothing to solve or evaluate)
         for r in self.regions:
+            if r.is_full_space:
+                if not r.faults:
+                    raise ValueError(
+                        f"region '{r.name}' has no boundary patch and no "
+                        f"fault: nothing to solve or evaluate (an empty "
+                        f"patch list is the full space)")
+                continue
             total = 0.0
             for p in r.patches:
                 sigma = self._infer_sigma(r, p)
@@ -353,10 +619,11 @@ class RegionModel:
         fnames: dict[str, Patch] = {}
         for r in self.regions:
             for f in r.faults:
-                if f.bc is not BCType.FAULT:
+                if f.bc not in FAULT_KINDS:
                     raise ValueError(
                         f"fault '{f.name}' of region '{r.name}' has bc "
-                        f"{f.bc.value}; Region.faults holds FAULT patches only")
+                        f"{f.bc.value}; Region.faults holds FAULT patches only "
+                        f"(FAULT or FAULT_TRACTION)")
                 fowner.setdefault(id(f), (f, []))[1].append(r.name)
                 if f.name in pnames or fnames.get(f.name, f) is not f:
                     raise ValueError(
@@ -384,7 +651,7 @@ class RegionModel:
                                        - p.mesh.vertices[p.mesh.triangles[idx, 0]],
                                        axis=1)
                     k = int(np.argmin(d / h))
-                    if d[k] < 1e-9 * h[k]:
+                    if d[k] < _ON_PATCH_TOL * h[k]:
                         raise ValueError(
                             f"fault '{f.name}' triangle {k} lies ON boundary "
                             f"patch '{p.name}' of region '{r.name}'; a fault "
@@ -423,6 +690,10 @@ class RegionModel:
         region = region if not isinstance(region, str) else \
             next(r for r in self.regions if r.name == region)
         pts = np.asarray(points, float).reshape(-1, 3)
+        if region.is_full_space:
+            total = np.full(pts.shape[0], 4.0 * np.pi)
+            inside = np.ones(pts.shape[0], bool)
+            return (inside, total) if closure else inside
         total = np.zeros(pts.shape[0])
         for p in region.patches:
             total += self._sigma[(region.name, p.name)] * \

@@ -68,8 +68,8 @@ def free_surface_stress(meshes, model, sol, eps, mat):
     region = model.regions[0]
     fpatch = region.faults[0]
     sig_el = sig + float(model.orientation(region, fpatch)) * _stress_from_source(
-        obs, fpatch.mesh, fpatch.value_array(), "eigen", mu, lam,
-        kb.resolve_patch_eps(eps, fpatch))
+        obs, fpatch.mesh, fpatch.density(), "eigen", mu, lam,
+        kb.resolve_patch_eps(eps, fpatch), fpatch.order)
     comps = {"xx": sig_el[:, 0, 0], "yy": sig_el[:, 1, 1], "xy": sig_el[:, 0, 1]}
     S = {k: (v * GPA_TO_MPA).reshape(X.shape) for k, v in comps.items()}
     # Mask the thin surface-breaking fault strip: the slip is DISCONTINUOUS

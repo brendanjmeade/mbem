@@ -85,13 +85,55 @@ matches it to the finite part of the classical triangular-dislocation stress
 to a constant; the genuine elastic field still concentrates at the fault tips,
 so the interior, not the peak, is the convergence metric.)
 
-Because the BEM is solved in **displacement** (a fault enters only as a smooth
-slip -> displacement source on the RHS), the eigenstress never enters the solve
-— subtracting it there would be wrong.  It belongs in the **stress readout**:
-`mbem.evaluate_stress` sums the boundary and fault stress kernels and removes the
-fault eigenstress, producing the genuine on-fault elastic (Coulomb) stress the
-BEM previously could not.  `configs/onfault_stress.py` reads it off a
-free-surface box solve and recovers the half-space dislocation stress.
+Because the BEM is solved in **displacement** (a prescribed fault enters only
+as a smooth slip -> displacement source on the RHS), the eigenstress never
+enters a displacement row — subtracting it there would be wrong.  It belongs in
+the **stress readout**: `mbem.evaluate_stress` sums the boundary and fault
+stress kernels and removes the fault eigenstress, producing the genuine
+on-fault elastic (Coulomb) stress the BEM previously could not.
+`configs/onfault_stress.py` reads it off a free-surface box solve and recovers
+the half-space dislocation stress.  The one place it enters a *solve* is the
+traction row of a fault whose slip is unknown (next section): that row IS a
+stress readout, and with the eigenstress left in a rigid translation of the
+body would load the fault.
+
+## Faults with prescribed traction, and continuous slip
+
+A `BCType.FAULT_TRACTION` fault solves its slip instead of prescribing it: the
+unknown is the Burgers vector `b` at the fault's nodes, and the rows are the
+elastic traction there, every source of the region included, equal to the
+prescribed traction change `Patch.value` (a drop `dtau` along `s` is
+`value = -dtau s`).  The traction of a dislocation is continuous across its own
+surface, so the row has no free term; mollified, the hypersingular integral is
+an ordinary one, computed by the same closed forms as the readout
+(`kernels/tri_nodal.py::traction_matrix`).  Three Cartesian components per
+node; by default the two tangential components are enforced and `b . n = 0`
+constrains the third (`allow_opening=True` enforces all three, for a
+pressurised crack); the crack front is locked at zero slip unless it lies on a
+boundary patch, where a trace stays free.  It couples to topography,
+interfaces and the box like any other unknown, and a crack alone in an
+infinite body is a region with no boundary patch.
+
+Such a fault can carry the **continuous P2 layout** (`layout="continuous"`):
+one value per shared node (vertices and edge midpoints), collocated at the
+nodes.  A piecewise-constant slip radiates a `1/d` field from every
+inter-element jump, which floors the on-fault stress at a few per cent of the
+drop at the centroids, with tails to tens of per cent on an irregular mesh,
+and no refinement moves it; continuous slip leaves only the kink in the
+gradient, which the mollified kernel bounds, so collocating at the nodes is
+legal and the readout converges in eps.  On the penny-shaped crack
+(`mbem.cases.penny`, `tests/gates/mbem/verify_penny_crack.py`): the readout of
+Eshelby's slip is 1.6-1.8 eps/a on a quality mesh, a jittered one and a
+lattice alike, the same at the kinks as between them; the stress-drop solve
+at eps = 0.1 h has a slip error of 1.6 % / 1.0 % of the peak at 8 / 16
+elements per radius (P0: 4.8 % / 2.7 %), 0.7 % / 0.4 % at the fault's "auto"
+eps, moments within 1.5 %, and a coupled round trip through a box recovers a
+prescribed solution to 1e-14.  Two unknowns per element instead of six for
+the discontinuous P2 layout.  Continuous P1 is too stiff and is refused; on a
+faceted fault the nodal unknown is a vector, never a scalar times a per-facet
+direction (the gate's clause [g]); the symmetric part of the fault operator
+is indefinite at eps/h <= 0.1, which the dense LU does not mind.  The
+`configs/penny.py` study runs the ladder.
 
 ## Layout
 
@@ -100,10 +142,12 @@ src/mbem/                 region-model BEM solver: dense and block-compressed
                           backends (far="aca" flat H + ACA, far="fmm" bbFMM),
                           numba kernels, topography, preconditioned FGMRES
   backends/               dense and block-compressed assembly
-  model/                  region graph, patches, faults, the free term
+  model/                  region graph, patches, faults, the free term, the
+                          shared-node (continuous P2) layout
   kernels/                numba kernels, P0/P1/P2 closed forms
   la/                     ACA, flat H-matrix, bbFMM, FGMRES, preconditioners
-  cases/                  reference models the gates and studies share
+  cases/                  reference models the gates and studies share (the
+                          fault box, the inclusion, topography, the penny crack)
   figures/                the figure makers, in a lazy registry
 src/mollified_kernel/     point-source kernel + analytic triangle integration
   mollified_elastic_kernels.py   regularized Kelvin point kernels
@@ -118,8 +162,8 @@ src/local_box_mesh_eq.py  equilateral Delaunay box / fault mesh builders
 src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
-configs/                  seven studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 45 gates (print PASS/FAIL)
+configs/                  eight studies, each a Python module declaring a run
+tests/                    run_all.py + test_gates.py; 46 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -160,6 +204,7 @@ under `runs/` (gitignored).
 ```
 python -m mbem run configs/fault_box.py
 python -m mbem run configs/topo_inclusion.py --set surface=flat --set backend=fmm
+python -m mbem run configs/penny.py --sweep a_over_h=8,16 --sweep order=0,2   # the crack ladder
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list
 python -m mbem show <run-dir> --section effective
@@ -179,7 +224,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 45 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 46 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 
@@ -199,7 +244,8 @@ python tests/gates/mbem/verify_hbackend.py                   # H backend == dens
 python tests/gates/mbem/verify_eps_auto.py                   # eps="auto" (0.1 h): kernel order-2 convergence, solved-BVP accuracy vs Kelvin, half-jump guard
 python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid-body deflation; memory estimator
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
-python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals
+python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
+python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
 ```
 
 ## The field in the volume

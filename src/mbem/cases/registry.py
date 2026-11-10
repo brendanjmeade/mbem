@@ -123,3 +123,36 @@ def topo_inclusion_model(bundle: MeshBundle, *, mu_inc: float = 3.0,
                           lam=mu_inc if lam_inc is None else lam_inc)
     return build_model(bundle.meshes, bundle.scalars["fault_mesh"],
                        bundle.arrays["s_hat"], mat_inc=mat)
+
+
+# ---------------------------------------------------------------------
+# penny
+# ---------------------------------------------------------------------
+
+def penny_meshes(*, scale: float = 1.0, a: float = 1.0, a_over_h: float = 8.0,
+                 kind: str = "cdt", jitter: float = 0.25,
+                 seed: int = 0) -> MeshBundle:
+    """The penny-shaped crack of radius ``a`` at ``a_over_h`` elements per
+    radius (``scale`` refines further), ``kind`` the mesher
+    (``mbem.cases.penny.penny_mesh``)."""
+    from mbem.cases.penny import penny_mesh
+    h = a / (a_over_h * scale)
+    mesh = penny_mesh(a, h, kind, jitter=jitter, seed=seed)
+    return MeshBundle({"penny": mesh}, {}, {"a": a, "h": h, "kind": kind})
+
+
+def penny_model(bundle: MeshBundle, *, mu: float = 30.0, lam: float = 30.0,
+                delta0: float = 1e-3, order: int = 2,
+                allow_opening: bool = False, prescribed: bool = False):
+    """The crack as a FAULT_TRACTION fault whose drop is Eshelby's for the
+    peak slip ``delta0`` (so the exact answer of the run is the Eshelby slip),
+    or, ``prescribed``, with that slip imposed (the readout fixture)."""
+    from mbem import ElasticMaterial
+    from mbem.cases.penny import build_model, build_slip_model, stress_drop
+    mat = ElasticMaterial(mu=mu, lam=lam)
+    a = bundle.scalars["a"]
+    mesh = bundle.meshes["penny"]
+    if prescribed:
+        return build_slip_model(mesh, mat, delta0=delta0, order=order, a=a)
+    return build_model(mesh, mat, drop=stress_drop(mu, lam, delta0, a),
+                       order=order, allow_opening=allow_opening)

@@ -62,12 +62,40 @@ solve, evaluation, and the refusals of the compressed path.
   [vii] Refusals: HBackend, DisplacementEvaluator, estimate_memory("hmat")
         and mode="legacy" raise on an order > 0 patch; order 3 and order 1.5
         raise ValueError (a wrong exception type is a labelled FAIL, not a
-        traceback); the collocation-near-fault guard
+        traceback); Patch refuses a continuous P1 (too stiff, measured), a
+        continuous boundary patch (no free term to spread), a discontinuous
+        P2 or P1 FAULT_TRACTION fault (ungated collocation), allow_opening or
+        locked on a prescribed fault, and a FAULT_TRACTION value with a
+        normal component under allow_opening=False (it would be projected
+        silently); RegionModel refuses a full-space region with no fault;
+        HBackend, DisplacementEvaluator and estimate_memory("hmat") refuse a
+        P0 FAULT_TRACTION fault (it passes the order check, so the refusal
+        must name the bc) and a continuous prescribed fault, and the dense
+        backend refuses mode="basis" and mode="legacy" on either;
+        the collocation-near-fault guard
         warns on a fault reaching 0.2 km below a 5 km-element top (eps_f =
         0.4) and is silent on the production fault box of
         examples/demo_bem_onfault_stress.py with eps="auto" at a P0 and at
         the production P1 top (its nearest collocation point is 3.1 fault-eps
         from the trace).
+  [viii] The continuous (shared-node) P2 layout, on the level-1 icosphere
+        (closed: V 42, E 120, F 80, no boundary node) and the 2 x 2 square
+        fault (open: V 9, E 16, F 8, 16 boundary nodes): V + E = n_shared and
+        Euler's V - E + F; an already-shared mesh gets the identity weld
+        (coords[:V] == vertices bitwise); the per-element node coordinates
+        equal a table rebuilt in the gate from its own edge dict, bitwise;
+        the boundary mask is the single-incidence edges; the expanded density
+        of a constant is that constant (partition of unity); the P2
+        interpolant of random nodal values agrees between the two elements of
+        every shared edge at three points along it (1e-14: continuity by
+        construction); a quadratic callable sampled at the shared nodes and
+        expanded equals the discontinuous P2 twin's value_array to 1e-14
+        (the node-order pin, m12 m23 m31; printed bitwise or not);
+        collocation_points() IS the shared coordinates, unshrunk; node normals
+        are +x on the square to 1e-15 and unit and co-oriented on the
+        icosphere; integrate() of a quadratic equals the exact integral to
+        1e-14 while the vertex rule misses by > 1e-3. TRIPWIRE: rolling the
+        edge-node columns of ids (m12 -> m23) breaks continuity by > 1e-2.
 
 Run from the repo root:  python verify/verify_nodal_solve.py
 """
@@ -95,7 +123,7 @@ from mbem.evaluate import DisplacementEvaluator, evaluate_displacement  # noqa: 
 from mbem.kernels import basis as kb                                # noqa: E402
 from mbem.kernels import tri_kernels as tk                          # noqa: E402
 from mbem.kernels import tri_nodal as tn                            # noqa: E402
-from mbem.model import BCType, Patch, RegionModel, generate_system  # noqa: E402
+from mbem.model import BCType, Patch, Region, RegionModel, generate_system  # noqa: E402
 from mbem.model.equations import COLLOCATION_JUMP                   # noqa: E402
 
 NU = 0.30                      # away from 1/4 (rule 6)
@@ -584,6 +612,62 @@ def vii_refusals():
     check_bool("Patch(order=1.5) raises ValueError (not truncated to P1)",
                *raises(lambda: Patch("s", mesh, BCType.FREE_TRACTION, order=1.5), ValueError,
                        "integer"))
+    sq = S.square_fault(n=2)
+    check_bool("Patch refuses a continuous P1 fault (ValueError, 'P2 only')",
+               *raises(lambda: Patch("f", sq, BCType.FAULT, order=1, layout="continuous"),
+                       ValueError, "P2 only"))
+    check_bool("Patch refuses a continuous boundary patch (ValueError, 'faults only')",
+               *raises(lambda: Patch("s", mesh, BCType.FREE_TRACTION, order=2,
+                                     layout="continuous"), ValueError, "faults only"))
+    check_bool("Patch refuses a discontinuous P2 FAULT_TRACTION fault (ValueError)",
+               *raises(lambda: Patch("f", sq, BCType.FAULT_TRACTION, order=2), ValueError,
+                       "not gated"))
+    check_bool("Patch refuses a P1 FAULT_TRACTION fault (ValueError)",
+               *raises(lambda: Patch("f", sq, BCType.FAULT_TRACTION, order=1), ValueError,
+                       "not gated"))
+    check_bool("Patch refuses allow_opening on a prescribed FAULT (ValueError)",
+               *raises(lambda: Patch("f", sq, BCType.FAULT, allow_opening=True), ValueError,
+                       "FAULT_TRACTION fault only"))
+    check_bool("Patch refuses locked on a prescribed FAULT (ValueError)",
+               *raises(lambda: Patch("f", sq, BCType.FAULT, locked=lambda x: x[:, 2] < 0),
+                       ValueError, "FAULT_TRACTION fault only"))
+    check_bool("FAULT_TRACTION value with a normal component, allow_opening=False (ValueError)",
+               *raises(lambda: Patch("f", sq, BCType.FAULT_TRACTION, value=np.array([1e-3, 0.0, 0.0]),
+                                     order=2, layout="continuous").value_array(),
+                       ValueError, "normal component"))
+    check_bool("the same value with allow_opening=True is accepted",
+               np.array_equal(Patch("f", sq, BCType.FAULT_TRACTION, value=np.array([1e-3, 0.0, 0.0]),
+                                    order=2, layout="continuous", allow_opening=True).value_array()[:, 0],
+                              np.full(25, 1e-3)))
+    check_bool("RegionModel refuses a full-space region with no fault (ValueError)",
+               *raises(lambda: RegionModel([Region("space", S.material(NU), [], np.zeros(3))]),
+                       ValueError, "nothing to solve"))
+    # the compressed paths and the non-direct dense modes refuse a P0 traction
+    # fault (order 0 passes the order check) and a continuous prescribed fault
+    box0 = VB._closed_box(VB.EDGE_C)
+    fm, _, s_hat0 = make_vertical_fault_eq(**VB.FAULT_C)
+    for label, fp in (("P0 FAULT_TRACTION", Patch("fault", fm, BCType.FAULT_TRACTION,
+                                                  value=-1e-3 * s_hat0)),
+                      ("continuous P2 FAULT", Patch("fault", fm, BCType.FAULT,
+                                                    value=VB.SLIP * s_hat0, order=2,
+                                                    layout="continuous"))):
+        mdl, _ = VB._build_box_model(box0, S.material(NU), dict(top="t", sides="t", base="d"),
+                                     {k: None for k in ("top", "sides", "base")}, faults=[fp])
+        sysm = generate_system(mdl)
+        check_bool(f"HBackend refuses a {label} fault (NotImplementedError)",
+                   *raises(lambda: HBackend(jump="calibrated").assemble(sysm, VB.EPS_C),
+                           NotImplementedError, "compressed backend"))
+        check_bool(f"DisplacementEvaluator refuses a {label} fault (NotImplementedError)",
+                   *raises(lambda: DisplacementEvaluator(mdl, mdl.regions[0], S.shell(0.5) * 20.0,
+                                                         VB.EPS_C),
+                           NotImplementedError, "compressed backend"))
+        check_bool(f"estimate_memory('hmat') refuses a {label} fault (NotImplementedError)",
+                   *raises(lambda: estimate_memory(sysm, mode="hmat"),
+                           NotImplementedError, "compressed backend"))
+        for mode in ("basis", "legacy"):
+            check_bool(f"dense mode='{mode}' refuses a {label} fault (ValueError)",
+                       *raises(lambda: AssembledDense(sysm, VB.EPS_C, mode, jump="half"),
+                               ValueError, "mode='direct'"))
 
     def warns(system, eps):
         with warnings.catch_warnings(record=True) as w:
@@ -609,6 +693,126 @@ def vii_refusals():
                    f"eps='auto', P{order_top} top)", not warns(generate_system(prod), "auto"))
 
 
+def viii_continuous_layout():
+    print("\n[viii] continuous (shared-node) P2 layout: table, expansion, continuity, moments")
+    from mbem.model import build_shared_nodes
+    rng = np.random.default_rng(23)
+    A_q = rng.standard_normal((3, 3, 3))          # a random quadratic field, per component
+    B_q = rng.standard_normal((3, 3))
+    c_q = rng.standard_normal(3)
+
+    def f_quad(x):
+        x = np.asarray(x, float)
+        return (np.einsum("cij,ni,nj->nc", A_q, x, x) + x @ B_q.T + c_q)
+
+    for label, mesh, V, E, F, n_b in (("icosphere(1)", S.icosphere(1), 42, 120, 80, 0),
+                                       ("square_fault(n=2)", S.square_fault(n=2), 9, 16, 8, 16)):
+        tab = build_shared_nodes(mesh, 2)
+        tris = np.asarray(mesh.triangles)
+        verts = np.asarray(mesh.vertices, float)
+        edges: dict = {}
+        ids = np.zeros((tris.shape[0], 6), np.int64)
+        ids[:, :3] = tris
+        for s, t in enumerate(tris):
+            for k, (i, j) in enumerate(((t[0], t[1]), (t[1], t[2]), (t[2], t[0]))):
+                key = (min(i, j), max(i, j))
+                if key not in edges:
+                    edges[key] = len(edges)
+                ids[s, 3 + k] = verts.shape[0] + edges[key]
+        mids = np.array([0.5 * (verts[i] + verts[j]) for (i, j) in edges]).reshape(-1, 3)
+        coords_gate = np.vstack([verts, mids])
+        check_bool(f"{label}: V + E == n_shared == {V} + {E}",
+                   tab.n_vertices == V and tab.n - tab.n_vertices == E)
+        check_bool(f"{label}: Euler V - E + F == {V - E + F}", V - E + F == (2 if n_b == 0 else 1))
+        check_bool(f"{label}: identity weld on a shared-index mesh (coords[:V] == vertices, bitwise)",
+                   np.array_equal(tab.coords[:V], verts) and np.array_equal(tab.vertex_id, np.arange(V)))
+        check_bool(f"{label}: per-element node coordinates == the gate's own edge table, bitwise",
+                   np.array_equal(tab.coords[tab.ids], coords_gate[ids]))
+        count = np.zeros(len(edges), int)
+        for t in tris:
+            for i, j in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+                count[edges[(min(i, j), max(i, j))]] += 1
+        b_gate = np.zeros(tab.n, bool)
+        for (i, j), e in edges.items():
+            if count[e] == 1:
+                b_gate[[i, j]] = True
+        b_tab = np.zeros(tab.n, bool)
+        b_tab[:V] = tab.boundary[:V]
+        check_bool(f"{label}: boundary vertices == vertices of single-incidence edges ({n_b} nodes)",
+                   np.array_equal(b_tab, b_gate) and int(tab.boundary.sum()) == n_b)
+        pc = Patch("f", mesh, BCType.FAULT, value=np.array([1.0, 1.0, 1.0]), order=2,
+                   layout="continuous")
+        check_bool(f"{label}: density() of a constant is that constant (partition of unity)",
+                   np.array_equal(pc.density(), np.ones((6 * F, 3))))
+        # continuity of the P2 interpolant along every shared edge, three points each
+        vals = rng.standard_normal((tab.n, 3))
+        dens = tab.expand(vals).reshape(F, 6, 3)
+        worst = 0.0
+        if n_b == 0 or F > 1:
+            inc: dict = {}
+            for s, t in enumerate(tris):
+                for k, (i, j) in enumerate(((t[0], t[1]), (t[1], t[2]), (t[2], t[0]))):
+                    inc.setdefault((min(i, j), max(i, j)), []).append((s, k))
+            for (i, j), owners in inc.items():
+                if len(owners) != 2:
+                    continue
+                for tpar in (0.25, 0.5, 0.8):
+                    got = []
+                    for s, k in owners:
+                        lam = np.zeros(3)
+                        a_loc, b_loc = k, (k + 1) % 3          # local vertices of edge k
+                        # orient along the GLOBAL edge direction i -> j
+                        if tris[s][a_loc] == i:
+                            lam[a_loc], lam[b_loc] = 1.0 - tpar, tpar
+                        else:
+                            lam[a_loc], lam[b_loc] = tpar, 1.0 - tpar
+                        got.append(kb.lagrange_shape(2, lam)[0] @ dens[s])
+                    worst = max(worst, float(np.max(np.abs(got[0] - got[1])) / np.max(np.abs(vals))))
+            check(f"{label}: P2 interpolant continuous across every shared edge (3 points)", worst, 1e-14)
+            # tripwire: rolled edge-node columns break it
+            rolled = tab.ids.copy()
+            rolled[:, 3:6] = np.roll(rolled[:, 3:6], 1, axis=1)
+            dens_r = vals[rolled].reshape(F, 6, 3)
+            bad = 0.0
+            for (i, j), owners in inc.items():
+                if len(owners) != 2:
+                    continue
+                got = []
+                for s, k in owners:
+                    lam = np.zeros(3)
+                    a_loc, b_loc = k, (k + 1) % 3
+                    if tris[s][a_loc] == i:
+                        lam[a_loc], lam[b_loc] = 0.5, 0.5
+                    else:
+                        lam[a_loc], lam[b_loc] = 0.5, 0.5
+                    got.append(kb.lagrange_shape(2, lam)[0] @ dens_r[s])
+                bad = max(bad, float(np.max(np.abs(got[0] - got[1])) / np.max(np.abs(vals))))
+            check_gt(f"{label}: TRIPWIRE rolled edge nodes (m12 -> m23) break continuity", bad, 1e-2)
+        pq = Patch("f", mesh, BCType.FAULT, value=f_quad, order=2, layout="continuous")
+        pd = Patch("f", mesh, BCType.FAULT, value=f_quad, order=2)
+        same = np.array_equal(pq.density(), pd.value_array())
+        check(f"{label}: quadratic callable at the shared nodes, expanded, == discontinuous twin "
+              f"({'bitwise' if same else 'not bitwise'})", relmax(pq.density(), pd.value_array()), 1e-14)
+        check_bool(f"{label}: collocation_points() is the shared coordinates, unshrunk, bitwise",
+                   np.array_equal(pq.collocation_points(), tab.coords))
+        nn = pq.collocation_normals()
+        if n_b:
+            check(f"{label}: node normals == +x", float(np.max(np.abs(nn - [1.0, 0.0, 0.0]))), 1e-15)
+        else:
+            check(f"{label}: node normals unit", float(np.max(np.abs(np.linalg.norm(nn, axis=1) - 1.0))), 1e-15)
+            check_bool(f"{label}: node normals co-oriented with the radial direction",
+                       bool(np.all(np.einsum("ni,ni->n", nn, tab.coords) > 0.5)))
+        # moments: the midpoint rule is exact for quadratics, the vertex rule is not
+        if n_b:
+            x = tab.coords
+            quad = (x[:, 1] ** 2 + x[:, 2] ** 2)[:, None] * np.ones((1, 3))
+            exact = 2.0 * (0.6 * 2.0 * 0.3 ** 3 / 3.0)       # int (y^2 + z^2) over [-0.3, 0.3]^2
+            check(f"{label}: integrate(y^2 + z^2) == exact {exact:.4f} (midpoint rule)",
+                  abs(float(pq.integrate(quad)[0]) - exact) / exact, 1e-14)
+            vert_rule = float((tab.areas[:, None] * quad[tab.ids[:, 0:3]].sum(axis=1) / 3.0).sum(axis=0)[0])
+            check_gt(f"{label}: the vertex rule misses the quadratic", abs(vert_rule - exact) / exact, 1e-3)
+
+
 def main():
     print("=" * 76)
     print("P0/P1/P2 nodal patches and faults: model layer + dense backend end to end")
@@ -620,6 +824,7 @@ def main():
     v_p1_fault()
     vi_tripwires()
     vii_refusals()
+    viii_continuous_layout()
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: nodal P0/P1/P2 solve ({len(CHECKS)} checks)")

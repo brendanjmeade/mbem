@@ -13,14 +13,18 @@ BY FILE PATH from ``../clq`` (a missing clq is a FAIL, never a skip).
   [i]   all five kernels at p = 0, 1, 2 against clq.influence at nu = 0.25 and
         0.30 on three triangles (equilateral, tilted scalene, sliver h/L ~ 0.1),
         eps/h in {0.05, 0.3}, observers near (|z| = 0.3 eps and 1 eps inside the
-        footprint, just off the edges), broadside at 2 L (the small-|u| edge
-        regime at kernel level), mid (2-9.9 L in plane and oblique, closed
-        form) and far (10.1, 15, 60 L: both Gauss rules).  mbem's T basis
+        footprint, just off the edges), ON the element at z = 0 (the three
+        vertices, three edge midpoints, the centroid and two in-plane points
+        per edge line, one on the edge and one beyond the vertex: where a
+        continuous layout collocates, legal only because eps > 0), broadside
+        at 2 L (the small-|u| edge regime at kernel level), mid (2-9.9 L in
+        plane and oblique, closed form) and far (10.1, 15, 60 L: both Gauss
+        rules).  mbem's T basis
         recombined with t_coeffs is clq's U, its U basis with u_coeffs is clq's
         G, the stress drivers are H and S, the eigenstress driver is E.
-        Block-wise max|diff| / max|clq| < 1e-12 over the near and far
-        observers (E over all observers), and the near and far groups each
-        meet 1e-12 on their own scale.  Away from the element the
+        Block-wise max|diff| / max|clq| < 1e-12 over the near, on and far
+        observers (E over all observers), and the near, on and far groups
+        each meet 1e-12 on their own scale.  Away from the element the
         divergence-theorem closed form amplifies ulp-level differences between
         two implementations (more with the order and with L / height; the
         reason for the Gauss crossover at defaults.NODAL_D_STAR), so the
@@ -40,7 +44,18 @@ BY FILE PATH from ``../clq`` (a missing clq is a FAIL, never a skip).
         on the first two traction-operator terms) differs from the port by
         > 1e-3 and coincides at nu = 0.25 -- the gate can see the pairing;
   [vi]  partition of unity: a uniform nodal density at P1 and P2 reproduces P0
-        through every public driver, 1e-13.
+        through every public driver, 1e-13;
+  [vii] traction_matrix (stress at a field point dotted with that point's
+        normal, columns scattered to shared nodes by an ids table): at p = 0,
+        1, 2 the matrix times a nodal density equals the contracts' stress
+        dotted with the field normals, 1e-13, for the elastic slip kernel
+        (total minus eigenstress), the Kelvin force kernel and the eigenstress
+        alone; "slip" + "eigen" is the total; a many-to-one ids table equals
+        condense_columns of the identity-layout matrix, 1e-14; the K node
+        columns of every element summed into one column equal the P0 matrix
+        (partition of unity through the scatter), 1e-13; and reversed field
+        normals negate the rows, bitwise (the tripwire for a column written
+        to the wrong node).
 
 Run from the repo root:  python verify/verify_nodal_kernels.py
 """
@@ -68,8 +83,8 @@ TOL_GROUP = 1e-12        # near and far groups on their own scale
 TOL_BROAD = {"equilateral": 1e-11, "scalene": 1e-11, "sliver": 1e-9}    # 2 L broadside, own scale
 TOL_MID_QUAD = {"equilateral": 1e-8, "scalene": 1e-8, "sliver": 1e-6}   # 2-9.9 L vs Gauss
 N_GAUSS_REF = 40
-GROUPS = ("near", "broad", "mid", "far")
-PINNED = ("near", "far")
+GROUPS = ("near", "on", "broad", "mid", "far")
+PINNED = ("near", "on", "far")
 
 CHECKS = []
 
@@ -190,12 +205,18 @@ def observers(clq, tri, eps):
                 out /= np.linalg.norm(out)
                 near.append(m - 0.3 * eps * out + sgn * zf * eps * n)      # inside, by the edge
                 near.append(m + 0.5 * eps * out + sgn * zf * eps * n)      # just off the edge
+    on = [v[0], v[1], v[2], mids[0], mids[1], mids[2], c]
+    for i in range(3):
+        j = (i + 1) % 3
+        on.append(v[i] + 0.3 * (v[j] - v[i]))          # on the edge
+        on.append(v[i] - 0.5 * (v[j] - v[i]))          # on the edge line, past the vertex
     broad = [c + 2.0 * L * n, c - 2.0 * L * n]
     for r, d in ((2.0, e1), (5.0, e1), (5.0, obl), (8.0, obl), (8.0, e2), (9.9, obl)):
         mid.append(c + r * L * d)
     for r, d in ((10.1, obl), (15.0, e1), (15.0, n), (60.0, obl), (60.0, n)):
         far.append(c + r * L * d)
-    return {"near": _c(near), "broad": _c(broad), "mid": _c(mid), "far": _c(far)}
+    return {"near": _c(near), "on": _c(on), "broad": _c(broad), "mid": _c(mid),
+            "far": _c(far)}
 
 
 def zero_edge_primitives(clq):
@@ -283,11 +304,13 @@ def i_clq_parity(clq):
                     label = f"{name} eps/h={eh:g} nu={nu:.2f} p={p}"
                     val = max(max(relmax(got[k][nf], refd[k][nf]) for k in keys),
                               relmax(got["Estar"], refd["Estar"]))
-                    check(f"{label}: U,G,H,S near+far, E all, block-wise", val, TOL_BLOCK)
+                    check(f"{label}: U,G,H,S near+on+far, E all, block-wise", val, TOL_BLOCK)
                     check(f"{label}: U,G,H,S mid 2-9.9 L per observer vs Gauss-{N_GAUSS_REF}",
                           mid_quad, TOL_MID_QUAD[name])
     for key in keys + ("Estar",):
         check(f"{key}: near group on its own scale (worst over all)", worst[("near", key)], TOL_GROUP)
+        check(f"{key}: on-element group (z = 0: nodes, edge lines) on its own scale",
+              worst[("on", key)], TOL_GROUP)
         check(f"{key}: far group 10.1-60 L on its own scale (Gauss)", worst[("far", key)], TOL_GROUP)
     for name, _tri in triangles(clq):
         check(f"{name}: broadside 2 L group on its own scale, U G H S E", worst[("broad", name)],
@@ -484,6 +507,50 @@ def vi_partition_of_unity(tv, nrm, eps, obs):
             check(f"p={p}: {label} with uniform nodal density == P0", relmax(got[key], ref[key]), 1e-13)
 
 
+def vii_traction_matrix(tv, nrm, eps, obs):
+    print("\n[vii] traction_matrix == contracts . n_field; shared-node column scatter")
+    nu = 0.30
+    lam = _lame(MU, nu)
+    rng = np.random.default_rng(5)
+    nf = rng.normal(size=(obs.shape[0], 3))
+    nf = _c(nf / np.linalg.norm(nf, axis=1, keepdims=True))
+    N_s = tv.shape[0]
+    for p in ORDERS:
+        K = tn.n_nodes(p)
+        dens = rng.normal(size=(K * N_s, 3))
+        dens[K * 7:K * 8] = 0.0                      # a zero block: the skip paths must agree
+        ids = kb.identity_ids(p, N_s)
+        dd = tn.dd_stress_contract(obs, tv, nrm, eps, dens, MU, lam, p)
+        eig = tn.eigenstress_contract(obs, tv, nrm, eps, dens, MU, lam, p)
+        kel = tn.kelvin_stress_contract(obs, tv, eps, dens, MU, lam, p)
+        ref = {"slip": np.einsum("fim,fm->fi", dd - eig, nf),
+               "force": np.einsum("fim,fm->fi", kel, nf),
+               "eigen": np.einsum("fim,fm->fi", eig, nf)}
+        mats = {}
+        for which in ("slip", "force", "eigen"):
+            mats[which] = tn.traction_matrix(obs, nf, tv, nrm, eps, ids, K * N_s, MU, lam, p, which)
+            check(f"p={p}: traction_matrix({which!r}) @ density == contract . n_field",
+                  relmax((mats[which] @ dens.ravel()).reshape(-1, 3), ref[which]), 1e-13)
+        check(f"p={p}: 'slip' + 'eigen' == total dd traction",
+              relmax(((mats["slip"] + mats["eigen"]) @ dens.ravel()).reshape(-1, 3),
+                     np.einsum("fim,fm->fi", dd, nf)), 1e-13)
+        n2 = max(1, K * N_s // 2)
+        ids2 = rng.integers(0, n2, size=(N_s, K))
+        M2 = tn.traction_matrix(obs, nf, tv, nrm, eps, ids2, n2, MU, lam, p, "slip")
+        check(f"p={p}: many-to-one ids == condense_columns of the identity layout",
+              relmax(M2, kb.condense_columns(mats["slip"], ids2, n2)), 1e-14)
+        if p:
+            ids_e = np.repeat(np.arange(N_s)[:, None], K, axis=1)
+            Me = tn.traction_matrix(obs, nf, tv, nrm, eps, ids_e, N_s, MU, lam, p, "slip")
+            M0 = tn.traction_matrix(obs, nf, tv, nrm, eps, kb.identity_ids(0, N_s), N_s,
+                                    MU, lam, 0, "slip")
+            check(f"p={p}: element-summed node columns == the P0 matrix (partition of unity)",
+                  relmax(Me, M0), 1e-13)
+        Mneg = tn.traction_matrix(obs, -nf, tv, nrm, eps, ids, K * N_s, MU, lam, p, "slip")
+        check_bool(f"p={p}: reversed field normals negate the rows bitwise",
+                   np.array_equal(Mneg, -mats["slip"]))
+
+
 def main():
     print("=" * 76)
     print("Nodal P0/P1/P2 triangle kernels (mbem tri_nodal) vs clq")
@@ -503,6 +570,7 @@ def main():
     iv_contract_vs_direct(tv, nrm, eps, obs)
     v_pairing_tripwire(clq)
     vi_partition_of_unity(tv, nrm, eps, obs)
+    vii_traction_matrix(tv, nrm, eps, obs)
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: nodal triangle kernels vs clq ({len(CHECKS)} checks)")

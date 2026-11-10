@@ -11,6 +11,11 @@ Checks (PASS/FAIL):
   g. a refinement ring keeps its vertices off the other constrained
      segments of the PSLG, and the refined topo_inclusion geometry
      passes the collapsed-element guard
+  h. a region with NO boundary patch is the full space: it validates with a
+     fault (either kind, anywhere), point_in_region is True everywhere with
+     the closure sum 4 pi, is_anchored() is False and sigma_table() empty; it
+     is refused without a fault; and clause d still rejects a fault outside
+     a bounded region afterwards (the empty-boundary branch loosened nothing)
 """
 import pathlib
 import sys
@@ -119,6 +124,37 @@ def main() -> bool:
     _fault_box.build_model(meshes, 1e-3, MAT)
     print("  [ok] mbem.cases.fault_box.build_model validates")
     ok &= _ring_clears_the_trace()
+    ok &= _full_space()
+    # Printed HERE rather than in __main__, so a caller that imports this gate
+    # and calls main() sees the verdict too -- every other gate prints its own.
+    print(("PASS" if ok else "FAIL") + ": RegionModel fault validation")
+    return bool(ok)
+
+
+def _full_space() -> bool:
+    """h. An empty patch list is the whole space."""
+    ok = True
+    far = _fault("far", -0.8, -0.2, x=1e3)
+    for kind, f in (("FAULT", _fault("f", -0.8, -0.2)),
+                    ("FAULT_TRACTION", Patch("ft", _fault("g", -0.8, -0.2).mesh,
+                                             BCType.FAULT_TRACTION,
+                                             value=np.array([0.0, 1e-3, 0.0]))),
+                    ("far FAULT", far)):
+        m = RegionModel([Region("space", MAT, [], np.zeros(3), faults=[f])])
+        r = m.regions[0]
+        pts = np.array([[0.0, 0.0, -0.5], [3e3, -2e3, 1e3]])
+        inside, total = m.point_in_region(r, pts, closure=True)
+        good = (r.is_full_space and inside.all() and np.allclose(total, 4.0 * np.pi)
+                and not m.is_anchored() and m.sigma_table() == {}
+                and m.orientation(r, f) == -1)
+        ok &= good
+        print(f"  [{'ok' if good else 'FAIL'}] h. full-space region with a {kind} fault "
+              f"validates; inside everywhere, unanchored, no sigma")
+    ok &= _rejects("h'. full-space region with no fault",
+                   lambda: RegionModel([Region("space", MAT, [], np.zeros(3))]),
+                   "nothing to solve")
+    ok &= _rejects("h''. clause d after h: fault outside a bounded region still rejected",
+                   lambda: _two_layer([_fault("f", -1.8, -1.2)], []), "not inside")
     return bool(ok)
 
 
@@ -149,9 +185,6 @@ def _ring_clears_the_trace() -> bool:
         Patch(name, mesh, BCType.FREE_TRACTION)
     print(f"  [ok] the refined topo_inclusion geometry ({top.n_triangles} "
           f"host_top triangles) carries no collapsed element")
-    # Printed HERE rather than in __main__, so a caller that imports this gate
-    # and calls main() sees the verdict too -- every other gate prints its own.
-    print(("PASS" if ok else "FAIL") + ": RegionModel fault validation")
     return ok
 
 

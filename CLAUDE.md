@@ -15,13 +15,13 @@ is the bug.
 
 | path | what it is |
 |---|---|
-| `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults, dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
-| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`. Library code, because 13 gates and 6 studies build from them. |
+| `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults (slip prescribed, or solved from a traction condition: `BCType.FAULT_TRACTION`), the continuous P2 shared-node fault layout (`model/shared_nodes.py`), dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
+| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor). Library code, because 14 gates and 7 studies build from them. |
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
-| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 45 gates in `gates/{mbem,clq,moss_kernel}`. |
-| `configs/` | Seven studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
+| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 46 gates in `gates/{mbem,clq,moss_kernel}`. |
+| `configs/` | Eight studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, all 111 defaults, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
 | `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the mollification band is FLAGGED, never blanked, because on this model it overstates the topography effect 33x. |
 | `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
@@ -48,6 +48,7 @@ pip install -e .                      # once; no other installer
 python -m mbem run configs/fault_box.py          # a study -> a new runs/ folder
 python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
 python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
+python -m mbem run configs/penny.py --sweep a_over_h=8,16 --sweep order=0,2   # the traction-BC crack
 python -m mbem figure point_kernel                # model-free: no solve
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list                              # runs, newest first
@@ -57,7 +58,7 @@ python -m mbem sample <study-dir> --difference   # every child on ONE grid, plus
 python -m mbem publish <run-dir>                 # figures -> docs/figures, with provenance
 python -m mbem verify [-k fmm] [--fast]          # the gates
 
-python tests/run_all.py               # all 45 gates, exit 1 on any FAIL
+python tests/run_all.py               # all 46 gates, exit 1 on any FAIL
 pytest -m "not slow"                  # same set, pytest front end
 python studies/mbem/demo_triangle_quickstart.py   # prints numbers, draws nothing
 ```
@@ -74,7 +75,7 @@ rather than skip without it.
    `verify_oracle_provenance` pins every oracle by resolved path AND sha256, so
    a deliberate edit must update `oracle_manifest.json` in the same commit.
 2. **Every gate is `main() -> bool`, prints `PASS:`/`FAIL:` at column 0 as its
-   last such line, and exits on it.** One convention, all 45: the return value
+   last such line, and exits on it.** One convention, all 46: the return value
    is the authority and the printed line cross-checks it, so a gate whose two
    disagree is reported as MISMATCH rather than trusted. Do not write a
    POSIX-style `return 0` for success — under `assert main()` that is exactly
@@ -89,8 +90,11 @@ rather than skip without it.
    write a `+-1` for it anywhere; `selfcheck` pins the direction.
 4. **Every mollified double layer carries an eigenstress** `C:eps*` of its
    smeared jump — fault slip and boundary `u_p` alike. Removed in the stress
-   readout (`evaluate_stress`, default), never in the solve, per element with
-   that element's eps. Stress presented as elastic must have it subtracted.
+   readout (`evaluate_stress`, default) and in the traction rows of a
+   `FAULT_TRACTION` fault (`KERNEL_HT`), never in a displacement row, per
+   element with that element's eps. Stress presented as elastic must have it
+   subtracted; a traction row that kept it would load the fault with a rigid
+   translation of the body (`verify_penny_crack` [f]).
 5. **eps is per source element.** Scalar, `(N_src,)` array, per-patch dict or
    `"auto"` (0.1 h on a boundary patch; on a FAULT one value, 0.07 min h,
    because per-element widths smear a uniform slip unequally). What governs the
@@ -122,8 +126,17 @@ rather than skip without it.
 12. Units: km, GPa; slip 0.001 km = 1 m; `(N, 3)` arrays.
 13. **Higher-order patches:** `Patch.order` in {0, 1, 2}, discontinuous nodal
     layout in clq's node order, collocation at the shrunk nodes, the free term
-    the shape-function matrix `N_k(x_c)` times the per-point diagonal. The
-    compressed backend is P0-only.
+    the shape-function matrix `N_k(x_c)` times the per-point diagonal. Faults
+    may instead be `layout="continuous"` (P2 only, `model/shared_nodes.py`):
+    one value per SHARED node, collocation AT the nodes, no free term -- the
+    kink is what mollification bounds, so the on-fault readout converges
+    (1.2-1.8 eps/a, mesh-independent) where P0 centroids are floored. A
+    `BCType.FAULT_TRACTION` fault (P0, or continuous P2) solves its slip from
+    the elastic traction at its nodes (`equations.py` docstring): three
+    Cartesian unknowns per node, the tangential rows plus `b . n = 0` unless
+    `allow_opening`, the crack front locked by default, dense `mode="direct"`
+    only. Continuous P1 (too stiff) and discontinuous P2 traction faults are
+    refused. The compressed backend is P0, discontinuous, prescribed-slip only.
 14. **Git.** `main` is the only branch; the public remote is
     `github.com/brendanjmeade/mbem`. The user commits on request.
 15. Figures follow the house matplotlib style (`src/mbem/figures/style.py`, and

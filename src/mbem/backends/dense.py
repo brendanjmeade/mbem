@@ -23,7 +23,11 @@ system, eps).solve()`` returns the slot dict and leaves ``asm.report``.
 
 Every block is field = the row patch's collocation points, source = the
 column patch's (mesh, order): rows are collocation points, columns nodal
-densities (``model/core.py``), any mix of P0/P1/P2 patches.
+densities (``model/core.py``), any mix of P0/P1/P2 patches. A FAULT_TRACTION
+fault adds traction rows (KERNEL_HT / KERNEL_GT blocks at its nodes, then
+``apply_fault_rows``) and a continuous source its shared-node columns; both
+are ``mode="direct"`` only -- the traction kernels have no basis stack and
+the legacy assembler no node table.
 """
 
 from __future__ import annotations
@@ -34,11 +38,12 @@ import numpy as np
 from scipy.linalg import lu_factor, lu_solve
 
 from .. import defaults
-from ..kernels import KERNEL_T
+from ..kernels import KERNEL_GT, KERNEL_HT, KERNEL_T
 from ..kernels import basis as kb
+from ..model.core import BCType
 from ..model.equations import (BlockSystem, add_block_diagonal,
-                               add_jump_rhs, calibrated_diagonal,
-                               term_diagonal)
+                               add_jump_rhs, apply_fault_rows,
+                               calibrated_diagonal, term_diagonal)
 
 
 class DenseBackend:
@@ -77,13 +82,28 @@ class DenseBackend:
                               deflate=self.deflate)
 
 
+def needs_direct_mode(model) -> str | None:
+    """The name of the first FAULT_TRACTION or continuous fault of ``model``,
+    or None: such a fault is assembled by the dense ``mode="direct"`` only
+    (the traction kernels have no basis stack, the legacy assembler no node
+    table) and refused by every compressed path."""
+    for r in model.regions:
+        for p in list(r.patches) + list(r.faults):
+            if p.bc is BCType.FAULT_TRACTION or p.continuous:
+                return p.name
+    return None
+
+
 def require_anchor_or_deflate(system: BlockSystem, jump: str, deflate: bool):
     """``jump="calibrated"`` on an un-anchored (all-Neumann) model makes
     rigid translations an EXACT null space of A; refuse to solve it without
     ``deflate`` (the factorization would return |u| ~ 1e9 km). Both backends
-    check at construction, where ``deflate`` lives.
+    check at construction, where ``deflate`` lives. A model with no
+    displacement unknown at all (a crack alone in the full space) has no
+    such null space and needs nothing.
     """
-    if jump == "calibrated" and not deflate and not system.model.is_anchored():
+    if jump == "calibrated" and not deflate and not system.model.is_anchored() \
+            and system.layout.has_kind("u"):
         raise ValueError(
             "jump='calibrated' on an all-Neumann model (no "
             "PRESCRIBED_DISPLACEMENT patch): rigid translations are an EXACT "
@@ -160,11 +180,16 @@ def warn_collocation_near_fault(system: BlockSystem, eps):
 
 def translation_basis(layout) -> np.ndarray:
     """Orthonormal rigid-translation basis Z (n, 3) on the u-slots (every
-    node of every element translates alike).
+    node of every element translates alike); (n, 0) when the layout has no
+    u-slot, so there is nothing to deflate.
 
     With jump="calibrated" on an all-Neumann model these three vectors
     span the EXACT null space of A (the calibration annihilates constant
-    displacement fields by construction; tractions stay zero)."""
+    displacement fields by construction; tractions stay zero, and the
+    traction rows of a FAULT_TRACTION fault annihilate the translation once
+    their eigenstress is removed -- gated)."""
+    if not layout.has_kind("u"):
+        return np.zeros((layout.n_unknowns, 0))
     Z = np.zeros((layout.n_unknowns, 3))
     for slot in layout.slots:
         if slot.kind == "u":
@@ -172,6 +197,40 @@ def translation_basis(layout) -> np.ndarray:
                 Z[slot.offset + k:slot.stop:3, k] = 1.0
     Z /= np.linalg.norm(Z, axis=0, keepdims=True)
     return Z
+
+
+def warn_fault_rows_near_boundary(system: BlockSystem, eps):
+    """Warn when a FAULT_TRACTION node lies within
+    ``defaults.COLLOCATION_FAULT_CLEARANCE_EPS`` boundary-eps of a boundary
+    patch of its region (exact distance; eps of the nearest boundary element):
+    an outcrop row sees that patch's blob average, not the one-sided field
+    the trace means. The mirror of ``warn_collocation_near_fault``; warned,
+    not corrected."""
+    from ..geometry import distance_to_mesh
+
+    limit = defaults.COLLOCATION_FAULT_CLEARANCE_EPS
+    n_close, worst, names = 0, np.inf, []
+    for r, f in system.traction_faults():
+        x = f.collocation_points()
+        for q in r.patches:
+            try:
+                eps_q = kb.resolve_patch_eps(eps, q)
+            except ValueError:
+                continue
+            d, idx = distance_to_mesh(x, q.mesh)
+            ratio = d / eps_q[idx]
+            close = int(np.sum(ratio < limit))
+            if close:
+                n_close += close
+                worst = min(worst, float(ratio.min()))
+                names.append(f"{f.name}/{q.name}")
+    if n_close:
+        import warnings
+        warnings.warn(
+            f"{n_close} FAULT_TRACTION node(s) lie within {limit:g} boundary-eps "
+            f"of a boundary patch ({', '.join(names)}; min d/eps = {worst:.2f}): "
+            f"those traction rows see the patch's blob average (an outcrop); "
+            f"the row is not corrected")
 
 
 @dataclass
@@ -191,9 +250,17 @@ class AssembledDense:
                  _basis_cache: dict | None = None):
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
+        special = needs_direct_mode(system.model)
+        if special is not None and mode != "direct":
+            raise ValueError(
+                f"dense mode {mode!r} cannot assemble fault '{special}' (a "
+                f"FAULT_TRACTION or continuous fault): use mode='direct' -- the "
+                f"traction kernels have no basis stack and the legacy assembler "
+                f"no node table")
         require_anchor_or_deflate(system, jump, deflate)
         warn_half_jump_eps(system, eps, jump)
         warn_collocation_near_fault(system, eps)
+        warn_fault_rows_near_boundary(system, eps)
         self.system = system
         self.layout = system.layout
         self.eps = eps
@@ -209,6 +276,7 @@ class AssembledDense:
         # basis cache: (id(field), id(source), kernel) -> UBasis | TBasis
         self._basis = _basis_cache if _basis_cache is not None else {}
         self._lu = None
+        self._deflate_n = None
         self.report = None
         self.A = None
         self.b = None
@@ -246,13 +314,23 @@ class AssembledDense:
     def _block_direct(self, field_patch, source_patch, kernel, material):
         eps_arr = kb.resolve_patch_eps(self.eps, source_patch)
         x_c = self._arrays.collocation_points(field_patch)
+        ids, n_cols = source_patch.column_ids(), source_patch.n_dofs
+        if kernel in (KERNEL_HT, KERNEL_GT):
+            n_c = self._arrays.collocation_normals(field_patch)
+            return kb.assemble_traction_matrix(
+                x_c, n_c, source_patch.mesh, material, eps_arr,
+                arrays=self._arrays, order=source_patch.order,
+                kind="slip" if kernel == KERNEL_HT else "force",
+                ids=ids, n_cols=n_cols)
         if kernel == KERNEL_T:
             return kb.assemble_t_matrix(x_c, source_patch.mesh, material,
                                         eps_arr, arrays=self._arrays,
-                                        order=source_patch.order)
+                                        order=source_patch.order,
+                                        ids=ids, n_cols=n_cols)
         return kb.assemble_u_matrix(x_c, source_patch.mesh, material, eps_arr,
                                     arrays=self._arrays,
-                                    order=source_patch.order)
+                                    order=source_patch.order,
+                                    ids=ids, n_cols=n_cols)
 
     def _block(self, field_patch, source_patch, kernel, region):
         material = self.materials[region.name]
@@ -320,7 +398,10 @@ class AssembledDense:
                                      rt.source_patch, rt.kernel, rt.region)
             r0, r1 = rt.row.offset, rt.row.stop
             b[r0:r1] += rt.scale * (blk @ rt.vector)
+        for rv in self.system.rhs_values:
+            b[rv.row.offset:rv.row.stop] += rv.vector
         add_jump_rhs(self.system, self.calib, b)
+        apply_fault_rows(A, b, self.system)
 
         self._arrays = None          # end of assembly scope
         self.A = A
@@ -334,8 +415,10 @@ class AssembledDense:
         used to flag samples polluted by discretization resonance).
         """
         if self._lu is None:
-            if self.deflate:
-                Z = translation_basis(self.layout)
+            Z = translation_basis(self.layout) if self.deflate else None
+            if Z is not None and Z.shape[1] == 0:
+                Z = None                       # nothing to deflate: no u-slot
+            if Z is not None:
                 n = self.A.shape[0]
                 K = np.zeros((n + 3, n + 3))
                 K[:n, :n] = self.A
@@ -360,7 +443,7 @@ class AssembledDense:
                     f"miss the {defaults.SOLUTION_RTOL:.0e} accuracy target "
                     f"(thin panels, near-fluid material, un-anchored "
                     f"calibrated jump, or discretization resonance)")
-        if self.deflate:
+        if getattr(self, "_deflate_n", None) is not None:
             rhs = np.concatenate([self.b, np.zeros(3)])
             x = lu_solve(self._lu, rhs)[:self._deflate_n]
         else:
@@ -397,6 +480,7 @@ class AssembledDense:
             new.materials[name] = mat
         new._basis = self._basis          # shared geometry cache
         new._lu = None
+        new._deflate_n = None
         new.report = None
         new.A = None
         new.b = None

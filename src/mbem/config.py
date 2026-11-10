@@ -194,10 +194,12 @@ class Run:
 MESH_BUILDERS = {
     "fault_box": "mbem.cases.registry:fault_box_meshes",
     "topo_inclusion": "mbem.cases.registry:topo_inclusion_meshes",
+    "penny": "mbem.cases.registry:penny_meshes",
 }
 MODEL_BUILDERS = {
     "fault_box": "mbem.cases.registry:fault_box_model",
     "topo_inclusion": "mbem.cases.registry:topo_inclusion_model",
+    "penny": "mbem.cases.registry:penny_model",
 }
 
 

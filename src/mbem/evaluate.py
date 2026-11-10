@@ -75,11 +75,14 @@ def _region(model: RegionModel, region: Region | str) -> Region:
 
 
 def _density(patch, kind: str, solution: dict) -> np.ndarray:
-    """The nodal (K N,3) density of ``kind`` on a patch (``patch.order``):
-    ``"u"`` / ``"t"`` is the prescribed value when the BC fixes it, else the
-    solved slot; ``"slip"`` is a fault's value."""
+    """The element-major (K N,3) density of ``kind`` on a patch
+    (``patch.order``): ``"u"`` / ``"t"`` is the prescribed value when the BC
+    fixes it, else the solved slot; ``"slip"`` is a fault's prescribed
+    density, or its solved ``"b:"`` slot expanded (FAULT_TRACTION)."""
     if kind == "slip":
-        return patch.value_array()
+        if patch.bc is BCType.FAULT_TRACTION:
+            return patch.expand(solution[f"b:{patch.name}"])
+        return patch.density()
     fixed = {"u": BCType.PRESCRIBED_DISPLACEMENT,
              "t": BCType.FREE_TRACTION}
     if kind not in fixed:
@@ -341,6 +344,25 @@ def _double_layer_stress(points, src_mesh, jump, sigma, mu, lam, eps_arr,
     return (sig, eig) if parts else sig
 
 
+def evaluate_fault_traction(model: RegionModel, region: Region | str,
+                            solution: dict, fault, eps,
+                            subtract_anelastic: bool = True) -> np.ndarray:
+    """Elastic traction (n_dofs, 3) at a fault's collocation nodes: the
+    ``evaluate_stress`` field there dotted with the node normals. On a
+    FAULT_TRACTION fault this is what its rows enforce (the tangential part,
+    or all three with ``allow_opening``), computed here by the contract
+    kernels and the eigenstress near list -- a code path independent of the
+    assembled rows, which the penny-crack gate compares to them. On a
+    prescribed fault it is the on-fault stress readout of the slip."""
+    region = _region(model, region)
+    fault = fault if not isinstance(fault, str) else \
+        next(f for f in region.faults if f.name == fault)
+    sig = evaluate_stress(model, region, solution, fault.collocation_points(),
+                          eps, subtract_anelastic=subtract_anelastic,
+                          warn_near=False)
+    return np.einsum("nij,nj->ni", sig, fault.collocation_normals())
+
+
 class PointCloud:
     """Adapter presenting raw observation points as a 'mesh' whose
     centroids are the points -- the field side of PairCompressed only
@@ -375,8 +397,8 @@ class DisplacementEvaluator:
                  tol: float = None, n_workers: int | None = None,
                  warn_near: bool = True):
         from . import defaults
-        from .la.hop import PairCompressed, require_order0
-        require_order0(model)
+        from .la.hop import PairCompressed, require_compressible
+        require_compressible(model)
         region = _region(model, region)
         if region.faults:
             ensure_fault_convention("compressed")

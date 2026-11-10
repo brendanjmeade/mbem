@@ -5,9 +5,13 @@ regions in model order; within a region, patches in declaration order,
 skipping patches already emitted; FREE_TRACTION emits its u-slot,
 PRESCRIBED_DISPLACEMENT emits its t-slot, INTERFACE emits u then t.
 
-A slot holds the patch's nodal density, 3 * n_nodes entries (element-major,
-K nodes per element); a patch's rows are its K N_tri collocation points, so
-the system is square at every order.
+A slot holds the patch's dof values, 3 * n_dofs entries: the element-major
+nodal density (K nodes per element) of a discontinuous patch, the shared-node
+values of a continuous one; a patch's rows are its n_dofs collocation
+points, so the system is square at every order and layout. After a region's
+patches come the "b" slots of its FAULT_TRACTION faults (declaration order):
+the solved Burgers vector, three Cartesian components per node, whose rows
+are the traction conditions at the fault's own nodes.
 
 Row assignment: the BIE of region R collocated on patch q lands on
   * q's u-slot if q is FREE_TRACTION,
@@ -27,9 +31,9 @@ from .core import BCType, Patch, Region, RegionModel
 @dataclass(frozen=True)
 class Slot:
     patch: Patch
-    kind: str          # "u" | "t"
+    kind: str          # "u" | "t" | "b"
     offset: int
-    size: int          # 3 * patch.n_nodes (K nodes per element)
+    size: int          # 3 * patch.n_dofs
 
     @property
     def name(self) -> str:
@@ -59,11 +63,22 @@ class UnknownLayout:
                     BCType.INTERFACE: ("u", "t"),
                 }[patch.bc]
                 for kind in kinds:
-                    slot = Slot(patch, kind, offset, 3 * patch.n_nodes)
+                    slot = Slot(patch, kind, offset, 3 * patch.n_dofs)
                     self.slots.append(slot)
                     self._by_key[(id(patch), kind)] = slot
                     offset += slot.size
+            for f in region.faults:
+                if f.bc is not BCType.FAULT_TRACTION or id(f) in emitted:
+                    continue
+                emitted.add(id(f))
+                slot = Slot(f, "b", offset, 3 * f.n_dofs)
+                self.slots.append(slot)
+                self._by_key[(id(f), "b")] = slot
+                offset += slot.size
         self.n_unknowns = offset
+
+    def has_kind(self, kind: str) -> bool:
+        return any(s.kind == kind for s in self.slots)
 
     def slot(self, patch: Patch, kind: str) -> Slot:
         return self._by_key[(id(patch), kind)]
@@ -72,6 +87,8 @@ class UnknownLayout:
         return (id(patch), kind) in self._by_key
 
     def row_slot(self, region: Region, patch: Patch) -> Slot:
+        if patch.bc is BCType.FAULT_TRACTION:
+            return self.slot(patch, "b")
         if patch.bc is BCType.FREE_TRACTION:
             return self.slot(patch, "u")
         if patch.bc is BCType.PRESCRIBED_DISPLACEMENT:

@@ -52,8 +52,15 @@ that sentence is read from the code; it is written out below as ``> 0`` /
   [5] readout, compressed  ``DisplacementEvaluator``
         statement [1] again, through the block-compressed evaluation
         operator, which carries its own copy of the coefficient.
+  [6] solve, traction fault  ``generate_system`` + dense LU
+        the same fault as a FAULT_TRACTION fault whose prescribed traction
+        CHANGE is -TAU * y_hat (the drop of a +y shear load on the +x
+        face): its solved slip must be toward +y on every element, of the
+        order TAU * L / mu. The traction rows carry their own sign chain
+        (the stress kernels, the eigenstress removal, the row frame), none
+        of which the four readout statements see.
 
-[1]-[3] and [5] cover the readout paths; [4] covers the solve. After the
+[1]-[3] and [5] cover the readout paths; [4] and [6] the solves. After the
 fault branch was folded into ``RegionModel.orientation`` all of them
 derive from the ONE constant, so any single one of these five would
 already pin the lot; they are all here so that RE-INTRODUCING a
@@ -68,6 +75,7 @@ faults:
     "core"        [1] + [4]   generate_system, evaluate_displacement
     "stress"      [2] + [3]   evaluate_stress          (after "core")
     "compressed"  [5]         DisplacementEvaluator    (after "core")
+    "traction"    [6]         a FAULT_TRACTION solve   (after "core")
 
 The split exists so the guard never compiles a numba kernel its caller
 was not about to use itself: the stress kernels cost ~3.4 s to compile on
@@ -117,9 +125,13 @@ _OBS_D = 0.5               # km, |x| of the straddling observation points
 _MIN_JUMP_FRAC = 0.05      # measured 0.237 of SLIP at |x| = 0.5
 _MAX_JUMP_FRAC = 1.00      # the jump cannot exceed the slip itself
 _EIGEN_LO, _EIGEN_HI = 0.5, 2.0   # x (3/4) mu SLIP / eps; measured -0.993 (removed)
+_TAU = 0.01                # GPa, the traction drop of statement [6]
+# mean solved slip of [6] over TAU * (2 FAULT_HALF) / mu: a factor-of-few
+# window around the measured 0.646 (nu = 1/4) and 0.621 (nu = 0.30)
+_TRACTION_LO, _TRACTION_HI = 0.3, 2.0
 
-STAGES = ("core", "stress", "compressed")
-_REQUIRES = {"stress": "core", "compressed": "core"}
+STAGES = ("core", "stress", "compressed", "traction")
+_REQUIRES = {"stress": "core", "compressed": "core", "traction": "core"}
 def _nu(lam: float) -> float:
     """Poisson ratio at the guard's fixed mu."""
     return 0.5 * lam / (lam + _MU)
@@ -365,8 +377,43 @@ def _check_compressed_at(_lam: float) -> dict:
     return {"u_y_plus": u_plus, "u_y_minus": u_minus, "jump_frac": frac}
 
 
+def _check_traction() -> dict:
+    """[6] the traction-fault solve, swept over _LAMS like the others."""
+    return {f'nu={_nu(l):.2f}': _check_traction_at(l) for l in _LAMS}
+
+
+def _check_traction_at(_lam: float) -> dict:
+    """One material point of _check_traction: the self-check fault as a
+    FAULT_TRACTION fault (P0, centroid collocation) with the traction change
+    -TAU y_hat; its slip must be +y everywhere."""
+    from .backends.dense import AssembledDense
+    from .model import BCType, Patch, Region, RegionModel, generate_system
+
+    model, region, top, fault, zero = _model(_lam)
+    ft = Patch("selfcheck_fault", fault, BCType.FAULT_TRACTION,
+               value=np.array([0.0, -_TAU, 0.0]))
+    r2 = Region("selfcheck_box", region.material, region.patches,
+                probe_point=region.probe_point, faults=[ft])
+    sol = AssembledDense(generate_system(RegionModel([r2])), _EPS, "direct",
+                         jump="half").solve()
+    b_y = sol["b:selfcheck_fault"][:, 1]
+    if not np.all(b_y > 0.0):
+        raise _fail(
+            "generate_system + solve (FAULT_TRACTION): a traction change of "
+            "-TAU y_hat on the +x face (the drop of a +y shear load) must "
+            "produce slip toward +y on every element",
+            f"min b_y = {b_y.min():+.4e}, max b_y = {b_y.max():+.4e} km")
+    ratio = float(np.mean(b_y)) / (_TAU * 2.0 * _FAULT_HALF / _MU)
+    if not (_TRACTION_LO < ratio < _TRACTION_HI):
+        raise _fail(
+            "FAULT_TRACTION solve: the mean slip must be of the order "
+            "TAU * L / mu",
+            f"mean b_y / (TAU L / mu) = {ratio:.4f}")
+    return {"b_y_mean": float(np.mean(b_y)), "ratio": ratio}
+
+
 _RUNNERS = {"core": _check_core, "stress": _check_stress,
-            "compressed": _check_compressed}
+            "compressed": _check_compressed, "traction": _check_traction}
 
 
 def ensure_fault_convention(stage: str = "core") -> None:

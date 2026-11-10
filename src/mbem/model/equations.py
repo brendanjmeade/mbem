@@ -30,7 +30,38 @@ carries to P1/P2 through the partition of unity ``sum_k N_k = 1``.
 A FAULT is not a special case: ``sigma(R,f)`` is defined for it too
 (``FAULT_ORIENTATION``, see ``core.py``), so a fault's slip enters the
 RHS through the very same ``-sigma`` coefficient a prescribed boundary
-displacement does.
+displacement does -- and a FAULT_TRACTION fault, whose slip b_f is an
+unknown, enters the boundary rows as the COLUMN block ``+sigma(R,f) H_qf``:
+the prescribed-u coefficient on the LEFT-hand side (its -sigma is the
+right-hand-side form).
+
+THE TRACTION ROWS of a FAULT_TRACTION fault f, at its own collocation nodes c
+(normal n_c), are the elastic traction of every source of its region, with
+the signs of ``evaluate_stress`` term by term, equal to the prescribed
+traction change dt (``Patch.value``):
+
+    n_c . sigma(x_c) = dt(x_c),
+    sigma(x) = sum_p [ -sigma(R,p) (S_H - E)_{xp} u_p + sigma(R,p) S_G,xp t_p ]
+             - sum_g sigma(R,g) (S_H - E)_{xg} b_g
+
+(S_H the double-layer stress, E its eigenstress, S_G the Kelvin stress), so
+with Ht = n_c . (S_H - E) and Gt = n_c . S_G the blocks are
+
+    A[b_f, u_p] += -sigma_p Ht     A[b_f, t_p] += +sigma_p Gt
+    A[b_f, b_g] += -sigma_g Ht     (g includes f itself; no free term, no diag)
+    b[b_f]      += +sigma_p Ht u_bar_p - sigma_p Gt t_bar_p + sigma_g Ht slip_g + dt
+
+A fault row has NO free term: the traction of a dislocation is continuous
+across its own surface, so there is no jump to halve, and mollified the
+hypersingular integral is an ordinary one. It is NOT calibrated either. The
+eigenstress IS removed in these rows (``KERNEL_HT`` is total minus
+eigenstress): the elastic stress of a constant closed double layer vanishes
+only once it is removed (docs/ddbem-findings.md, finding 2), so without it a
+rigid translation of a free-traction body would load its faults and the
+calibrated null space would no longer be one. ``apply_fault_rows`` then
+turns the Cartesian rows into the row frame: with ``allow_opening=False``
+the tangential pair and the constraint n_c . b_c = 0, with ``allow_opening``
+the three traction components; locked nodes get identity rows (b = 0).
 """
 
 from __future__ import annotations
@@ -39,7 +70,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..kernels import KERNEL_T, KERNEL_U
+from .. import defaults
+from ..kernels import KERNEL_GT, KERNEL_HT, KERNEL_T, KERNEL_U
 from ..selfcheck import ensure_fault_convention
 from .core import BCType, Patch, Region, RegionModel
 from .layout import Slot, UnknownLayout
@@ -54,7 +86,7 @@ COLLOCATION_JUMP = 0.5
 class BlockTerm:
     row: Slot
     col: Slot
-    kernel: str                  # KERNEL_T (H) | KERNEL_U (G)
+    kernel: str                  # KERNEL_T (H) | KERNEL_U (G) | KERNEL_HT | KERNEL_GT
     field_patch: Patch
     source_patch: Patch
     region: Region               # material provider
@@ -80,21 +112,38 @@ class RhsTerm:
     scale_half: float = 0.0
 
 
+@dataclass(frozen=True)
+class RhsValue:
+    """b[row] += vector: a datum that lands on the right-hand side as it
+    is, with no kernel -- a traction fault's prescribed traction change, one
+    (3,) per dof node, flattened."""
+    row: Slot
+    vector: np.ndarray
+
+
 @dataclass
 class BlockSystem:
     model: RegionModel
     layout: UnknownLayout
     terms: list[BlockTerm] = field(default_factory=list)
     rhs_terms: list[RhsTerm] = field(default_factory=list)
+    rhs_values: list[RhsValue] = field(default_factory=list)
 
     def mesh_pairs(self) -> set:
         return {(id(t.field_patch), id(t.source_patch), t.kernel)
                 for t in self.terms}
 
+    def traction_faults(self) -> list:
+        """[(region, fault)] for every FAULT_TRACTION fault, in slot order."""
+        return [(r, f) for r in self.model.regions for f in r.faults
+                if f.bc is BCType.FAULT_TRACTION]
+
 
 def generate_system(model: RegionModel) -> BlockSystem:
     if any(r.faults for r in model.regions):
         ensure_fault_convention()
+    if any(f.bc is BCType.FAULT_TRACTION for r in model.regions for f in r.faults):
+        ensure_fault_convention("traction")
     layout = UnknownLayout(model)
     system = BlockSystem(model=model, layout=layout)
 
@@ -140,9 +189,17 @@ def generate_system(model: RegionModel) -> BlockSystem:
 
             # ---- fault sources of this region ----
             # Same -sigma rule as the prescribed-u branch above; for a
-            # fault ``orientation`` returns FAULT_ORIENTATION.
+            # fault ``orientation`` returns FAULT_ORIENTATION. A solved slip
+            # is a column block with the LEFT-hand-side coefficient +sigma
+            # (the u_p term above), where the prescribed slip's RHS has -sigma.
             for f in region.faults:
                 sigma = float(model.orientation(region, f))
+                if f.bc is BCType.FAULT_TRACTION:
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(f, "b"), kernel=KERNEL_T,
+                        field_patch=q, source_patch=f, region=region,
+                        scale=sigma))
+                    continue
                 slip = f.value_array().ravel()
                 if np.any(slip):
                     system.rhs_terms.append(RhsTerm(
@@ -150,7 +207,122 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         source_patch=f, region=region, scale=-sigma,
                         vector=slip))
 
+        # ---- traction rows of this region's solved faults ----
+        # The elastic traction at the fault's nodes, every source with the
+        # sign evaluate_stress gives it (module docstring); the prescribed
+        # ones move to the RHS with the opposite sign.
+        for f in region.faults:
+            if f.bc is not BCType.FAULT_TRACTION:
+                continue
+            row = layout.slot(f, "b")
+            for p in region.patches:
+                sigma = float(model.orientation(region, p))
+                if layout.has_slot(p, "u"):
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(p, "u"), kernel=KERNEL_HT,
+                        field_patch=f, source_patch=p, region=region,
+                        scale=-sigma))
+                else:
+                    u_bar = p.value_array().ravel()
+                    if np.any(u_bar):
+                        system.rhs_terms.append(RhsTerm(
+                            row=row, kernel=KERNEL_HT, field_patch=f,
+                            source_patch=p, region=region, scale=sigma,
+                            vector=u_bar))
+                if layout.has_slot(p, "t"):
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(p, "t"), kernel=KERNEL_GT,
+                        field_patch=f, source_patch=p, region=region,
+                        scale=sigma))
+                else:
+                    t_bar = p.value_array().ravel()
+                    if np.any(t_bar):
+                        system.rhs_terms.append(RhsTerm(
+                            row=row, kernel=KERNEL_GT, field_patch=f,
+                            source_patch=p, region=region, scale=-sigma,
+                            vector=t_bar))
+            for g in region.faults:
+                sigma = float(model.orientation(region, g))
+                if g.bc is BCType.FAULT_TRACTION:
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(g, "b"), kernel=KERNEL_HT,
+                        field_patch=f, source_patch=g, region=region,
+                        scale=-sigma))
+                else:
+                    slip = g.value_array().ravel()
+                    if np.any(slip):
+                        system.rhs_terms.append(RhsTerm(
+                            row=row, kernel=KERNEL_HT, field_patch=f,
+                            source_patch=g, region=region, scale=sigma,
+                            vector=slip))
+            system.rhs_values.append(RhsValue(row=row,
+                                              vector=f.value_array().ravel()))
+
     return system
+
+
+# ---- the traction rows' frame, constraint and locked nodes ----------------
+
+def traction_row_frame(fault: Patch) -> np.ndarray:
+    """(n_dofs, 3, 3) row frame of a FAULT_TRACTION fault: per node the rows
+    [strike; dip; normal] (strike = z x n, dip = n x strike, x and y on a
+    horizontal node, as ``mhs.tdcs`` builds it) when ``allow_opening`` is
+    False, the identity when the three Cartesian traction components are
+    enforced. Any orthonormal tangent pair gives the same solution; this one
+    is deterministic."""
+    n = np.asarray(fault.collocation_normals(), float)
+    if fault.allow_opening:
+        return np.ascontiguousarray(np.broadcast_to(np.eye(3), (n.shape[0], 3, 3)))
+    s = np.cross(np.array([0.0, 0.0, 1.0]), n)
+    length = np.linalg.norm(s, axis=1)
+    flat = length <= defaults.FRAME_FLAT_TOL
+    s[flat] = [1.0, 0.0, 0.0]
+    s[~flat] /= length[~flat, None]
+    d = np.cross(n, s)
+    d /= np.linalg.norm(d, axis=1)[:, None]
+    return np.ascontiguousarray(np.stack([s, d, n], axis=1))
+
+
+def apply_fault_rows(A: np.ndarray, b: np.ndarray, system: BlockSystem) -> None:
+    """In place, for every FAULT_TRACTION fault: rotate its Cartesian traction
+    rows and RHS into ``traction_row_frame``; with ``allow_opening=False``
+    overwrite each free node's third row by the constraint n_c . b_c = 0;
+    overwrite every locked node's three rows by b_c = 0. The constraint and
+    identity rows are scaled by the mean |diagonal| of the fault's own
+    tangential self-block, so no new constant enters the system."""
+    for region, f in system.traction_faults():
+        slot = system.layout.slot(f, "b")
+        r0, r1 = slot.offset, slot.stop
+        n = f.n_dofs
+        F = traction_row_frame(f)
+        step = max(1, int(defaults.ASSEMBLY_SOURCE_CHUNK))
+        for c0 in range(0, n, step):
+            c1 = min(n, c0 + step)
+            rows = slice(r0 + 3 * c0, r0 + 3 * c1)
+            blk = A[rows].reshape(c1 - c0, 3, -1)
+            A[rows] = np.einsum("nij,njc->nic", F[c0:c1], blk).reshape(3 * (c1 - c0), -1)
+            b[rows] = np.einsum("nij,nj->ni", F[c0:c1], b[rows].reshape(-1, 3)).ravel()
+        lock = f.locked_mask(region.patches)
+        free = np.flatnonzero(~lock)
+        diag = np.array([A[r0 + 3 * c + i, r0 + 3 * c + i]
+                         for c in free for i in (0, 1)])
+        scale = float(np.mean(np.abs(diag))) if diag.size else 1.0
+        if scale == 0.0:
+            scale = 1.0
+        if not f.allow_opening and free.size:
+            nrm = np.asarray(f.collocation_normals(), float)
+            rows = r0 + 3 * free + 2
+            A[rows, :] = 0.0
+            for j in range(3):
+                A[rows, r0 + 3 * free + j] = scale * nrm[free, j]
+            b[rows] = 0.0
+        locked = np.flatnonzero(lock)
+        if locked.size:
+            for i in range(3):
+                rows = r0 + 3 * locked + i
+                A[rows, :] = 0.0
+                A[rows, rows] = scale
+                b[rows] = 0.0
 
 
 # ---- the collocation diagonal, shared by every backend --------------------

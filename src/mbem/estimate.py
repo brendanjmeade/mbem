@@ -19,7 +19,7 @@ from .kernels import kernel_n_basis
 from .kernels import basis as kb
 from .la.cluster import build_cluster_tree, build_partition
 from .la.flatview import storage_dtype
-from .la.hop import require_order0
+from .la.hop import require_compressible
 
 # Per-basis ACA rank assumed for every admissible block, at
 # BLOCK_COMPRESSION_TOL: a far-field T block holds 16 at 1e-4 (42 at
@@ -87,7 +87,7 @@ def estimate_memory(system, mode: str = "direct",
         out["basis_bytes"] = basis_bytes
         out["total_bytes"] = a_bytes * 2 + basis_bytes
     elif mode == "hmat":
-        require_order0(system.model)     # the trees below are on centroids:
+        require_compressible(system.model)   # the trees below are on centroids:
         arrays = kb.MeshArrays()         # a P1/P2 model would get P0's number
         tree_cache: dict = {}
 

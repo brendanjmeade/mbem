@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from numba import njit, prange
 
 from .. import defaults
 from . import tri_nodal as tn
@@ -127,11 +128,20 @@ class MeshArrays:
         return v
 
     def collocation_points(self, patch):
-        """``patch.collocation_points()`` (K N_tri, 3), once per patch."""
+        """``patch.collocation_points()`` (n_dofs, 3), once per patch."""
         key = id(patch)
         v = self._coll.get(key)
         if v is None:
             v = np.ascontiguousarray(patch.collocation_points())
+            self._coll[key] = v
+        return v
+
+    def collocation_normals(self, patch):
+        """``patch.collocation_normals()`` (n_dofs, 3), once per patch."""
+        key = ("n", id(patch))
+        v = self._coll.get(key)
+        if v is None:
+            v = np.ascontiguousarray(patch.collocation_normals())
             self._coll[key] = v
         return v
 
@@ -226,20 +236,65 @@ def resolve_patch_eps(spec, patch) -> np.ndarray:
 
     A dict is keyed by patch name and must name every patch it is used
     for; anything else is the spec of every patch (``resolve_eps``). On a
-    FAULT, ``"auto"`` is one value, ``FAULT_EPS_OVER_H * min(h)`` (see
-    ``defaults``), not a per-element width.
+    fault of either kind, ``"auto"`` is one value, ``FAULT_EPS_OVER_H *
+    min(h)`` (see ``defaults``), not a per-element width -- a shared node's
+    row sees several elements, and a uniform slip smeared unequally is a
+    spurious source.
     """
-    from ..model.core import BCType
+    from ..model.core import FAULT_KINDS
 
     if isinstance(spec, dict):
         if patch.name not in spec:
             raise ValueError(f"eps dict has no entry for patch "
                              f"{patch.name!r} (keys: {sorted(spec)})")
         spec = spec[patch.name]
-    if isinstance(spec, str) and spec == "auto" and patch.bc is BCType.FAULT:
+    if isinstance(spec, str) and spec == "auto" and patch.bc in FAULT_KINDS:
         h = element_sizes(patch.mesh)
         return np.full(h.size, defaults.FAULT_EPS_OVER_H * float(h.min()))
     return resolve_eps(spec, patch.mesh)
+
+
+# ---------------------------------------------------------------------
+# Shared-node columns: the kernels write one column per (element, node);
+# a continuous layout owns one column per SHARED node and adds the columns
+# of coincident element nodes into it (``ids`` (N_s, K) -> shared id).
+# ---------------------------------------------------------------------
+
+def identity_ids(order: int, n_source: int) -> np.ndarray:
+    """The element-major (discontinuous) layout as an ids table (N_s, K):
+    ids[s, k] = K s + k, the kernels' own column order."""
+    K = n_nodes(order)
+    return np.ascontiguousarray(np.arange(K * n_source, dtype=np.int64).reshape(n_source, K))
+
+
+@njit(cache=True, parallel=True)
+def _condense_columns(blk, ids, K, out):
+    n_rows = blk.shape[0]
+    N_s = ids.shape[0]
+    for r in prange(n_rows):
+        for s in range(N_s):
+            for k in range(K):
+                ci = 3 * (K * s + k)
+                co = 3 * ids[s, k]
+                for j in range(3):
+                    out[r, co + j] += blk[r, ci + j]
+
+
+def condense_columns(blk, ids, n_cols: int, out=None) -> np.ndarray:
+    """Element-major columns (R, 3 K N_s) -> shared columns (R, 3 n_cols): the
+    K node columns of every element are ADDED into their shared node's column
+    (``ids`` (N_s, K)); ``out`` accumulates in place when given."""
+    blk = np.ascontiguousarray(np.asarray(blk, float))
+    ids = np.ascontiguousarray(np.asarray(ids, dtype=np.int64))
+    N_s, K = ids.shape
+    if blk.shape[1] != 3 * K * N_s:
+        raise ValueError(f"block has {blk.shape[1]} columns, ids imply {3 * K * N_s}")
+    if out is None:
+        out = np.zeros((blk.shape[0], 3 * int(n_cols)))
+    elif out.shape != (blk.shape[0], 3 * int(n_cols)):
+        raise ValueError(f"out shape {out.shape} != {(blk.shape[0], 3 * int(n_cols))}")
+    _condense_columns(blk, ids, K, out)
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -296,23 +351,77 @@ def assemble_t_basis(mesh_field, mesh_source, eps,
     return TBasis(tn.t_basis_matrices(x_field, tri_verts, normals, eps_arr, order))
 
 
+def _condensed(kernel_call, x_field, tri_verts, normals, eps_arr, order, ids, n_cols):
+    """``kernel_call`` on chunks of ASSEMBLY_SOURCE_CHUNK source elements,
+    each chunk's element-major columns condensed into the shared columns
+    before the next is assembled (``defaults`` has the transient budget)."""
+    ids = np.ascontiguousarray(np.asarray(ids, dtype=np.int64))
+    N_s = tri_verts.shape[0]
+    if ids.shape != (N_s, n_nodes(order)):
+        raise ValueError(f"ids shape {ids.shape} != ({N_s}, {n_nodes(order)})")
+    out = np.zeros((3 * x_field.shape[0], 3 * int(n_cols)))
+    step = int(defaults.ASSEMBLY_SOURCE_CHUNK)
+    for c0 in range(0, N_s, step):
+        c1 = min(N_s, c0 + step)
+        blk = kernel_call(x_field, tri_verts[c0:c1], None if normals is None
+                          else normals[c0:c1], eps_arr[c0:c1], order)
+        condense_columns(blk, ids[c0:c1], n_cols, out=out)
+    return out
+
+
 def assemble_u_matrix(mesh_field, mesh_source, material, eps,
-                      arrays: MeshArrays | None = None, order: int = 0) -> np.ndarray:
-    """One-shot real-material U matrix (coefficients applied in-loop)."""
+                      arrays: MeshArrays | None = None, order: int = 0,
+                      ids=None, n_cols: int | None = None) -> np.ndarray:
+    """One-shot real-material U matrix (coefficients applied in-loop):
+    (3 N_f, 3 K N_s), or (3 N_f, 3 n_cols) condensed onto shared-node
+    columns when ``ids`` (N_s, K) is given."""
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, _ = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
     g1, g2, g3 = u_coeffs(material.mu, material.lam)
-    return tn.u_matrix_direct(x_field, tri_verts, eps_arr, g1, g2, g3, order)
+    if ids is None:
+        return tn.u_matrix_direct(x_field, tri_verts, eps_arr, g1, g2, g3, order)
+    return _condensed(lambda x, tv, _n, e, p: tn.u_matrix_direct(x, tv, e, g1, g2, g3, p),
+                      x_field, tri_verts, None, eps_arr, order, ids, n_cols)
 
 
 def assemble_t_matrix(mesh_field, mesh_source, material, eps,
-                      arrays: MeshArrays | None = None, order: int = 0) -> np.ndarray:
-    """One-shot real-material T matrix (coefficients applied in-loop)."""
+                      arrays: MeshArrays | None = None, order: int = 0,
+                      ids=None, n_cols: int | None = None) -> np.ndarray:
+    """One-shot real-material T matrix (coefficients applied in-loop):
+    (3 N_f, 3 K N_s), or (3 N_f, 3 n_cols) condensed onto shared-node
+    columns when ``ids`` (N_s, K) is given."""
     a = arrays if arrays is not None else MeshArrays()
     x_field = a.field_points(mesh_field)
     tri_verts, normals = a.source_arrays(mesh_source)
     eps_arr = as_eps_array(eps, tri_verts.shape[0])
     c = t_coeffs(material.mu, material.lam)
-    return tn.t_matrix_direct(x_field, tri_verts, normals, eps_arr, *c, order)
+    if ids is None:
+        return tn.t_matrix_direct(x_field, tri_verts, normals, eps_arr, *c, order)
+    return _condensed(lambda x, tv, n, e, p: tn.t_matrix_direct(x, tv, n, e, *c, p),
+                      x_field, tri_verts, normals, eps_arr, order, ids, n_cols)
+
+
+def assemble_traction_matrix(x_field, n_field, mesh_source, material, eps,
+                             arrays: MeshArrays | None = None, order: int = 0,
+                             kind: str = "slip", ids=None,
+                             n_cols: int | None = None) -> np.ndarray:
+    """Traction rows (3 N_f, 3 n_cols) at the points ``x_field`` with normals
+    ``n_field`` of a nodal density on ``mesh_source``: ``kind="slip"`` the
+    ELASTIC traction of a displacement jump (eigenstress removed, the rows of
+    a traction-BC fault), ``"force"`` the Kelvin single layer's; ``"eigen"`` and
+    ``"total"`` (the eigenstress alone, and left in) exist for the gates'
+    tripwires. Columns are
+    the kernels' element-major layout unless ``ids`` (N_s, K) maps them onto
+    ``n_cols`` shared nodes; the scatter happens inside the driver."""
+    a = arrays if arrays is not None else MeshArrays()
+    tri_verts, normals = a.source_arrays(mesh_source)
+    eps_arr = as_eps_array(eps, tri_verts.shape[0])
+    if ids is None:
+        ids = identity_ids(order, tri_verts.shape[0])
+        n_cols = ids.size
+    return tn.traction_matrix(np.ascontiguousarray(np.asarray(x_field, float)),
+                              np.ascontiguousarray(np.asarray(n_field, float)),
+                              tri_verts, normals, eps_arr, ids, int(n_cols),
+                              material.mu, material.lam, order, kind)

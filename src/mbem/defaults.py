@@ -901,6 +901,24 @@ COLLOCATION_SHRINK_BY_ORDER = {0: 0.0, 1: 0.5, 2: 0.5}
 # slip surface, not the one-sided value the boundary condition means (a fault
 # outcrop). Warned, not corrected.
 COLLOCATION_FAULT_CLEARANCE_EPS = 1.0
+# A FAULT_TRACTION value with allow_opening=False may carry no normal
+# component beyond this fraction of its largest entry: the rows enforce the
+# tangential traction only, so a normal part would be projected away
+# silently. Round-off from a projection the caller did is far below it.
+TRACTION_VALUE_NORMAL_TOL = 1e-12
+# A traction fault's row frame is [strike; dip; normal] with strike = z x n;
+# a node whose normal is within this of vertical takes strike = x (mhs.tdcs's
+# FLAT_TOL). Any orthonormal tangent pair gives the same solution.
+FRAME_FLAT_TOL = 1e-12
+
+# --- Shared-node (continuous) columns, kernels/basis.py -------------------
+# A continuous fault's unknowns are its shared nodes, so a displacement block
+# against it is assembled per chunk of source elements in the kernels'
+# element-major layout and condensed into the shared columns before the next
+# chunk: the transient is (3 N_f, 3 K chunk) instead of (3 N_f, 3 K N_s),
+# 90 MB instead of 1.4 GB at 5000 field points against 4000 P2 elements. The
+# traction kernel scatters inside the driver and needs no chunk.
+ASSEMBLY_SOURCE_CHUNK = 256
 
 # --- Benchmark gate, examples/bench_scaling.py --gate ---------------------
 # Fast-operator accuracy target (relative max-norm of A_h v against the

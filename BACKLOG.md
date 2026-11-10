@@ -4,7 +4,7 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 45 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 46 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
@@ -50,7 +50,9 @@ the tree again:
 
 * Every stress presented as elastic subtracts the eigenstress `C:eps*` of
   every mollified double layer — fault slip and boundary `u_p` alike
-  (`evaluate_stress`, default). Raw totals are kernel demos only.
+  (`evaluate_stress`, default), and so do the traction rows of a
+  `FAULT_TRACTION` fault; never a displacement row. Raw totals are kernel
+  demos only.
 * Fault slip: `Patch.value = b = u(+n) - u(-n)`, the same as `clq` and cutde;
   `mbem.selfcheck` pins it. Never restate it.
 * eps/h: `eps="auto"` = 0.1 h on boundary patches and ONE value 0.07 min h on
@@ -60,7 +62,11 @@ the tree again:
   (`msd/CLAUDE.md` rule 4).
 * Higher order (`Patch.order` 1 or 2) pays on traction rows and on the first
   row, not on displacement rows (first-kind traction unknown; cond grows
-  ~15x per order), and only with eps room (`docs/ddbem-findings.md`).
+  ~15x per order), and only with eps room (`docs/ddbem-findings.md`). On a
+  fault the layout that pays is the CONTINUOUS P2 one (`layout="continuous"`,
+  shared nodes, collocated at the nodes): convergent on-fault stress where P0
+  centroids are floored, two unknowns per element; continuous P1 is too
+  stiff.
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 
@@ -112,6 +118,18 @@ sides toward the rim rather than uniform refinement. It would cost less than
 `target_edge` and `inclusion_mesh.py` is a frozen oracle, so it needs a new
 conforming panel mesher -- and `docs/fbem-findings.md` warns that direct-BIE
 conditioning is far more fragile under grading (5.7e19 at beta = 3).
+
+7. **The traction-BC fault and the continuous P2 layout (2026-10-17,
+   `verify_penny_crack`).** Built and gated on the penny crack and the
+   coupled box. What it did NOT solve, measured: a free Coulomb front is
+   located to the node spacing at any order (a meshing problem: front-
+   conforming or adaptive); the trace row of a surface-breaking fault is
+   eps-limited (`eps <= 0.025 h` there, or say so); on a faceted fault the
+   per-node vector removes the 1/eps line-dislocation term of a per-facet
+   direction, but a log-type crease term remains (clause [g]); sym(-P) of
+   the fault operator is indefinite at eps/h <= 0.1 (LU does not care;
+   Galerkin is the fallback if a guarantee is ever needed). The half-space
+   twin (mhs) is a separate build.
 
 ## Open — correctness
 

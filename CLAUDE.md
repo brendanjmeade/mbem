@@ -20,13 +20,15 @@ is the bug.
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
-| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 46 gates in `gates/{mbem,clq,moss_kernel}`. |
+| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 47 gates in `gates/{mbem,clq,moss_kernel}`. |
 | `configs/` | Eight studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
-| `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, all 111 defaults, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
+| `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, every uppercase `defaults` constant, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
 | `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the mollification band is FLAGGED, never blanked, because on this model it overstates the topography effect 33x. |
 | `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
-| `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. |
-| `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`. |
+| `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
+| `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. |
+| `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`, `clq-rules.md`. |
+| `docs/viscoelastic.md` | The derivation the viscoelastic extension rests on (branch `ve1`; the Laplace route and the time-stepper it describes are NOT built yet). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4) and is pinned by `verify_viscoelastic`. Also why a region that relaxes needs ONE scalar eps on its closed boundary, and the open floating-plate problem. |
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
@@ -44,6 +46,7 @@ from the complete pre-filter mirror beside it,
 
 ```bash
 pip install -e .                      # once; no other installer
+pip install -e '.[tde,test,viz]'      # + cutde, vtk, pytest/sympy/mpmath: gates FAIL without them
 
 python -m mbem run configs/fault_box.py          # a study -> a new runs/ folder
 python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
@@ -58,14 +61,25 @@ python -m mbem sample <study-dir> --difference   # every child on ONE grid, plus
 python -m mbem publish <run-dir>                 # figures -> docs/figures, with provenance
 python -m mbem verify [-k fmm] [--fast]          # the gates
 
-python tests/run_all.py               # all 46 gates, exit 1 on any FAIL
+python tests/run_all.py               # all 47 gates, exit 1 on any FAIL
+python tests/run_all.py --suite clq -k eigenstress   # one suite, substring filter (--list, --fast)
+python tests/gates/mbem/verify_penny_crack.py        # one gate, by path, as run_all spawns it
+pytest -k penny_crack                 # one gate in-process, with a traceback
 pytest -m "not slow"                  # same set, pytest front end
 python studies/mbem/demo_triangle_quickstart.py   # prints numbers, draws nothing
 ```
 
-`/Users/meade/micromamba/bin/python` on this machine. Numba compiles on first
-call; demos run at paper resolution. `cutde` is needed by two gates, which FAIL
-rather than skip without it.
+The interpreter differs by machine (on the Mac it is
+`/Users/meade/micromamba/bin/python`), so check `python -c 'import mbem'` before
+running anything; on the Linux machine it is `~/miniforge3/envs/main/bin/python`.
+numba must resolve a THREAD-SAFE threading layer: `numba.threading_layer()`
+must be `"omp"` or `"tbb"` (Linux resolves `"tbb"`), never `"workqueue"`.
+`triangle`'s PyPI sdist ships Cython output that does not compile on current
+Pythons: regenerate it (`python -m cython -3 triangle/core.pyx` in the unpacked
+sdist, then `pip install --no-deps .`) before `pip install -e .`.
+Numba compiles on first call; demos run at paper resolution. `cutde` (two gates)
+and `vtk` (`verify_volume`'s independent reader) are test requirements: those
+gates FAIL rather than skip without them.
 
 ## Rules
 
@@ -75,7 +89,7 @@ rather than skip without it.
    `verify_oracle_provenance` pins every oracle by resolved path AND sha256, so
    a deliberate edit must update `oracle_manifest.json` in the same commit.
 2. **Every gate is `main() -> bool`, prints `PASS:`/`FAIL:` at column 0 as its
-   last such line, and exits on it.** One convention, all 46: the return value
+   last such line, and exits on it.** One convention, all 47: the return value
    is the authority and the printed line cross-checks it, so a gate whose two
    disagree is reported as MISMATCH rather than trusted. Do not write a
    POSIX-style `return 0` for success — under `assert main()` that is exactly

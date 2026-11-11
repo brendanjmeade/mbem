@@ -163,7 +163,7 @@ src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
 configs/                  eight studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 46 gates (print PASS/FAIL)
+tests/                    run_all.py + test_gates.py; 47 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -212,7 +212,7 @@ python -m mbem verify [-k fmm] [--fast]             # the gates, through the CLI
 ```
 
 A run folder holds `resolved.json` (the spec, the keyword arguments actually
-passed, eps resolved to numbers per patch, all 111 `defaults` constants, and the
+passed, eps resolved to numbers per patch, every uppercase `defaults` constant, and the
 environment), `report.json` (iterations, residuals, phase timings, peak RSS),
 the solution fields as `.npz`, and a `MANIFEST` of sha256 hashes.
 
@@ -224,7 +224,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 46 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 47 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 
@@ -246,6 +246,7 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
 python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
+python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface (docs/viscoelastic.md)
 ```
 
 ## The field in the volume

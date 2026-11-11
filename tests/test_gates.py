@@ -1,6 +1,6 @@
 """Native pytest tests: each gate is IMPORTED and its verdict is the assertion.
 
-    pytest                      # all 46
+    pytest                      # all 47
     pytest -k fmm               # select
     pytest -m "not slow"        # skip the ~900 s one
     pytest -x --lf              # stop at the first failure, then rerun just it

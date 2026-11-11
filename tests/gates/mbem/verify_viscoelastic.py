@@ -63,7 +63,10 @@ the real-axis fit under test.
      times), so lam is live; one scalar eps, per clause e.
   j  torsion of a two-layer cylinder, the lower layer relaxing: the only
      closed form whose relaxing region has a plate-over-substrate's boundary
-     set (an interface, a free wall, a clamped base).
+     set (an interface, a free wall, a clamped base). Also where the dense
+     backend's "basis" mode -- what makes a state cost a recombination rather
+     than an assembly -- is held to its "direct" mode on a two-region model:
+     the same operator, and a rebuild at mu(s) equal to a fresh assembly there.
   k  a penny crack under a sustained stress drop in a Maxwell full space
      (FAULT_TRACTION): the slip creeps for ever, at 8 a dtau / (3 pi eta).
   l  the closed forms the plate-over-substrate study is compared with
@@ -150,6 +153,7 @@ TOL_SPHERE_HYD, TOL_SPHERE_DEV = 3.0e-2, 2.0e-2
 # low at every s, and the same in time.
 TORSION_BIAS = (-0.075, -0.035)
 TORSION_FLAT = 6.0e-3            # spread of that bias over s; 3e-3 measured
+TOL_BASIS_MODE = 1.0e-12         # basis-mode operator vs direct; rounding
 # [k] the penny crack at a/h = 8, continuous P2, eps "auto": moment over the
 # exact one 0.9944-0.9954 at every s and in time; fitted creep rate 0.995.
 PENNY_BAND = (0.990, 1.000)
@@ -650,6 +654,20 @@ def j_torsion() -> None:
         """Two torsional springs in series: the interface takes the share of
         the twist the LOWER layer's compliance is of the whole."""
         return (mat_up.mu / h_up) / (mat_up.mu / h_up + m_lo.mu / h_lo)
+
+    def same(a, b):
+        return max(float(np.abs(a.A - b.A).max() / np.abs(b.A).max()),
+                   float(np.abs(a.b - b.b).max() / np.abs(b.b).max()))
+
+    close("two regions: the basis-mode operator and RHS == direct mode's",
+          same(asm, AssembledDense(generate_system(model), eps, "direct",
+                                   jump="calibrated")), TOL_BASIS_MODE)
+    soft = elastic(relaxed(MAXWELL, mat_lo, 0.1))
+    close("... and a basis rebuild at mu(s) == a fresh direct assembly there",
+          same(asm.rebuild_for_materials({"lower": soft}),
+               AssembledDense(generate_system(
+                   model.with_materials({"lower": soft})), eps, "direct",
+                   jump="calibrated")), TOL_BASIS_MODE)
 
     t = times()
     for rheo in (MAXWELL, BURGERS):

@@ -89,6 +89,17 @@ the real-axis fit under test.
      a smooth load is hydrostatic, each column carrying its own load if the
      sides are free (a reservoir) and all of them sharing a trapped pressure
      P = mean load / (1 + rho g H / K) if the sides are clamped.
+  n  A DIPPING fault. Dip slip in a plate over a substrate has no closed form
+     once the substrate differs or gravity acts, so the study's reference is
+     the plane-strain problem solved per wavenumber
+     (``layered_box.dip_slip_profile``), and a reference is only as good as
+     its own anchors: the half-space closed form it is built on against cutde;
+     its transform inverted with no closed form's help; gravity by what it
+     does to a load (rho g + mu g k on a half-space, flexural isostasy under a
+     plate on a fluid); a deep clamped base against the half-space; and its
+     fit in time against a contour inversion. Then mbem against it: a
+     30-degree thrust over a relaxed substrate under gravity, which the same
+     reference without gravity misses several-fold.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -191,6 +202,29 @@ GRAV_SINKS = 1.0e3               # the SAME load without gravity, over the
 GRAV_BOX = dict(edge=4.0, half_width=12.0, peak=1.0e-3, weight=3.0, eps=0.5,
                 relaxed=1.0e-3)
 TOL_GRAV_HYDROSTATIC = 1.0e-2
+
+
+# [n] the plane-strain reference of a dipping fault, and a thrust against it
+TOL_DIP_CLOSED = 2.0e-5          # closed form vs cutde, an 8e5 km fault; 4e-6
+TOL_DIP_INVERT = 2.0e-6          # a buried fault's transform inverted; 3e-7
+TOL_DIP_STIFFNESS = 1.0e-10      # rho g + mu g k under a load; rounding
+TOL_DIP_FLEXURE = 1.0e-3         # a thin plate on a fluid, kH = 0.09; 3.8e-4
+TOL_DIP_BASE = 2.0e-6            # a base 3e5 km down vs the half-space; 3e-7
+TOL_DIP_TIME = 1.0e-3            # fitted vs contour to 100 tau; 3.1e-4
+# The solved thrust: 30 degrees, a 300 km fault, the substrate relaxed to
+# 0.03 mu, clamped base and plate sides, under TEN times the Earth's gravity
+# so that it is first order in a box this small.
+THRUST = dict(half_x=300.0, z_interface=-30.0, z_bottom=-300.0,
+              fault_half_len=150.0, fault_depth=15.0, near_field_radius=60.0,
+              edge_fault=5.0, edge_near=10.0, edge_far=60.0, edge_side=60.0,
+              edge_interface=15.0, dip=30.0)
+THRUST_RELAXED = 0.03
+THRUST_DENSITY = (2700.0, 3300.0)
+THRUST_G = 98.0
+THRUST_EPS = 1.5
+TOL_THRUST = (0.08, 0.2)         # rms misfit of u_x, u_z; 0.046, 0.105 (a
+#                                  P0 top at 10 km over the fault's lower edge)
+THRUST_BLIND = 0.4               # ... against the reference WITHOUT gravity; 0.64
 
 
 def check(name, ok, extra="") -> bool:
@@ -901,6 +935,153 @@ def m_gravity() -> None:
               TOL_GRAV_HYDROSTATIC)
 
 
+def talbot(transform, t, m: int = 24) -> np.ndarray:
+    """``f(t)`` from ``F`` at ``m`` points of a fixed Talbot contour (Abate &
+    Valko 2004), in double precision: for a transform that is a numerical
+    solve and cannot be had at 30 digits. ``transform`` takes the ``m`` complex
+    points at once and returns ``(m, ...)``. Shares nothing with
+    ``mbem.laplace`` either."""
+    r = 2.0 * m / (5.0 * t)
+    th = np.arange(1, m) * np.pi / m
+    cot = 1.0 / np.tan(th)
+    nodes = np.concatenate([[r + 0.0j], r * th * (cot + 1.0j)])
+    weight = np.concatenate([
+        [0.5 * np.exp(r * t)],
+        np.exp(t * nodes[1:]) * (1.0 + 1.0j * (th + (th * cot - 1.0) * cot))])
+    return r / m * np.real(np.tensordot(weight, transform(nodes), axes=1))
+
+
+def _long_thrust(x, dip, depth, nu, half_length=4.0e5):
+    """cutde's half space under a thrust so long that its mid-profile is the
+    plane-strain one: ``(u_x, u_z)`` per unit slip."""
+    d = np.deg2rad(dip)
+    w = depth / np.sin(d)
+    corner = lambda xi, y: [xi * np.cos(d), y, -xi * np.sin(d)]   # noqa: E731
+    fault = mb.TriMesh(
+        vertices=np.array([corner(0.0, -half_length), corner(w, half_length),
+                           corner(0.0, half_length), corner(w, -half_length)]),
+        triangles=np.array([[0, 1, 2], [0, 3, 1]]))
+    obs = np.column_stack([x, np.zeros_like(x), np.full_like(x, -1.0e-9)])
+    u = VB._cutde_halfspace_disp(obs, fault, [-np.cos(d), 0.0, np.sin(d)], nu)
+    return u[:, 0], u[:, 2]
+
+
+def n_dip_slip() -> None:
+    print("\n[n] a dipping fault: the plane-strain reference, and a thrust "
+          "under gravity")
+    lb = layered_box
+    depth, thick = 15.0, 30.0
+    plate = (MU, LAM)
+    g = rheology.g_of(MU, LAM)
+    x = np.array([-120.0, -40.0, -12.0, -3.0, 4.0, 15.0, 27.0, 60.0, 130.0])
+
+    # the half-space closed form, against an independent code
+    worst = 0.0
+    for dip in (30.0, 60.0, 90.0):
+        got = lb.half_space_dip_slip(x, depth, dip)
+        worst = max(worst, *(float(np.abs(a - b).max()) for a, b in zip(
+            got, _long_thrust(x, dip, depth, nu_of(mb.ElasticMaterial(MU, LAM))))))
+    close("half-space closed form == cutde's half space, a very long thrust",
+          worst, TOL_DIP_CLOSED)
+    # the transform itself: two faults on one plane differ by a BURIED one,
+    # whose transform decays and can be inverted with no closed form's help
+    k, wk = lb._wavenumbers(float(np.abs(x).max()), 4.0)
+    phase = np.exp(1j * np.outer(x, k)) * wk
+    worst = 0.0
+    for dip in (30.0, 60.0):
+        deep, shallow = (lb.dip_slip_spectrum(k, d, thick, dip, plate, plate)
+                         for d in (depth, 6.0))
+        want = [a - b for a, b in zip(lb.half_space_dip_slip(x, depth, dip),
+                                      lb.half_space_dip_slip(x, 6.0, dip))]
+        worst = max(worst, *(float(np.abs((phase @ (a - b)).real / np.pi - w).max())
+                             for a, b, w in zip(deep, shallow, want)))
+    close("the transform of a buried thrust, inverted == the closed form",
+          worst, TOL_DIP_INVERT)
+
+    # gravity, by what it does to a load: the classical results of section 7
+    kk = np.array([0.003, 0.03, 0.3])
+    weight = (0.027, 0.033)
+
+    def stiffness(sub, w):
+        """Normal load over deflection at wavenumbers ``kk``."""
+        A, top, _ = lb._layer_system(kk, thick, plate, sub, w, None)
+        rhs = np.zeros(A.shape[:2], complex)
+        rhs[:, 1] = 1j / (MU * kk)             # S + w W = i sigma, pushing down
+        c = np.linalg.solve(A, rhs[..., None])[..., 0]
+        return -1.0 / (1j * np.einsum("kj,kj->k", top[:, 1], c[:, :4])).real
+
+    close("a half-space under a load: stiffness == rho g + mu g k",
+          float(np.abs(stiffness(plate, (weight[1],) * 2)
+                       / (weight[1] + MU * g * kk) - 1.0).max()),
+          TOL_DIP_STIFFNESS)
+    fluid = (1.0e-9 * MU, LAM + 2.0 * MU / 3.0)
+    flex = MU * g * thick ** 3 / 6.0
+    close("a plate on a fluid, kH = 0.09: rho_s g + D k^4, flexural isostasy",
+          float(abs(stiffness(fluid, weight)[0]
+                    / (weight[1] + flex * kk[0] ** 4) - 1.0)), TOL_DIP_FLEXURE)
+    sub = rheology.moduli(MAXWELL, MU, LAM, 0.1)
+    half = lb.dip_slip_profile(x, depth, thick, 30.0, plate, sub, weight)
+    based = lb.dip_slip_profile(x, depth, thick, 30.0, plate, sub, weight, -3.0e5)
+    close("a base clamped 3e5 km down == the half-space",
+          max(float(np.abs(a - b).max()) for a, b in zip(half, based)),
+          TOL_DIP_BASE)
+
+    # in time: the study's reference is this profile at mu(s_k) through the
+    # SAME fit as the solution. Held to a contour inversion, to 100 tau.
+    xs = np.array([-60.0, -12.0, 9.0, 27.0, 80.0])
+
+    def stack(svals):
+        return np.concatenate(lb.dip_slip_profile(
+            xs, depth, thick, 30.0, plate,
+            [rheology.moduli(MAXWELL, MU, LAM, sv) for sv in svals], weight),
+            axis=1)
+
+    sg = laplace.s_grid(0.1, 100.0)
+    fitted_from = stack((np.inf,) + sg)
+    tt = np.array([1.0, 10.0, 100.0])
+    fitted = laplace.Prony(sg).weights(tt) @ fitted_from
+    contour = np.array([talbot(lambda sv: stack(sv) / sv[:, None], t)
+                        for t in tt])
+    close("Maxwell substrate under gravity: the fitted reference == its "
+          "contour inversion", float(np.abs(fitted - contour).max()
+                                     / np.abs(contour).max()), TOL_DIP_TIME)
+    above("... and gravity is in it: the vertical motion at 100 tau differs",
+          float(np.abs(contour[-1, xs.size:] - talbot(
+              lambda sv: np.concatenate(lb.dip_slip_profile(
+                  xs, depth, thick, 30.0, plate,
+                  [rheology.moduli(MAXWELL, MU, LAM, v) for v in sv]),
+                  axis=1) / sv[:, None], tt[-1])[xs.size:]).max()), 0.3)
+
+    # the solved thrust
+    meshes = lb.build_layered_box(**THRUST)
+    relaxed_mu = THRUST_RELAXED * MU
+    soft = (relaxed_mu, LAM + 2.0 * (MU - relaxed_mu) / 3.0)
+    model = lb.build_model(meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
+                           mb.ElasticMaterial(*soft), sides="clamped",
+                           rake=90.0, density=THRUST_DENSITY, g=THRUST_G)
+    eps = dict(top="auto", sides_upper="auto", fault="auto",
+               interface=THRUST_EPS, sides_lower=THRUST_EPS, base=THRUST_EPS)
+    u = AssembledDense(generate_system(model), eps, "direct").solve()["u:top"]
+    c = meshes["top"].centroids()
+    strip = ((np.abs(c[:, 1]) < 0.08 * THRUST["fault_half_len"])
+             & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 60.0))
+    got = u[strip][:, [0, 2]] / 1.0e-3
+    w = tuple(model.gravity.weight(n) for n in (lb.PLATE, lb.SUBSTRATE))
+
+    def miss(weights):
+        ref = np.column_stack(lb.dip_slip_profile(
+            c[strip, 0], depth, thick, THRUST["dip"], plate, soft, weights,
+            THRUST["z_bottom"]))
+        return np.sqrt(((got - ref) ** 2).mean(axis=0) / (ref ** 2).mean(axis=0))
+
+    with_g, blind = miss(w), miss((0.0, 0.0))
+    for name, m, tol in zip(("u_x", "u_z"), with_g, TOL_THRUST):
+        close(f"a 30-degree thrust over a relaxed substrate, under gravity: "
+              f"{name} vs the reference", float(m), tol)
+    above("... which the reference WITHOUT gravity misses (u_z)",
+          float(blind[1]), THRUST_BLIND)
+
+
 def main() -> bool:
     t0 = time.time()
     print("=" * 76)
@@ -920,6 +1101,7 @@ def main() -> bool:
     k_penny()
     l_plate_closed_forms()
     m_gravity()
+    n_dip_slip()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

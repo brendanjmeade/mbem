@@ -28,6 +28,11 @@ It uses THREE anchors because they fail differently:
      ratio ~D/2z); a P1 top (``build_model(order_top=1)``) at eps="auto"
      resolves the row below ~3 eps_top, and at eps_top = 0.025 h_top the
      whole row. Both the defect (tripwires) and the cure are gated.
+     A fifth (A5) is a DIPPING THRUST (``cases.layered_box`` with ``dip`` and
+     ``rake``, one material so its interface is transparent): the tilted
+     fault's geometry and Burgers vector, which side goes up, and the solved
+     surface against cutde on the identical mesh. Dip slip moves the surface
+     in the plane of its normal, which strike slip never does.
 
   B. INTERNAL, manufactured, tight.  Impose the exact data of a known
      elasticity solution on a closed box and check that the solve reproduces
@@ -129,6 +134,16 @@ import _sphere as SPH                         # sibling; see tests/conftest.py
 from _sphere import icosphere
 
 CHECKS = []
+
+# A5: a 30-degree thrust from the surface to 15 km, in the layered box
+THRUST_KW = dict(half_x=200.0, z_interface=-30.0, z_bottom=-150.0,
+                 fault_half_len=40.0, fault_depth=15.0, near_field_radius=60.0,
+                 edge_fault=5.0, edge_near=20.0, edge_far=50.0, edge_side=50.0,
+                 edge_interface=15.0, dip=30.0)
+THRUST_NU = 0.31
+THRUST_NEAR = 60.0            # km: the points A5 compares
+COS_TOL_THRUST = 0.998        # measured 1-cos 4.3e-4
+MED_TOL_THRUST = 0.08         # measured 0.040: a P0 top over the lower edge
 
 MU = 30.0
 NU_LIST = (0.25, 0.30, 0.45)      # 1/4 hides the lam/mu pairing; 0.30/0.45 do not
@@ -581,6 +596,83 @@ def a_first_row(meshes):
           float(np.abs(r1[deep]).max()), TOL_ROW_P1_DEEP, "{:.4f}")
     check(f"A4 P1 top, eps_top = {EPS_TOP_ROW} h: whole row max |rel err|",
           float(np.abs(r1s).max()), TOL_ROW_P1_SMALL, "{:.4f}")
+
+
+def a_thrust():
+    """A5: dip and rake.
+
+    The fault dips toward +x, so +x is the hanging wall and the stored normal
+    ``(sin, 0, cos)`` points up and into it; a thrust is rake 90, the +n side
+    moving UP DIP. Stated here in the source and not read off the data: the
+    hanging wall rises and both walls move toward the trace.
+    """
+    print("\n[A5] a dipping THRUST: geometry, Burgers vector, sense, cutde")
+    from mbem.cases import layered_box as lb
+
+    meshes = lb.build_layered_box(**THRUST_KW)
+    fault = meshes["fault"]
+    dip = np.deg2rad(THRUST_KW["dip"])
+    n_want = np.array([np.sin(dip), 0.0, np.cos(dip)])
+    up_dip = np.array([-np.cos(dip), 0.0, np.sin(dip)])
+    s_hat = np.asarray(meshes["s_hat"], float)
+    normals, _ = fault.normals_and_areas()
+    v = fault.vertices
+    check("A5 every fault normal == (sin, 0, cos) == n_hat",
+          max(np.abs(normals - n_want).max(),
+              np.abs(meshes["n_hat"] - n_want).max()), 1.0e-12)
+    check("A5 the fault lies in the plane through the trace x = 0, z = 0",
+          np.abs(v @ n_want).max(), 1.0e-12)
+    check("A5 ... from the surface down to fault_depth",
+          max(abs(v[:, 2].max()), abs(v[:, 2].min() + THRUST_KW["fault_depth"])),
+          1.0e-12)
+    upright = lb.build_layered_box(**dict(THRUST_KW, dip=90.0))["fault"]
+    panel, _n, _s = make_vertical_fault_eq(
+        strike_length=2.0 * THRUST_KW["fault_half_len"],
+        depth_range=(-THRUST_KW["fault_depth"], 0.0),
+        target_edge=THRUST_KW["edge_fault"])
+    check_true("A5 dip = 90 is the vertical panel itself, bitwise",
+               np.array_equal(upright.vertices, panel.vertices)
+               and np.array_equal(upright.triangles, panel.triangles))
+    check_true("A5 rake 180 is the right-lateral Burgers vector, exactly",
+               np.array_equal(lb.burgers(SLIP, 180.0, [1.0, 0.0, 0.0], s_hat),
+                              -SLIP * s_hat))
+    check("A5 rake 0 / 90 / -90: left-lateral, up dip, down dip",
+          max(np.abs(lb.burgers(SLIP, rake, n_want, s_hat) - SLIP * want).max()
+              for rake, want in ((0.0, s_hat), (90.0, up_dip),
+                                 (-90.0, -up_dip))), 1.0e-17)
+
+    mat = material(THRUST_NU)
+    model = lb.build_model(meshes, SLIP, mat, mat, rake=90.0)
+    region = model.regions[0]
+    b = region.faults[0].value_array()
+    check("A5 the model's fault carries SLIP up dip, and no opening",
+          max(np.abs(b - SLIP * up_dip).max(), np.abs(b @ n_want).max()),
+          1.0e-17)
+    eps = "auto"
+    exclusion = TRACE_EXCLUSION_EPS * float(
+        kb.resolve_patch_eps(eps, Patch("fault", fault, BCType.FAULT))[0])
+    u = AssembledDense(generate_system(model), eps, "direct").solve()["u:top"]
+    c = meshes["top"].centroids()
+    # clear of the fault PLANE, which under the hanging wall is x sin(dip) away
+    keep = ((np.abs(c @ n_want) > exclusion)
+            & (np.abs(c[:, :2]).max(axis=1) < THRUST_NEAR))
+    obs = c[keep].copy()
+    obs[:, 2] = -1.0e-6
+    ref = _cutde_halfspace_disp(obs, fault, b, THRUST_NU)
+    check("A5 surface u vs cutde: 1-cos",
+          1.0 - cosine(u[keep], ref), 1.0 - COS_TOL_THRUST)
+    check("A5 surface u vs cutde: median rel",
+          median_rel(u[keep], ref), MED_TOL_THRUST, "{:.4f}")
+    band = (np.abs(c[:, 1]) < 8.0) & (np.abs(c @ n_want) > exclusion)
+    hang = band & (c[:, 0] > 0.0) & (c[:, 0] < 20.0)
+    foot = band & (c[:, 0] < 0.0) & (c[:, 0] > -20.0)
+    uh, uf = u[hang].mean(axis=0) / SLIP, u[foot].mean(axis=0) / SLIP
+    check_true("A5 thrust: the hanging wall (+x) rises, more than the footwall moves",
+               uh[2] > 0.1 and uh[2] > 3.0 * abs(uf[2]),
+               f"u_z/s = {uh[2]:+.3f} (hanging) {uf[2]:+.3f} (foot)")
+    check_true("A5 ... and the two walls converge on the trace",
+               uh[0] < -0.1 and uf[0] > 0.1,
+               f"u_x/s = {uh[0]:+.3f} (hanging) {uf[0]:+.3f} (foot)")
 
 
 # ============================================================== ANCHOR B =====
@@ -1398,6 +1490,7 @@ def main():
     a_external_cutde(meshes)
     a_slip_sense(meshes)
     a_first_row(meshes)
+    a_thrust()
 
     box = _closed_box()
     print(f"\n  closed box triangles: "

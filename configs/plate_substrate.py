@@ -1,14 +1,19 @@
-"""An elastic plate over a relaxing substrate, a strike-slip fault in the plate.
+"""An elastic plate over a relaxing substrate, a fault in the plate.
 
 The Nur-Mavko / Savage-Prescott earthquake-cycle model, as a LAPLACE run: the
 elastic state plus one elastic solve per real s, all on one assembly, which
 ``mbem.laplace`` turns into the response in time (docs/viscoelastic.md).
+A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
 
     python -m mbem run configs/plate_substrate.py
     python -m mbem run configs/plate_substrate.py \
         --sweep half_x=400,800 --sweep sides=free,clamped
     python -m mbem run configs/plate_substrate.py \
         --set tau_K=0.1 --set t_min=0.02 --sweep half_x=400,800   # Burgers
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=30 --set rake=90 --set edge_near=10 \
+        --set rho_plate=2700 --set rho_substrate=3300 \
+        --sweep half_x=800,1600 --sweep gravity=0,1               # a thrust
 
 Lengths are km. TIME IS IN UNITS OF THE SUBSTRATE'S MAXWELL TIME (``tau = 1``),
 which is all a linear problem needs: the rheology is stated in relaxation
@@ -39,9 +44,19 @@ only inside its window, and the transient is over by a few ``tau_K``.
 free surface and on the interface (docs/viscoelastic.md, section 7). It leaves
 the fault-parallel motion of a long strike-slip fault alone and holds back the
 vertical motion, which without it grows for as long as the substrate relaxes.
-A Laplace run refuses a substrate lighter than the plate.
+A Laplace run refuses a substrate lighter than the plate. ``gravity`` scales
+g, so ``--sweep gravity=0,1`` is the same body with and without it.
+
+``dip`` (degrees, toward +x) and ``rake`` (Aki & Richards: 180 right-lateral,
+90 a thrust) turn the fault; ``depth`` stays its depth extent. A dip-slip
+fault is where gravity is first order: the plate bends, and without gravity
+nothing but the plate's own stiffness resists a wavelength the substrate has
+relaxed under. It also asks more of the surface mesh than strike slip does --
+with piecewise-constant elements the error over the fault's lower edge falls
+only in proportion to the element there -- so ``edge_near``, the element
+size within ``near_field_radius`` of the trace, is a parameter.
 """
-from mbem import laplace, rheology
+from mbem import defaults, laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
 
 
@@ -52,7 +67,9 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              mu_substrate: float = 30.0, tau_K: float = 0.0,
              kelvin: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
              per_decade: int = 3, rho_plate: float = 0.0,
-             rho_substrate: float = 0.0) -> Run:
+             rho_substrate: float = 0.0, gravity: float = 1.0,
+             dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
+             near_field_radius: float = 90.0) -> Run:
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
@@ -68,7 +85,9 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                                           z_interface=-thickness,
                                           z_bottom=-half_x,
                                           fault_half_len=fault_half_len,
-                                          fault_depth=depth,
+                                          fault_depth=depth, dip=dip,
+                                          edge_near=edge_near,
+                                          near_field_radius=near_field_radius,
                                           # the far field coarsens WITH the
                                           # box, or a ladder in half_x is a
                                           # ladder in cost and nothing else
@@ -77,13 +96,15 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
             builder="layered_box",
             params=dict(sides=sides, mu_substrate=mu_substrate,
                         lam_substrate=mu_substrate, rho_plate=rho_plate,
-                        rho_substrate=rho_substrate),
+                        rho_substrate=rho_substrate,
+                        g=gravity * defaults.GRAVITY, rake=rake),
             eps=eps),
         backend=Backend(kind=backend),
         solve=Solve(),
         laplace=Laplace(rheology={"substrate": substrate},
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade)),
         outputs=Output(slots=(), save_meshes=True,
-                       figures=("plate_substrate",)),
+                       figures=("plate_substrate" if rake % 180.0 == 0.0
+                                else "plate_thrust",)),
         notes="plate over a relaxing substrate; times in Maxwell times",
         tags=("viscoelastic", "laplace"))

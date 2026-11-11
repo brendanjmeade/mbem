@@ -48,6 +48,13 @@ def s_grid(t_min: float, t_max: float, per_decade: int = None,
     return tuple(float(v) for v in np.logspace(hi, lo, n))
 
 
+def window(s, pad: float = None) -> tuple:
+    """``(t_min, t_max)`` that ``s_grid`` laid ``s`` out for: the times a fit
+    on those points is trusted between."""
+    pad = defaults.LAPLACE_PAD_DECADES if pad is None else pad
+    return 10.0 ** pad / max(s), 10.0 ** -pad / min(s)
+
+
 class Prony:
     """The fit for one set of collocation points.
 

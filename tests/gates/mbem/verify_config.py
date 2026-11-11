@@ -142,6 +142,12 @@ def a_same_model() -> None:
                                      mat, mat, sides="clamped")
     _same_model("layered_box", direct,
                 layered_box_model(layered_box_meshes(**kw), sides="clamped"))
+    kw["dip"] = 30.0
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped", rake=90.0)
+    _same_model("layered_box, a thrust", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped",
+                                  rake=90.0))
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -509,6 +515,23 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
     check("it changes the solution, the vertical motion most",
           dz > 1.0e-3 and dz > 3.0 * dy,
           f"u_z by {dz:.2e}, fault-parallel by {dy:.2e}")
+
+    # ``gravity`` scales g and leaves the densities, so a sweep over it is the
+    # same body with and without: at 0 no patch carries a buoyancy term.
+    from mbem.cases.registry import layered_box_meshes, layered_box_model
+    off = cfg.load(path, **small, **rho, gravity=0.0)
+    weightless = layered_box_model(
+        layered_box_meshes(**off.model.geometry.params), **off.model.params)
+    check("gravity=0 keeps the densities and applies no buoyancy anywhere",
+          weightless.gravity is not None and off.model.params["g"] == 0.0
+          and all(weightless.buoyancy(r, q) is None
+                  for r in weightless.regions for q in r.patches))
+    thrust = cfg.load(path, **small, dip=30.0, rake=90.0)
+    check("a dip-slip plate names the in-plane figure, strike slip the other",
+          thrust.outputs.figures == ("plate_thrust",)
+          and run.outputs.figures == ("plate_substrate",)
+          and thrust.model.geometry.params["dip"] == 30.0
+          and thrust.model.params["rake"] == 90.0)
 
     heavy = cfg.load(path, **small, rho_plate=3300.0, rho_substrate=2700.0)
     db = tmp / "heavy"

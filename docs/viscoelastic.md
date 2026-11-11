@@ -4,10 +4,11 @@ Quasistatic, time-dependent, linear viscoelasticity for a body made of
 homogeneous regions, with unknowns on the region boundaries only. No volume
 mesh, no stored history.
 
-Sections 2 and 3 are properties of the existing kernels and are gated
-(`tests/gates/mbem/verify_viscoelastic.py`). Sections 1 and 4 are the algebra
-around them. Sections 5 and 6 are the design this supports and are NOT built
-yet. Section 7 is what is open.
+Sections 2 and 3 are properties of the kernels, and section 5, the Laplace
+route, is built on them (`mbem.rheology`, `mbem.laplace`, `Run.laplace`); all
+three are gated by `tests/gates/mbem/verify_viscoelastic.py`. Sections 1 and 4
+are the algebra around them. Section 6, time-stepping, is a design and is NOT
+built. Section 7 is what is open.
 
 Notation as in `clq-derivation.md`: $\mathbf d=\mathbf x-\mathbf y$,
 $R_\varepsilon=\sqrt{|\mathbf d|^2+\varepsilon^2}$. One new symbol carries the
@@ -199,10 +200,12 @@ problem with a prescribed traction in a Maxwell or Burgers region creeps
 forever (the $1/s$ term): a crack under a fixed stress drop never stops
 slipping.
 
-## 5. Design: the Laplace route
+## 5. The Laplace route
 
-One elastic solve per real $s_k$, sharing one assembly (`State`,
-`rebuild_for_materials`). Then fit, with fixed log-spaced $\tau_j$,
+A run declares which regions relax and how (`Run.laplace`, `mbem.rheology`);
+its states are DERIVED from the model the builder returns: the elastic one,
+then one elastic solve per real $s_k$, all on one assembly. Then fit, with
+$\tau_j$ fixed at the reciprocals of the $s_k$ (`mbem.laplace.Prony`),
 
 $$ \tilde u(\mathbf x,s)=a_0(\mathbf x)+\sum_ja_j(\mathbf x)\frac{s}{s+1/\tau_j}
    \ \Big(+\,\frac{c(\mathbf x)}{s}\ \text{if traction-driven}\Big)
@@ -210,9 +213,49 @@ $$ \tilde u(\mathbf x,s)=a_0(\mathbf x)+\sum_ja_j(\mathbf x)\frac{s}{s+1/\tau_j}
    u(\mathbf x,t)=a_0+\sum_ja_je^{-t/\tau_j}\ (+\,c\,t) . $$
 
 The fit is linear, and it is the same linear map for every slot and every
-observation point. Repeating earthquakes of period $T$ sum in closed form,
+observation point: `weights(t)` times the stack of state solutions. The elastic
+state is always one of its rows, which pins $u(0^+)$ exactly. Repeating
+earthquakes of period $T$ sum in closed form,
 $\sum_{n\ge0}e^{-(t+nT)/\tau_j}=e^{-t/\tau_j}/(1-e^{-T/\tau_j})$. The result is
 trusted for $t$ inside the span of the $\tau_j$, not beyond it.
+
+Measured on exact transforms (one pole, two poles, an $n$-fold pole, a
+creeping response), worst case over three decades of time:
+
+| points per decade | solves | $u$ | $t\,\dot u$ |
+|---|---|---|---|
+| 2 | 9 | 4.4e-3 | 6.7e-2 |
+| 3 | 13 | 9.5e-4 | 1.2e-2 |
+| 4 | 17 | 4.2e-5 | 1.9e-3 |
+
+Three is the default: the inversion then sits well under the spatial error. A
+rate wants four.
+
+**Time has no unit here.** A rheology is stated in relaxation times and
+modulus ratios, never in viscosities, so a run is in units of whatever its
+$\tau$ is in.
+
+**Closed forms, each checked per $s$ and in time** (the gate inverts the same
+closed form on a complex contour at 30 digits, which shares nothing with the
+real-axis fit):
+
+| case | what it exercises | spatial bias, flat in $s$ |
+|---|---|---|
+| dislocation in a relaxing full space | the fault INSIDE a relaxing region; $u$ moves with $g$, $\sigma$ relaxes to zero | none (kernel parity with `clq` at $\nu(s)$ to 1e-11) |
+| Eshelby sphere, host relaxing | two regions, $\lambda$ live, two relaxation times | 1.6 % hydrostatic, 0.8 % deviatoric |
+| torsion of a two-layer cylinder | a relaxing region with an interface, a free wall and a clamped base | $-5$ % (847 P0 triangles) |
+| penny crack under a sustained stress drop | a solved (traction) fault that creeps for ever | $-0.5$ % in moment |
+
+In every solved case the time-domain answer carries the elastic gate's own
+spatial bias and nothing more.
+
+**The plate over a substrate** (`mbem.cases.layered_box`,
+`configs/plate_substrate.py`) is the Nur-Mavko / Savage-Prescott model on a
+finite box. Its reference is the antiplane image series
+(`layered_box.image_series`), which is plain arithmetic in the substrate's
+modulus and so is its own Laplace-domain reference at $\tilde\mu(s)$; for a
+Maxwell substrate $G(s)$ has one pole and the time response is a series of
+incomplete gamma functions (`maxwell_series`).
 
 ## 6. Design: time-stepping with memory on the boundary
 

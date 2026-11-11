@@ -3,8 +3,8 @@
 Guidance for Claude Code in this repo: a research package for the **mollified
 boundary element method (mbem)** and mollified elastic dislocation theory, built
 on the Cortez blob regularization of the Kelvin/Somigliana
-kernels. 3-D linear elasticity, full space, no half space, no viscoelasticity,
-no LaTeX. `README.md` has the physics and references; `BACKLOG.md` is the one
+kernels. 3-D linear elasticity, full space, no half space, no LaTeX; linear
+viscoelasticity by the Laplace route (rule 16), no time-stepper yet. `README.md` has the physics and references; `BACKLOG.md` is the one
 status document and history lives in `git log`.
 
 Installed, not path-hacked: `pip install -e .` once, then everything imports as
@@ -16,19 +16,20 @@ is the bug.
 | path | what it is |
 |---|---|
 | `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults (slip prescribed, or solved from a traction condition: `BCType.FAULT_TRACTION`), the continuous P2 shared-node fault layout (`model/shared_nodes.py`), dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
-| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor). Library code, because 14 gates and 7 studies build from them. |
+| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a strike-slip fault in the plate, and the antiplane closed forms it is compared with). Library code, because the gates and the studies both build from them. |
+| `src/mbem/rheology.py`, `src/mbem/laplace.py` | **Linear viscoelasticity, the Laplace route.** `rheology`: `Maxwell`, `Burgers` as operational shear moduli, stated in relaxation TIMES and modulus ratios (never viscosities), bulk modulus elastic; the states of a Laplace run; the one-eps rule. `laplace`: the collocation points for a window of times, and `Prony`, the fixed-pole fit that turns the stack of per-s elastic solutions into value, rate and periodic-cycle sums in time as one linear map. No kernel work: an operator at any s is the elastic one at `(mu(s), lam(s))`. |
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
 | `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 47 gates in `gates/{mbem,clq,moss_kernel}`. |
-| `configs/` | Eight studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
+| `configs/` | Nine studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, every uppercase `defaults` constant, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
 | `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the mollification band is FLAGGED, never blanked, because on this model it overstates the topography effect 33x. |
 | `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
 | `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`, `clq-rules.md`. |
-| `docs/viscoelastic.md` | The derivation the viscoelastic extension rests on (branch `ve1`; the Laplace route and the time-stepper it describes are NOT built yet). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4) and is pinned by `verify_viscoelastic`. Also why a region that relaxes needs ONE scalar eps on its closed boundary, and the open floating-plate problem. |
+| `docs/viscoelastic.md` | The derivation viscoelasticity rests on (branch `ve1`). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; the time-stepper with boundary memory, which is a design and NOT built; why a region that relaxes needs ONE scalar eps; and what is open (the floating plate, a true half-space, gravity). |
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
@@ -52,6 +53,7 @@ python -m mbem run configs/fault_box.py          # a study -> a new runs/ folder
 python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
 python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
 python -m mbem run configs/penny.py --sweep a_over_h=8,16 --sweep order=0,2   # the traction-BC crack
+python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sides=free,clamped   # a Laplace run
 python -m mbem figure point_kernel                # model-free: no solve
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list                              # runs, newest first
@@ -151,9 +153,24 @@ gates FAIL rather than skip without them.
     `allow_opening`, the crack front locked by default, dense `mode="direct"`
     only. Continuous P1 (too stiff) and discontinuous P2 traction faults are
     refused. The compressed backend is P0, discontinuous, prescribed-slip only.
-14. **Git.** `main` is the only branch; the public remote is
-    `github.com/brendanjmeade/mbem`. The user commits on request.
+14. **Git.** `main` is the published branch (a push to it that touches
+    `website/**` deploys the site); viscoelastic work is on `ve1` until it is
+    merged. The public remote is `github.com/brendanjmeade/mbem`. The user
+    commits on request.
 15. Figures follow the house matplotlib style (`src/mbem/figures/style.py`, and
     the `matplotlib-figure-style` skill). A study writes its figure beside
     itself; `docs/figures/` is the curated tracked gallery and changes only
     deliberately.
+16. **Viscoelasticity is the Laplace route** (`docs/viscoelastic.md`): a run
+    with `Run.laplace` solves the elastic state and one elastic problem per
+    real s, its states DERIVED from the model the builder returns, and
+    `mbem.laplace.Prony` maps the stack to time. Shear relaxes and the bulk
+    modulus does not. A rheology is relaxation times and ratios; time has the
+    unit its tau has. **A region that relaxes carries ONE scalar eps on its
+    closed boundary** (`"auto"` loses its pressure response as mu(s)/K falls
+    below ~1e-3); the runner refuses otherwise. A traction-driven problem in a
+    fluid creeps and needs `Prony(secular=True)`. The box is part of the
+    model: there is no half-space, a plate with free sides floats as the
+    substrate relaxes, and a result is trusted only inside the fit's window.
+    **A state is the base model with its own materials**, never cumulative,
+    and is read back through `RegionModel.with_materials`.

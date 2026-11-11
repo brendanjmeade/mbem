@@ -158,9 +158,15 @@ class State:
     base. The solve and every later readout of the state take its materials
     from here (``state_overrides``); a readout through the base model would
     apply the base moduli to this state's solution.
+
+    ``s`` marks a state of a Laplace run: the elastic problem at that real
+    Laplace parameter, ``inf`` being the unrelaxed (elastic) one. The runner
+    sets it (``Run.laplace``); it is recorded so that a stored run says which
+    state is which without parsing a label.
     """
     label: str
     materials: Mapping[str, Material] = field(default_factory=dict)
+    s: float | None = None
 
 
 def state_overrides(states) -> dict:
@@ -179,6 +185,27 @@ def state_overrides(states) -> dict:
             name: m if isinstance(m, Material) else Material(**m)
             for name, m in row["materials"].items()}
     return out
+
+
+@dataclass(frozen=True)
+class Laplace:
+    """A run as a linear viscoelastic problem, by correspondence.
+
+    ``rheology`` maps a region to how its shear modulus relaxes
+    (``mbem.rheology``); a region it does not name is elastic. ``s`` are the
+    real Laplace parameters to solve at, in the reciprocal of the unit the
+    rheology's times are in (``mbem.laplace.s_grid`` lays them out for a
+    window of times).
+
+    The STATES of such a run are derived, not written: the elastic state and
+    one per ``s``, each the base model with the relaxing regions at their
+    moduli of ``s``. Derived from the model the builder returns, so the
+    unrelaxed moduli are stated once -- by the builder. For data applied as a
+    step, the solution of state ``s`` is ``s`` times the transform of the
+    response, and ``mbem.laplace`` turns the stack into a function of time.
+    """
+    rheology: Mapping[str, Any]
+    s: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -204,6 +231,7 @@ class Run:
     outputs: Output = field(default_factory=Output)
     notes: str = ""
     tags: tuple[str, ...] = ()
+    laplace: Laplace | None = None
 
     def __post_init__(self):
         if self.backend.kind not in BACKENDS:
@@ -224,6 +252,19 @@ class Run:
                 f"state labels {labels} collide as file names {slugs}: each "
                 f"state writes fields_<slug>.npz, and the later one would "
                 f"overwrite the earlier")
+        if self.laplace is not None:
+            if self.states != (State("base"),):
+                raise ValueError("a Laplace run derives its states from the "
+                                 "rheology: give `laplace` or `states`, not "
+                                 "both")
+            s = tuple(float(v) for v in self.laplace.s)
+            if len(s) < 2 or len(set(s)) != len(s) or not all(
+                    0.0 < v < float("inf") for v in s):
+                raise ValueError(f"laplace.s must be at least two distinct "
+                                 f"finite positive values, got {s}")
+            if not self.laplace.rheology:
+                raise ValueError("laplace.rheology names no region: nothing "
+                                 "relaxes, which is an elastic run")
 
 
 # ---------------------------------------------------------------------
@@ -235,11 +276,13 @@ class Run:
 # pass stay instant.
 MESH_BUILDERS = {
     "fault_box": "mbem.cases.registry:fault_box_meshes",
+    "layered_box": "mbem.cases.registry:layered_box_meshes",
     "topo_inclusion": "mbem.cases.registry:topo_inclusion_meshes",
     "penny": "mbem.cases.registry:penny_meshes",
 }
 MODEL_BUILDERS = {
     "fault_box": "mbem.cases.registry:fault_box_model",
+    "layered_box": "mbem.cases.registry:layered_box_model",
     "topo_inclusion": "mbem.cases.registry:topo_inclusion_model",
     "penny": "mbem.cases.registry:penny_model",
 }

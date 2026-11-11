@@ -39,6 +39,15 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      and both differ from what carrying materials over would give. Also: two
      labels that collide as file names are refused, and the dump's states
      resolve to the materials the run was solved at.
+  j  a LAPLACE run (``Run.laplace``) derives its states from the model the
+     builder returns, so the unrelaxed moduli are stated once. Through
+     configs/plate_substrate.py and runner.execute: the elastic state plus one
+     per s, each recorded with its s and its moduli; those moduli are the
+     rheology's at that s, with the bulk modulus unmoved; the elastic state is
+     bitwise the same model run with no rheology at all; ``laplace.run_stack``
+     returns the stack in the order the fit takes it; a stored Laplace state is
+     read back at its own moduli; and the run is REFUSED when the relaxing
+     region is not on one scalar eps, or names a region the model lacks.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -116,6 +125,16 @@ def a_same_model() -> None:
     direct = penny.build_model(penny.penny_mesh(1.0, 1.0 / 8.0, "cdt"), mat,
                                drop=penny.stress_drop(30.0, 30.0, 1e-3, 1.0), order=2)
     _same_model("penny", direct, penny_model(penny_meshes()))
+    from mbem.cases import layered_box
+    from mbem.cases.registry import layered_box_meshes, layered_box_model
+    kw = dict(half_x=150.0, z_interface=-30.0, z_bottom=-150.0,
+              fault_half_len=40.0, fault_depth=15.0, near_field_radius=60.0,
+              edge_fault=5.0, edge_near=20.0, edge_far=50.0, edge_side=50.0,
+              edge_interface=15.0)
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped")
+    _same_model("layered_box", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped"))
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -356,6 +375,98 @@ def i_states(tmp: pathlib.Path) -> None:
           f"{cfg.slug('s=1e+03')} / {cfg.slug('s=1e-03')}")
 
 
+def j_laplace_run(tmp: pathlib.Path) -> None:
+    """[j] a Laplace run through the runner."""
+    print("\n[j] a Laplace run: states derived from the model, by rheology")
+    from mbem import cli, laplace, rheology
+    path = CONFIGS / "plate_substrate.py"
+    small = dict(half_x=150.0, fault_half_len=40.0, backend="dense",
+                 t_min=0.3, t_max=3.0, per_decade=2)
+    run = cfg.load(path, **small)
+    d = tmp / "laplace"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the Laplace run finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    rows = resolved["states"]
+    n = len(run.laplace.s)
+    check("states: the elastic one, then one per s",
+          len(rows) == n + 1 and rows[0]["label"] == "elastic"
+          and rows[0]["s"] == "inf" and rows[0]["materials"] == {},
+          f"{len(rows)} states for {n} s")
+    s_rec = [float(r["s"]) for r in rows[1:]]
+    check("... in decreasing s, each recorded",
+          s_rec == sorted(run.laplace.s, reverse=True))
+
+    base = cfg.load(path, **small)
+    plain = dataclasses.replace(base, laplace=None)
+    dp = tmp / "plain"
+    dp.mkdir()
+    runner.execute(plain, dp, path)
+    check("the elastic state == the same model with no rheology (bitwise)",
+          np.array_equal(_fields(d, "elastic"), _fields(dp, "base")))
+
+    mx = run.laplace.rheology["substrate"]
+    mu0 = lam0 = 30.0                         # the builder's substrate
+    K = lam0 + 2.0 * mu0 / 3.0
+    worst = worst_k = 0.0
+    for r in rows[1:]:
+        m = r["materials"]["substrate"]
+        mu, lam = rheology.moduli(mx, mu0, lam0, float(r["s"]))
+        worst = max(worst, abs(m["mu"] - mu) / mu0, abs(m["lam"] - lam) / lam0)
+        worst_k = max(worst_k, abs(m["lam"] + 2.0 * m["mu"] / 3.0 - K) / K)
+        if set(r["materials"]) != {"substrate"}:
+            worst = np.inf
+    check("each state: the substrate at the rheology's moduli of s, alone",
+          worst < 1e-14, f"{worst:.1e}")
+    check("... and its bulk modulus has not moved", worst_k < 1e-14,
+          f"{worst_k:.1e}")
+
+    s, stack = laplace.run_stack(d)
+    ok = (np.array_equal(s, np.array(s_rec))
+          and all(v.shape[0] == n + 1 for v in stack.values())
+          and np.array_equal(stack["u:top"][0],
+                             np.load(d / "fields_elastic.npz")["u:top"])
+          and np.array_equal(stack["u:top"][-1], np.load(
+              d / f"fields_{cfg.slug(rows[-1]['label'])}.npz")["u:top"]))
+    check("run_stack: the stack in the fit's order, elastic first", ok,
+          f"{sorted(stack)[:3]}...")
+    try:
+        laplace.run_stack(dp)
+        refused = False
+    except ValueError:
+        refused = True
+    check("run_stack refuses a run that is not a Laplace run", refused)
+
+    _b, model, _e = cli._rebuild(resolved)
+    last = rows[-1]
+    got = next(r for r in cli._state_model(
+        resolved, model, cfg.slug(last["label"])).regions
+        if r.name == "substrate").material
+    check("a stored Laplace state is read back at its own moduli",
+          (got.mu, got.lam) == (last["materials"]["substrate"]["mu"],
+                                last["materials"]["substrate"]["lam"])
+          and got.mu < 0.5 * mu0, f"mu {got.mu:.3f} of {mu0}")
+
+    def refused_with(run_bad, exc, fragment):
+        db = tmp / f"bad{len(list(tmp.iterdir()))}"
+        db.mkdir()
+        try:
+            runner.execute(run_bad, db, path)
+        except exc as e:
+            return fragment in str(e)
+        return False
+
+    auto = dataclasses.replace(run, model=dataclasses.replace(
+        run.model, eps="auto"))
+    check('REFUSED: the relaxing region on eps="auto" (per-element)',
+          refused_with(auto, ValueError, "ONE scalar eps"))
+    ghost = dataclasses.replace(run, laplace=dataclasses.replace(
+        run.laplace, rheology={"mantle": mx}))
+    check("REFUSED: a rheology for a region the model does not have",
+          refused_with(ghost, KeyError, "not in the model"))
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -375,6 +486,7 @@ def main() -> bool:
         penny_dir.mkdir()
         h_penny_run(penny_dir)
         i_states(pathlib.Path(tmp))
+        j_laplace_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

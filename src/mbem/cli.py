@@ -258,7 +258,10 @@ def _state_model(resolved: dict, model, state: str):
     combine the state's densities with whatever coefficients the model holds.
     A state the spec does not declare is refused rather than read as the base.
     """
-    overrides = cfg.state_overrides(resolved["spec"]["states"])
+    # "states" is what the run solved; runs stored before it was recorded have
+    # only the spec's, which for them is the same thing.
+    overrides = cfg.state_overrides(
+        resolved.get("states") or resolved["spec"]["states"])
     if state not in overrides:
         raise KeyError(f"fields for state {state!r}, but the run's spec "
                        f"declares only {sorted(overrides)}")

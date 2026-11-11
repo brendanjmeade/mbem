@@ -176,7 +176,21 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     phases["system"] = time.perf_counter() - t0
 
     known = {r.name for r in model.regions}
-    for st in run.states:
+    states = run.states
+    if run.laplace is not None:
+        from mbem import rheology
+        relaxing = {k: rheology.from_spec(v)
+                    for k, v in run.laplace.rheology.items()}
+        unknown = set(relaxing) - known
+        if unknown:
+            raise KeyError(f"laplace.rheology names regions not in the "
+                           f"model: {sorted(unknown)} (model has "
+                           f"{sorted(known)})")
+        rheology.require_one_eps(model, run.model.eps, relaxing)
+        states = rheology.laplace_states(
+            {r.name: (r.material.mu, r.material.lam) for r in model.regions},
+            relaxing, run.laplace.s)
+    for st in states:
         unknown = set(st.materials) - known
         if unknown:
             raise KeyError(f"state {st.label!r} names regions not in the model: "
@@ -207,6 +221,10 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 "config_path": str(config_path) if config_path else None,
                 "notes": run.notes, "tags": list(run.tags)},
         "spec": dataclasses.asdict(run),
+        # The states AS SOLVED. For a Laplace run they exist nowhere in the
+        # spec -- they are derived from the model -- and `mbem sample` reads a
+        # state back with the materials recorded here.
+        "states": [dataclasses.asdict(st) for st in states],
         "builders": {"mesh": cfg.builder_name(run.model.geometry.builder),
                      "model": cfg.builder_name(run.model.builder)},
         "effective": {"backend": effective_backend,
@@ -225,9 +243,9 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     # -- dense keeps the operator's current material, compressed resets to the
     # base -- and a partial map would make a run mean different things on them.
     base = {r.name: r.material for r in model.regions}
-    overrides = cfg.state_overrides(run.states)
+    overrides = cfg.state_overrides(states)
     cur, held, ok, solutions = asm, {}, True, {}
-    for st in run.states:
+    for st in states:
         want = overrides[cfg.slug(st.label)]
         if want != held:
             cur = cur.rebuild_for_materials(
@@ -250,7 +268,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         ok &= bool(getattr(rep, "converged", True))
         report["states"].append(row)
 
-        if save and run.outputs.save_meshes and st is run.states[0]:
+        if save and run.outputs.save_meshes and st is states[0]:
             # Written once per run, not per state: the mesh is the run's, and a
             # material state does not change it. A figure needs it because a
             # solution is just numbers until you know which triangles they sit

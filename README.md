@@ -31,7 +31,9 @@ contribution is integrated **analytically**, so (following Ferranti & Cortez)
 This package contains only the elastic full-space machinery: the point-source
 kernel, the triangular displacement-discontinuity solution, the `mbem` BEM
 solver (region model + calibrated dense backend), and worked examples.  There is
-**no half-space / Mindlin code, no viscoelasticity, and no LaTeX** here.
+**no half-space / Mindlin code and no LaTeX** here.  Linear viscoelasticity
+(Maxwell, Burgers) is available by the Laplace route, with no volume mesh; see
+"Viscoelastic relaxation" below.
 
 Boundary patches and faults carry a piecewise-constant (P0) density by default
 or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
@@ -135,6 +137,49 @@ direction (the gate's clause [g]); the symmetric part of the fault operator
 is indefinite at eps/h <= 0.1, which the dense LU does not mind.  The
 `configs/penny.py` study runs the ladder.
 
+## Viscoelastic relaxation
+
+A region may relax: its shear modulus becomes a function of the Laplace
+parameter `s` (`mbem.rheology.Maxwell`, `Burgers`) while its bulk modulus stays
+elastic, so Poisson's ratio moves in time.  By the correspondence principle the
+problem at each real `s` is an ELASTIC one at `(mu(s), lam(s))`, on the same
+mesh, with the same boundary unknowns -- there is no volume mesh and no stored
+history.  It costs no kernel work either, because with `g = 1/(1 - nu)` every
+operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`
+(`docs/viscoelastic.md`), which holds for the elastic stress and NOT for the
+raw total: the eigenstress removal above is also what makes this work.
+
+A run declares the rheology and the code derives the states:
+
+```
+python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sides=free,clamped
+```
+
+```python
+from mbem import laplace
+s, stack = laplace.run_stack(run_dir)            # elastic state, then one per s
+u_top = np.tensordot(laplace.Prony(s).weights(t), stack["u:top"], axes=1)
+```
+
+`Prony` fits a constant plus exponentials whose relaxation times are the
+reciprocals of the collocation points, so the map from the stack to any time
+is one matrix: value, rate, and the closed-form sum over an infinite train of
+repeating earthquakes.  At the default three points per decade the inversion
+error is under 1e-3 on exact transforms, well below the spatial error.  Time
+has the unit the rheology's `tau` has.
+
+Three things to know.  A region that relaxes needs ONE scalar `eps` on its
+closed boundary: with `eps="auto"` a nearly relaxed region loses its pressure
+response (9 % at mu(s)/K = 5e-4, 54 % at 5e-5 on the Eshelby sphere) and with
+one scalar it does not (0.2 % throughout), so the runner refuses the former.
+The box is part of the model: there is no half-space, and a plate with free
+sides floats as its substrate relaxes, which clamped sides prevent.  And a
+fault in a fluid under a sustained traction creeps for ever, which the fit
+represents only with `Prony(secular=True)`.
+
+The time-stepper with memory on the boundary, which would couple this to
+stress-driven fault slip, is designed in `docs/viscoelastic.md` and not built.
+
 ## Layout
 
 ```
@@ -147,7 +192,11 @@ src/mbem/                 region-model BEM solver: dense and block-compressed
   kernels/                numba kernels, P0/P1/P2 closed forms
   la/                     ACA, flat H-matrix, bbFMM, FGMRES, preconditioners
   cases/                  reference models the gates and studies share (the
-                          fault box, the inclusion, topography, the penny crack)
+                          fault box, the inclusion, topography, the penny
+                          crack, the plate over a substrate)
+  rheology.py, laplace.py linear viscoelasticity by correspondence: Maxwell
+                          and Burgers shear moduli, and the fit that turns
+                          per-s elastic solves into a function of time
   figures/                the figure makers, in a lazy registry
 src/mollified_kernel/     point-source kernel + analytic triangle integration
   mollified_elastic_kernels.py   regularized Kelvin point kernels
@@ -162,7 +211,7 @@ src/local_box_mesh_eq.py  equilateral Delaunay box / fault mesh builders
 src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
-configs/                  eight studies, each a Python module declaring a run
+configs/                  nine studies, each a Python module declaring a run
 tests/                    run_all.py + test_gates.py; 47 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
@@ -246,7 +295,7 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
 python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
-python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface (docs/viscoelastic.md)
+python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack)
 ```
 
 ## The field in the volume
@@ -437,6 +486,11 @@ the dense LU reference to ~1e-9.  (Use `eta=0.8`: the looser default
 admissibility can accept inaccurate low-rank factors for a near-field block.)
 
 ## References
+
+Viscoelasticity by correspondence on the boundary goes back to Rizzo & Shippy
+(1971); the layered-earth problems it is compared with are Nur & Mavko (1974),
+Savage & Prescott (1978) and Rybicki (1971). `docs/viscoelastic.md` has the
+full list.
 
 The mollification follows the method of regularized Stokeslets and its surface
 (triangulated-BIE) extension:

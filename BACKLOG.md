@@ -70,6 +70,43 @@ the tree again:
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 
+## Viscoelasticity (branch `ve1`)
+
+Quasistatic linear viscoelasticity with no volume mesh; `docs/viscoelastic.md`
+is the derivation and rule 16 of `CLAUDE.md` the short form.
+
+DONE. The structure it rests on (every operator of a region is geometry times
+`{1, g} x {1, mu, 1/mu}`), derived and gated. The Laplace route:
+`mbem.rheology` (Maxwell, Burgers; bulk elastic), `Run.laplace` (states derived
+from the model), `mbem.laplace` (collocation points, the fixed-pole fit, rate
+and periodic sums), gated per s and in time against four closed forms. The
+plate-over-substrate case and config.
+
+OPEN, in the order they bite:
+
+* **The box is not a half-space.** Regions must close, so "plate over a
+  half-space" is a plate over a deep clamped channel with sides. The elastic
+  truncation is already -4 % to -39 % of surface displacement on the 200 km
+  box, and relaxation makes it worse with time. A region that runs to infinity
+  while touching an interface is theory not yet done; a candidate is closing
+  the truncated surface with Burgers' line integral on the truncation loop.
+* **A plate with free sides floats** as the substrate relaxes: a net
+  translation growing as 1/mu(s), 1 % of the deformation at mu(s)/mu = 1e-2
+  and 11 % at 1e-3 on the split fault box, absent with clamped sides. Read as
+  the fault's discrete net force over the only stiffness left; not isolated.
+* **Time-stepping with memory on the boundary** (the note's section 6): what
+  couples relaxation to stress-driven fault slip. Not built.
+* **Gravity.** A buoyancy term on the free surface and on density interfaces
+  is a boundary term but a new condition type. Vertical motion at long times
+  is not credible without it.
+* The two `rebuild_for_materials` still disagree about a region the map does
+  not name (dense keeps the current material, compressed resets to the base).
+  The runner passes the complete map, so no run depends on it; a direct caller
+  chaining rebuilds over different regions would.
+* `mbem run --sweep ... --dry-run` ignores `--dry-run` and runs the study.
+* Complex s (a contour inversion in place of the real-axis fit) needs only
+  complex linear algebra, the kernels staying real; not needed so far.
+
 ## Open — measured, not yet acted on
 
 **THE BOX SIDES CARRY 1.7 % TOP-SURFACE ERROR, AND REMOVING IT COSTS 4.5 %.**

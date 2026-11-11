@@ -11,9 +11,9 @@ A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
     python -m mbem run configs/plate_substrate.py \
         --set tau_K=0.1 --set t_min=0.02 --sweep half_x=400,800   # Burgers
     python -m mbem run configs/plate_substrate.py \
-        --set dip=30 --set rake=90 --set edge_near=10 \
-        --set rho_plate=2700 --set rho_substrate=3300 \
-        --sweep half_x=800,1600 --sweep gravity=0,1               # a thrust
+        --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
+        --set edge_near=5 --set edge_interface=7.5 --set eps_substrate=0.75 \
+        --sweep half_x=400,800 --sweep gravity=0,1                # a thrust
 
 Lengths are km. TIME IS IN UNITS OF THE SUBSTRATE'S MAXWELL TIME (``tau = 1``),
 which is all a linear problem needs: the rheology is stated in relaxation
@@ -51,10 +51,12 @@ g, so ``--sweep gravity=0,1`` is the same body with and without it.
 90 a thrust) turn the fault; ``depth`` stays its depth extent. A dip-slip
 fault is where gravity is first order: the plate bends, and without gravity
 nothing but the plate's own stiffness resists a wavelength the substrate has
-relaxed under. It also asks more of the surface mesh than strike slip does --
-with piecewise-constant elements the error over the fault's lower edge falls
-only in proportion to the element there -- so ``edge_near``, the element
-size within ``near_field_radius`` of the trace, is a parameter.
+relaxed under. It also asks more of the mesh than strike slip does, because
+a plate that bends is only as good as its two faces: with piecewise-constant
+elements the relaxed vertical motion is short by an amount first order in
+``edge_near`` (the top within ``near_field_radius`` of the trace),
+``edge_interface`` (the interface beneath it) and ``eps_substrate`` -- 12 %
+at 10 km, 15 km and 1.5 km on a 30 km plate, 6 % at half of each.
 """
 from mbem import defaults, laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
@@ -69,7 +71,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              per_decade: int = 3, rho_plate: float = 0.0,
              rho_substrate: float = 0.0, gravity: float = 1.0,
              dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
-             near_field_radius: float = 90.0) -> Run:
+             near_field_radius: float = 90.0,
+             edge_interface: float = 15.0) -> Run:
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
@@ -88,6 +91,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                                           fault_depth=depth, dip=dip,
                                           edge_near=edge_near,
                                           near_field_radius=near_field_radius,
+                                          edge_interface=edge_interface,
                                           # the far field coarsens WITH the
                                           # box, or a ladder in half_x is a
                                           # ladder in cost and nothing else

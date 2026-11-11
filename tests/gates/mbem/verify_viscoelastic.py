@@ -96,10 +96,16 @@ the real-axis fit under test.
      its own anchors: the half-space closed form it is built on against cutde;
      its transform inverted with no closed form's help; gravity by what it
      does to a load (rho g + mu g k on a half-space, flexural isostasy under a
-     plate on a fluid); a deep clamped base against the half-space; and its
-     fit in time against a contour inversion. Then mbem against it: a
-     30-degree thrust over a relaxed substrate under gravity, which the same
-     reference without gravity misses several-fold.
+     plate on a fluid); a deep clamped base against the half-space; the
+     source and the plate's lower face together, on a dislocated FREE plate,
+     whose halves are rigid far from the fault and turned by
+     6 b_x d (H - d) / H^3 (reciprocity with pure bending); and its fit in
+     time against a contour inversion. Then mbem against it: a 30-degree
+     thrust over a relaxed substrate under gravity, which the same reference
+     without gravity misses several-fold. And the price of P0 on a plate that
+     BENDS: afloat at real gravity its trough is 12 % shallow on faces 10 and
+     15 km across, an error first order in those elements and in the
+     interface's eps, which the strike-slip plate never showed.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -119,7 +125,7 @@ import mollified_bem as mb
 import _sphere as SPH                         # sibling; see tests/conftest.py
 import verify_solved_bvp as VB                # sibling: the B9, B10 fixtures
 from _sphere import icosphere
-from mbem import laplace, rheology
+from mbem import defaults, laplace, rheology
 from mbem.backends.dense import AssembledDense
 from mbem.cases import layered_box, penny
 from mbem.evaluate import evaluate_displacement, evaluate_stress
@@ -211,6 +217,7 @@ TOL_DIP_STIFFNESS = 1.0e-10      # rho g + mu g k under a load; rounding
 TOL_DIP_FLEXURE = 1.0e-3         # a thin plate on a fluid, kH = 0.09; 3.8e-4
 TOL_DIP_BASE = 2.0e-6            # a base 3e5 km down vs the half-space; 3e-7
 TOL_DIP_TIME = 1.0e-3            # fitted vs contour to 100 tau; 3.1e-4
+TOL_DIP_KINK = 5.0e-4            # a dislocated free plate's rotation and closure; 7e-5
 # The solved thrust: 30 degrees, a 300 km fault, the substrate relaxed to
 # 0.03 mu, clamped base and plate sides, under TEN times the Earth's gravity
 # so that it is first order in a box this small.
@@ -225,6 +232,9 @@ THRUST_EPS = 1.5
 TOL_THRUST = (0.08, 0.2)         # rms misfit of u_x, u_z; 0.046, 0.105 (a
 #                                  P0 top at 10 km over the fault's lower edge)
 THRUST_BLIND = 0.4               # ... against the reference WITHOUT gravity; 0.64
+THRUST_FLUID = 1.0e-4            # mu(s)/mu of the plate afloat: both have stopped changing
+TOL_THRUST_BEND = 0.15           # ... its trough short of the reference's; 0.118, and
+#                                  first order in the elements of the plate's two faces
 
 
 def check(name, ok, extra="") -> bool:
@@ -897,7 +907,6 @@ def m_gravity() -> None:
 
     # the flat earth, in the limit where it is exact
     from mbem.model import Gravity
-    from mbem import defaults
     b = GRAV_BOX
     box = VB._closed_box(b["edge"])
     top = box["top"]
@@ -1025,6 +1034,22 @@ def n_dip_slip() -> None:
     close("a base clamped 3e5 km down == the half-space",
           max(float(np.abs(a - b).max()) for a, b in zip(half, based)),
           TOL_DIP_BASE)
+    # the source and the plate's lower face together: a dislocated FREE plate.
+    # Far from the fault each half is rigid, and by reciprocity with pure
+    # bending and with a pull the halves are rotated by 6 b_x d (H - d) / H^3
+    # and their mid-planes closed by b_x d / H, whatever the dip
+    far = np.array([-150.0, -100.0, 100.0, 150.0])
+    worst = 0.0
+    for dip, d in ((30.0, depth), (60.0, 10.0)):
+        ux, uz = lb.dip_slip_profile(far, d, thick, dip, plate,
+                                     (1.0e-15 * MU, fluid[1]))
+        turn = 6.0 * np.cos(np.deg2rad(dip)) * d * (thick - d) / thick ** 3
+        shut = np.cos(np.deg2rad(dip)) * d / thick + turn * thick / 2.0
+        worst = max(worst,
+                    abs((uz[3] - uz[2] - uz[1] + uz[0]) / 50.0 / turn - 1.0),
+                    abs((ux[1] - ux[2]) / shut - 1.0))
+    close("a dislocated free plate: the rotation and the closure of its halves",
+          float(worst), TOL_DIP_KINK)
 
     # in time: the study's reference is this profile at mu(s_k) through the
     # SAME fit as the solution. Held to a contour inversion, to 100 tau.
@@ -1054,33 +1079,44 @@ def n_dip_slip() -> None:
 
     # the solved thrust
     meshes = lb.build_layered_box(**THRUST)
-    relaxed_mu = THRUST_RELAXED * MU
-    soft = (relaxed_mu, LAM + 2.0 * (MU - relaxed_mu) / 3.0)
-    model = lb.build_model(meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
-                           mb.ElasticMaterial(*soft), sides="clamped",
-                           rake=90.0, density=THRUST_DENSITY, g=THRUST_G)
     eps = dict(top="auto", sides_upper="auto", fault="auto",
                interface=THRUST_EPS, sides_lower=THRUST_EPS, base=THRUST_EPS)
-    u = AssembledDense(generate_system(model), eps, "direct").solve()["u:top"]
     c = meshes["top"].centroids()
     strip = ((np.abs(c[:, 1]) < 0.08 * THRUST["fault_half_len"])
              & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 60.0))
-    got = u[strip][:, [0, 2]] / 1.0e-3
-    w = tuple(model.gravity.weight(n) for n in (lb.PLATE, lb.SUBSTRATE))
 
-    def miss(weights):
-        ref = np.column_stack(lb.dip_slip_profile(
-            c[strip, 0], depth, thick, THRUST["dip"], plate, soft, weights,
+    def solved(relaxed, g_acc):
+        """Mid-strike ``(u_x, u_z)`` over the slip, the reference under the
+        model's gravity, and the reference under none."""
+        mu_s = relaxed * MU
+        soft = (mu_s, LAM + 2.0 * (MU - mu_s) / 3.0)
+        model = lb.build_model(meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
+                               mb.ElasticMaterial(*soft), sides="clamped",
+                               rake=90.0, density=THRUST_DENSITY, g=g_acc)
+        u = AssembledDense(generate_system(model), eps, "direct").solve()["u:top"]
+        refs = [np.column_stack(lb.dip_slip_profile(
+            c[strip, 0], depth, thick, THRUST["dip"], plate, soft, w,
             THRUST["z_bottom"]))
+            for w in (tuple(model.gravity.weight(n)
+                            for n in (lb.PLATE, lb.SUBSTRATE)), (0.0, 0.0))]
+        return u[strip][:, [0, 2]] / 1.0e-3, *refs
+
+    def miss(got, ref):
         return np.sqrt(((got - ref) ** 2).mean(axis=0) / (ref ** 2).mean(axis=0))
 
-    with_g, blind = miss(w), miss((0.0, 0.0))
-    for name, m, tol in zip(("u_x", "u_z"), with_g, TOL_THRUST):
+    got, ref, blind = solved(THRUST_RELAXED, THRUST_G)
+    for name, m, tol in zip(("u_x", "u_z"), miss(got, ref), TOL_THRUST):
         close(f"a 30-degree thrust over a relaxed substrate, under gravity: "
               f"{name} vs the reference", float(m), tol)
     above("... which the reference WITHOUT gravity misses (u_z)",
-          float(blind[1]), THRUST_BLIND)
-
+          float(miss(got, blind)[1]), THRUST_BLIND)
+    # afloat at real gravity the plate carries everything in bending, and P0
+    # faces 10 and 15 km across on a 30 km plate bend too little
+    got, ref, _ = solved(THRUST_FLUID, defaults.GRAVITY)
+    short = float(1.0 - got[:, 1].min() / ref[:, 1].min())
+    check("... and afloat at real gravity: its trough short of the "
+          "reference's by", 0.0 <= short <= TOL_THRUST_BEND,
+          f"{short:.3f} <= {TOL_THRUST_BEND}")
 
 def main() -> bool:
     t0 = time.time()

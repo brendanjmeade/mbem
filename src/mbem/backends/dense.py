@@ -102,6 +102,11 @@ def require_anchor_or_deflate(system: BlockSystem, jump: str, deflate: bool):
     displacement unknown at all (a crack alone in the full space) has no
     such null space and needs nothing.
     """
+    if deflate and system.model.gravity is not None:
+        raise ValueError(
+            "deflate=True with gravity: deflation removes the mean translation "
+            "of the body, and buoyancy DETERMINES the one along `up`. Anchor "
+            "the model (prescribe displacement on a patch) instead")
     if jump == "calibrated" and not deflate and not system.model.is_anchored() \
             and system.layout.has_kind("u"):
         raise ValueError(
@@ -386,7 +391,7 @@ class AssembledDense:
                                      t.source_patch, t.kernel, t.region)
             r0, r1 = t.row.offset, t.row.stop
             c0, c1 = t.col.offset, t.col.stop
-            A[r0:r1, c0:c1] += t.scale * blk
+            A[r0:r1, c0:c1] += t.scale * t.col_block(blk)
             D = term_diagonal(t, self.calib)
             if D is not None:
                 add_block_diagonal(A, r0, c0, D,

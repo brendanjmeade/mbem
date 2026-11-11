@@ -58,7 +58,10 @@ It uses THREE anchors because they fail differently:
      strain is analytically uniform and known in closed form, which adds a
      CURVED interface, a region bounded by one CLOSED interface, and an
      external analytic reference for a material contrast (elsewhere only the
-     legacy moss solver serves as an oracle).  Tight
+     legacy moss solver serves as an oracle).  B10 is GRAVITY: buoyancy on
+     a free surface and on a density interface, against loaded shells on a
+     rigid core -- a body with an exact solution under gravity, so the sign
+     and size of the term are fixed by physics and not by construction.  Tight
      enough to catch what anchor A's few-percent truncation floor would hide:
      BC application, the free term, the interface orientation sign, per-patch
      eps routing, per-region materials.
@@ -86,6 +89,7 @@ Seeded defects (one at a time, in a sandbox copy) and the anchors that fail:
   fault RHS skipped on INTERFACE rows                B6 only
   eigenstress dropped in the stress readout          A4 + B7
   lam doubled in the uniform-strain BVP              B8 + B9 (B2 PASSES)
+  buoyancy sign, or dropped from the readout         B10 only
 
 The anchors run at nu = 1/4 AND nu != 1/4 (0.30, 0.45) -- the lam/mu pairing
 is invisible at nu = 1/4, which is how a swapped kernel shipped for months --
@@ -121,7 +125,8 @@ from mbem.model import (                                          # noqa: E402
     generate_system,
 )
 from tde_reference import classical_tde_stress                    # noqa: E402
-from _sphere import icosphere                 # sibling; see tests/conftest.py
+import _sphere as SPH                         # sibling; see tests/conftest.py
+from _sphere import icosphere
 
 CHECKS = []
 
@@ -311,6 +316,38 @@ TOL_ESH_DEV = 1.0e-2    # deviatoric concentration, measured worst 4.5e-3
 TOL_ESH_HYD = 6.0e-2    # hydrostatic concentration, measured worst 2.95e-2
 TOL_ESH_ALL = 2.5e-2    # whole tensor, measured worst 1.07e-2
 TOL_ESH_XCHK = 1.0e-12  # the two closed forms of each factor must agree
+
+# B10, BUOYANCY: gravity as a condition on the boundary (``model.Gravity``).
+# The reference is a body that HAS an exact solution under gravity, which a
+# flat earth does not: elastic shells welded on a rigid core, loaded on the
+# outer surface by sigma P_2(cos theta), with RADIAL buoyancy on the surface
+# and on the density interface (``_sphere.shells_on_core``; the reference is
+# itself pinned by Kelvin's stiffness of the incompressible sphere). It is
+# physical, not manufactured, so it fixes the SIGN and the size of the term: a
+# wrong sign turns the 28 % stiffening below into a softening.
+# rho g = GRAV_W is in units of mu / a here (rho g a / mu = 2), so that gravity
+# is a first-order effect on an elastic body. Measured, P0 at "auto":
+#   one shell (1280 + 320 triangles): U over exact 0.9841 without gravity,
+#     0.9885 with; the RATIO of the two against the exact ratio 4.4e-3 -- the
+#     spatial bias is common to both and the buoyancy term adds none
+#   P2 surface (320 + 320): 0.9825
+#   interior displacement at r = 0.75 a: 0.6 % (and 36 % if the readout
+#     leaves the buoyancy out of its single layer -- the tripwire)
+#   two shells, contrast 150 / 60: U(a) 0.9839, U(b) 0.9922; the same
+#     displacement whichever region is listed first
+GRAV_RADII = (0.4, 0.7, 1.0)          # core, interface, surface (two shells)
+GRAV_CORE = 0.5                        # core radius of the single shell
+GRAV_W = 60.0                          # rho g of the outer shell, GPa/km
+GRAV_W_LOWER = 150.0                   # ... and of the lower: a stable contrast
+GRAV_MAT = mb.ElasticMaterial(mu=30.0, lam=45.0)          # nu = 0.30
+GRAV_MAT_UPPER = mb.ElasticMaterial(mu=20.0, lam=25.0)
+TOL_GRAV_KELVIN = 1.0e-6     # the reference against Kelvin, lam = 1e8 mu
+TOL_GRAV_U = 3.0e-2          # U over exact; worst 1.8e-2
+TOL_GRAV_RATIO = 1.5e-2      # (with / without gravity) over its exact; 4.4e-3
+TOL_GRAV_INTERIOR = 3.0e-2   # interior u; 5.8e-3 measured
+GRAV_INTERIOR_TRIP = 0.15    # ... and what a readout without B u misses by
+TOL_GRAV_EVALUATOR = 1.0e-5  # DisplacementEvaluator vs the matrix-free one; 6e-9
+TOL_GRAV_ORDER = 1.0e-10     # the two region orders; 1e-13 measured
 
 # ---------------------------------------------------------------- anchor C --
 # a 10 x 10 km vertical fault (8 triangles) centred in the closed box, >= 15 km
@@ -1159,6 +1196,135 @@ def b_eshelby_sphere():
 
 # ============================================================== ANCHOR C =====
 
+def _radial_gravity(weights: dict, surface="outer"):
+    """Radial buoyancy about the origin with ``rho g`` given directly in
+    GPa/km: a density of w kg/m^3 under g = 1 / WEIGHT_GPA_PER_KM weighs w."""
+    from mbem import defaults
+    from mbem.model import Gravity
+    return Gravity(density=weights, surface=surface, center=(0.0, 0.0, 0.0),
+                   g=1.0 / defaults.WEIGHT_GPA_PER_KM)
+
+
+def _shell_model(mat, weight, sigma=1.0, order=0, levels=(3, 2)):
+    """One shell on a clamped core under ``sigma P_2`` on its outer surface,
+    with radial buoyancy ``weight`` (0: no gravity at all)."""
+    outer = Patch("outer", SPH.sphere_mesh(levels[0], 1.0),
+                  BCType.FREE_TRACTION, value=SPH.degree2_load(sigma),
+                  order=order)
+    core = Patch("core", SPH.sphere_mesh(levels[1], GRAV_CORE),
+                 BCType.PRESCRIBED_DISPLACEMENT)
+    shell = Region("shell", mat, [outer, core],
+                   probe_point=np.array([0.0, 0.0, 0.5 * (1.0 + GRAV_CORE)]))
+    return RegionModel([shell], gravity=_radial_gravity({"shell": weight})
+                       if weight else None)
+
+
+def _two_shell_model(mat_lo, mat_up, w_lo, w_up, first="upper", sigma=1.0,
+                     levels=(3, 3, 2)):
+    """Two welded shells on a clamped core, a density interface between."""
+    c, b, a = GRAV_RADII
+    outer = Patch("outer", SPH.sphere_mesh(levels[0], a), BCType.FREE_TRACTION,
+                  value=SPH.degree2_load(sigma))
+    iface = Patch("interface", SPH.sphere_mesh(levels[1], b), BCType.INTERFACE)
+    core = Patch("core", SPH.sphere_mesh(levels[2], c),
+                 BCType.PRESCRIBED_DISPLACEMENT)
+    regions = {
+        "upper": Region("upper", mat_up, [outer, iface],
+                        probe_point=np.array([0.0, 0.0, 0.5 * (a + b)])),
+        "lower": Region("lower", mat_lo, [iface, core],
+                        probe_point=np.array([0.0, 0.0, 0.5 * (b + c)]))}
+    order = (first, "lower" if first == "upper" else "upper")
+    return RegionModel([regions[k] for k in order], gravity=_radial_gravity(
+        {"upper": w_up, "lower": w_lo}) if (w_lo or w_up) else None)
+
+
+def _amplitude(model, sol, name):
+    patch = next(p for r in model.regions for p in r.patches if p.name == name)
+    return SPH.degree2_amplitude(patch.nodes(), sol[f"u:{name}"])
+
+
+def b_buoyancy():
+    print("\nB10. buoyancy: loaded shells on a rigid core, radial gravity")
+    for n in (2, 3, 5):
+        kelvin = 2.0 * (n - 1) * (2 * n * n + 4 * n + 3) * MU / (n * (2 * n + 1))
+        check(f"B10 the reference: Kelvin's stiffness, incompressible, n = {n}",
+              abs(SPH.solid_sphere_stiffness(n, MU, 1.0e8 * MU, 1.0) / kelvin
+                  - 1.0), TOL_GRAV_KELVIN)
+    mat = (GRAV_MAT.mu, GRAV_MAT.lam)
+    radii = (GRAV_CORE, 1.0)
+    exact = {w: SPH.shells_on_core(2, [mat], radii, [w], 1.0)[0]
+             for w in (0.0, GRAV_W)}
+    got = {}
+    for w in (0.0, GRAV_W):
+        model = _shell_model(GRAV_MAT, w)
+        sol = AssembledDense(generate_system(model), "auto", "direct").solve()
+        got[w] = _amplitude(model, sol, "outer")
+        check(f"B10 one shell, rho g = {w:g}: U over exact",
+              abs(got[w] / exact[w] - 1.0), TOL_GRAV_U, "{:.4f}")
+    check_true("B10 gravity is first order here: it stiffens the shell by > 25 %",
+               exact[GRAV_W] / exact[0.0] < 0.75,
+               f"exact ratio {exact[GRAV_W] / exact[0.0]:.4f}")
+    check("B10 ... and the solved ratio is the exact one",
+          abs((got[GRAV_W] / got[0.0]) / (exact[GRAV_W] / exact[0.0]) - 1.0),
+          TOL_GRAV_RATIO, "{:.4f}")
+    # the readout: the single layer of the representation is t + B u
+    pts = SPH.shell(0.75)
+    u_ex = SPH.shell_displacement([mat], radii, [GRAV_W], 1.0, 0, pts)
+    u = evaluate_displacement(model, "shell", sol, pts, "auto", warn_near=False)
+    check("B10 interior displacement under gravity", relerr(u, u_ex),
+          TOL_GRAV_INTERIOR, "{:.4f}")
+    from mbem.evaluate import DisplacementEvaluator
+    check("B10 ... and the compressed evaluator reads the same field",
+          relerr(DisplacementEvaluator(model, "shell", pts, "auto",
+                                       warn_near=False)(sol), u),
+          TOL_GRAV_EVALUATOR)
+    bare = RegionModel(model.regions)                 # the same body, no B
+    miss = relerr(evaluate_displacement(bare, "shell", sol, pts, "auto",
+                                        warn_near=False), u_ex)
+    check_true("B10 tripwire: a readout without the buoyancy misses",
+               miss > GRAV_INTERIOR_TRIP, f"{miss:.3f} > {GRAV_INTERIOR_TRIP}")
+    model = _shell_model(GRAV_MAT, GRAV_W, order=2, levels=(2, 2))
+    sol = AssembledDense(generate_system(model), "auto", "direct").solve()
+    check("B10 one shell, P2 surface: U over exact",
+          abs(_amplitude(model, sol, "outer") / exact[GRAV_W] - 1.0),
+          TOL_GRAV_U, "{:.4f}")
+
+    lo, up = mat, (GRAV_MAT_UPPER.mu, GRAV_MAT_UPPER.lam)
+    flat = SPH.shells_on_core(2, [lo, up], GRAV_RADII, [GRAV_W, GRAV_W], 1.0)
+    ex = SPH.shells_on_core(2, [lo, up], GRAV_RADII, [GRAV_W_LOWER, GRAV_W], 1.0)
+    sols = {}
+    for first in ("upper", "lower"):
+        model = _two_shell_model(GRAV_MAT, GRAV_MAT_UPPER, GRAV_W_LOWER, GRAV_W,
+                                 first=first)
+        sols[first] = AssembledDense(generate_system(model), "auto",
+                                     "direct").solve()
+    ub = _amplitude(model, sols["upper"], "interface")
+    ua = _amplitude(model, sols["upper"], "outer")
+    check("B10 two shells, a density interface: U(surface) over exact",
+          abs(ua / ex[1] - 1.0), TOL_GRAV_U, "{:.4f}")
+    check("B10 ... U(interface) over exact", abs(ub / ex[0] - 1.0),
+          TOL_GRAV_U, "{:.4f}")
+    check_true("B10 the contrast is live: it moves the interface by > 15 %",
+               ex[0] / flat[0] < 0.85, f"exact ratio {ex[0] / flat[0]:.4f}")
+    # The displacement cannot depend on which region is listed first. The
+    # interface TRACTION slot does, by exactly the buoyancy of the contrast:
+    # it is the first region's, and the second sees t + B u.
+    check("B10 the same displacement whichever region is listed first",
+          max(relerr(sols["lower"][k], sols["upper"][k])
+              for k in ("u:outer", "u:interface")), TOL_GRAV_ORDER)
+    iface = model.regions[0].patches[0]
+    if iface.name != "interface":
+        iface = model.regions[0].patches[1]
+    x = iface.nodes()
+    r_hat = x / np.linalg.norm(x, axis=1)[:, None]
+    lift = np.einsum("ni,ni->n", sols["upper"]["u:interface"], r_hat)
+    jump = -(GRAV_W_LOWER - GRAV_W) * lift[:, None] \
+        * iface.mesh.normals_and_areas()[0]
+    check("B10 ... and the traction slot moves by the contrast's buoyancy",
+          relerr(sols["lower"]["t:interface"] - sols["upper"]["t:interface"],
+                 jump), 1.0e-8)
+
+
 def c_fault_amplitude():
     """Full-space field of a small interior fault prescribed on the closed box.
 
@@ -1247,6 +1413,7 @@ def main():
     b_boundary_half(box)
     b_volumetric_strain(box, obs)
     b_eshelby_sphere()
+    b_buoyancy()
     c_fault_amplitude()
 
     print("-" * 76)

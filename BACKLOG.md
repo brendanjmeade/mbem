@@ -81,7 +81,11 @@ DONE. The structure it rests on (every operator of a region is geometry times
 from the model), `mbem.laplace` (collocation points, the fixed-pole fit, rate
 and periodic sums), gated per s and in time against four closed forms. The
 plate-over-substrate case and config, run on a box ladder with a Maxwell and
-with a Burgers substrate.
+with a Burgers substrate. Gravity (`model.Gravity`, rule 17): buoyancy on the
+free surface and on density interfaces as a condition on the boundary, on the
+dense and both compressed backends, gated against loaded shells on a rigid
+core (exact) elastically, per s and in time, and against hydrostatics on a
+flat box.
 
 OPEN, in the order they bite:
 
@@ -97,9 +101,20 @@ OPEN, in the order they bite:
   the fault's discrete net force over the only stiffness left; not isolated.
 * **Time-stepping with memory on the boundary** (the note's section 6): what
   couples relaxation to stress-driven fault slip. Not built.
-* **Gravity.** A buoyancy term on the free surface and on density interfaces
-  is a boundary term but a new condition type. Vertical motion at long times
-  is not credible without it.
+* **A dipping fault under gravity.** Gravity is built, but the only case with
+  a relaxing substrate has a vertical strike-slip fault, which barely feels
+  it (6e-4 of the fault-parallel displacement; 16 % of the rms vertical motion
+  at ten Maxwell times). A thrust in the plate is where it is first order, and
+  where Rundle (1982), Pollitz (1997) and Barbot & Fialko (2010, their Fig. 9:
+  the vertical displacement halved near full relaxation) are there to compare
+  with. It needs a dip in `layered_box`, nothing in the solver.
+* **Gravity's coupling with compression.** The treatment is exact for an
+  incompressible body and off by `rho g L / K` otherwise (6 % per 100 km at
+  K = 50 GPa). The missing term lives in the volume, as does self-gravitation.
+* **An unanchored body under gravity.** `deflate` is refused with gravity,
+  because it removes a translation buoyancy determines along `up`; a
+  deflation of the horizontal translations and the rotations alone is not
+  written, so such a body must be anchored.
 * The two `rebuild_for_materials` still disagree about a region the map does
   not name (dense keeps the current material, compressed resets to the base).
   The runner passes the complete map, so no run depends on it; a direct caller

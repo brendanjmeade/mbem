@@ -20,6 +20,15 @@ Checks (PASS/FAIL):
      region gets the new material, every Patch and fault object is shared
      (an interface is identified by ``is``), the orientation table is the
      same, the base model is untouched, and an unknown region is refused
+  j. Gravity is a condition on the boundary, stated once
+     (RegionModel.buoyancy): -rho g n (x) up on the named free surface, the
+     buoyancy of the CONTRAST on an interface and only for its second region
+     (whichever is listed second), nothing on a side, a base, a fault or
+     between equal densities; one array per (region, patch) in every row
+     block of the system; up radial about a centre; a contrast heavy side up
+     is reported; a material state keeps it; and a density for a region the
+     model lacks, a missing one, a surface that is not a free patch, and
+     deflation under gravity are all refused
 """
 import pathlib
 import sys
@@ -32,7 +41,8 @@ import inclusion_mesh                                               # noqa: E402
 import mollified_bem as mb                                          # noqa: E402
 from local_box_mesh import (_concatenate_meshes, make_rectangular_patch,
                             make_vertical_panel)                    # noqa: E402
-from mbem.model import BCType, Patch, Region, RegionModel            # noqa: E402
+from mbem.model import (BCType, Gravity, Patch, Region, RegionModel,  # noqa: E402
+                        generate_system)
 
 MAT = mb.ElasticMaterial(mu=30.0, lam=30.0)
 XY = (-1.0, 1.0)
@@ -130,6 +140,7 @@ def main() -> bool:
     ok &= _ring_clears_the_trace()
     ok &= _full_space()
     ok &= _material_state()
+    ok &= _gravity()
     # Printed HERE rather than in __main__, so a caller that imports this gate
     # and calls main() sees the verdict too -- every other gate prints its own.
     print(("PASS" if ok else "FAIL") + ": RegionModel fault validation")
@@ -190,6 +201,96 @@ def _material_state() -> bool:
     print(f"  [{'ok' if refused else 'FAIL'}] i'. with_materials refuses a "
           f"region the model does not have")
     return bool(good and refused)
+
+
+def _gravity() -> bool:
+    """j. Buoyancy: where it is, its sign, and what is refused."""
+    from mbem import defaults
+    from mbem.backends.dense import require_anchor_or_deflate
+
+    ok = True
+
+    def say(good, text):
+        nonlocal ok
+        ok &= bool(good)
+        print(f"  [{'ok' if good else 'FAIL'}] j. {text}")
+
+    base = _two_layer([_fault("f1", -0.8, -0.2)], [])
+    rho_u, rho_l, g = 2700.0, 3300.0, 9.8
+    w_u, w_l = (r * g * defaults.WEIGHT_GPA_PER_KM for r in (rho_u, rho_l))
+    grav = Gravity(density={"upper": rho_u, "lower": rho_l}, surface="top")
+    m = RegionModel(base.regions, gravity=grav)
+    up, lo = m.regions
+    top, walls, mid = up.patches
+    zz = np.zeros((3, 3))
+    zz[2, 2] = 1.0
+
+    def is_(B, patch, w):
+        n = patch.mesh.normals_and_areas()[0]            # the STORED normal
+        want = -w * np.einsum("ni,j->nij", n, [0.0, 0.0, 1.0])
+        return B is not None and B.shape == (patch.n_nodes, 3, 3) \
+            and np.allclose(B, want, rtol=1e-14, atol=0.0)
+
+    say(is_(m.buoyancy(up, top), top, w_u) and grav.weight("upper") == w_u
+        and abs(w_u - 0.02646) < 1e-12,
+        f"free surface: B = -rho g n (x) up, rho g = {w_u:.5f} GPa/km")
+    say(m.buoyancy(up, mid) is None and is_(m.buoyancy(lo, mid), mid, w_l - w_u),
+        "interface: the first region sees t, the second t + the contrast")
+    flipped = RegionModel([lo, up], gravity=grav)
+    say(flipped.buoyancy(lo, mid) is None
+        and is_(flipped.buoyancy(up, mid), mid, w_u - w_l),
+        "... whichever region is listed second")
+    say(all(m.buoyancy(r, q) is None for r, q in
+            ((up, walls), (lo, lo.patches[1]), (lo, lo.patches[2]),
+             (up, up.faults[0]))),
+        "no term on a side, a base or a fault")
+    same = RegionModel(base.regions, gravity=Gravity(
+        density={"upper": rho_u, "lower": rho_u}, surface="top"))
+    say(same.buoyancy(same.regions[1], mid) is None,
+        "equal densities: nothing on the interface")
+    terms = [t for t in generate_system(m).terms if t.col_op is not None]
+    per = {}
+    for t in terms:
+        per.setdefault((t.region.name, t.source_patch.name), []).append(t.col_op)
+    say(sorted(per) == [("lower", "mid"), ("upper", "top")]
+        and all(len(v) == 3 and all(b is v[0] for b in v) for v in per.values())
+        and all(t.col.kind == "u" for t in terms),
+        "the system: one B per (region, patch), on the u columns of every row")
+    radial = Gravity(density={"a": 1.0}, center=(0.0, 0.0, 1.0))
+    say(np.allclose(radial.up_at([[0.0, 0.0, 3.0], [2.0, 0.0, 1.0]]),
+                    [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
+        and np.allclose(Gravity(density={"a": 1.0}, up=(0, 0, 5)).up, (0, 0, 1)),
+        "up: one unit vector, or radial about a centre")
+    heavy_up = RegionModel(base.regions, gravity=Gravity(
+        density={"upper": rho_l, "lower": rho_u}, surface="top"))
+    say(m.unstable_contrasts() == [] and heavy_up.unstable_contrasts() == ["mid"]
+        and RegionModel(base.regions, gravity=Gravity(
+            density={"upper": rho_u, "lower": rho_l},
+            surface="w1")).unstable_contrasts() == [],
+        "a contrast heavy side up is reported; a vertical face is neither")
+    st = m.with_materials({"lower": mb.ElasticMaterial(mu=7.0, lam=19.0)})
+    say(st.gravity is grav and is_(st.buoyancy(st.regions[1], mid), mid, w_l - w_u),
+        "a material state keeps its gravity")
+    for title, build, fragment in (
+            ("a density for a region the model lacks",
+             lambda: RegionModel(base.regions, gravity=Gravity(
+                 density={"upper": 1.0, "lower": 1.0, "mantle": 1.0})),
+             "every region"),
+            ("a region without a density",
+             lambda: RegionModel(base.regions, gravity=Gravity(
+                 density={"upper": 1.0})), "every region"),
+            ("a surface that is clamped",
+             lambda: RegionModel(base.regions, gravity=Gravity(
+                 density={"upper": 1.0, "lower": 1.0}, surface="base")),
+             "not a"),
+            ("a negative density",
+             lambda: Gravity(density={"upper": -1.0}), "densities"),
+            ("deflate under gravity",
+             lambda: require_anchor_or_deflate(generate_system(m),
+                                               "calibrated", True),
+             "buoyancy DETERMINES")):
+        ok &= _rejects(f"j. refused: {title}", build, fragment)
+    return bool(ok)
 
 
 def _ring_clears_the_trace() -> bool:

@@ -33,7 +33,11 @@ and never past ``GMRES_ITER_CEILING``, under both preconditioner
 groupings -- which must also agree on the solution and on the operator
 their super-blocks invert -- and on the block-Jacobi rung that carries
 every super-block past the dense cap; a deliberately non-scalable
-chunking runs alongside them and the criterion must reject it.
+chunking runs alongside them and the criterion must reject it. Last,
+GRAVITY: a buoyancy term is a kernel block on a transformed column
+(``BlockTerm.col_op``), and every consumer of a term -- the matvec, the
+dense readback, the exact-row reference, the preconditioner's diagonal
+blocks and its lower couplings -- is held to the dense operator with one in.
 """
 import math
 import pathlib
@@ -1211,6 +1215,104 @@ def check_convergence_rate():
     return ok and not by_growth["seeded fail"]
 
 
+# ---------------------------------------------------------------------
+# Gravity: the one kind of term that acts on a TRANSFORMED column
+# ---------------------------------------------------------------------
+
+_GRAVITY: dict = {}
+
+
+def _gravity_model(gravity: bool = True):
+    """A plate over a substrate relaxed a hundredfold, under gravity: two
+    regions, a density interface, a free surface, a fault. STATED ONCE, here;
+    ``verify_fmm`` runs the same model through the other far field."""
+    from mbem.cases import layered_box as lb
+    if "meshes" not in _GRAVITY:
+        _GRAVITY["meshes"] = lb.build_layered_box(
+            half_x=120.0, z_interface=-30.0, z_bottom=-120.0,
+            fault_half_len=40.0, fault_depth=15.0, edge_fault=7.0,
+            edge_near=18.0, edge_far=40.0, edge_side=40.0,
+            edge_interface=18.0, near_field_radius=60.0)
+    model = lb.build_model(
+        _GRAVITY["meshes"], 1.0e-3, mb.ElasticMaterial(mu=30.0, lam=30.0),
+        mb.ElasticMaterial(mu=0.3, lam=49.8), sides="clamped",
+        density=(2700.0, 3300.0) if gravity else None)
+    eps = dict(top="auto", sides_upper="auto", fault="auto", interface=3.0,
+               sides_lower=3.0, base=3.0)
+    return model, eps
+
+
+def _exact_block_gauss_seidel(A, precond, r):
+    """What ``precond`` approximates, from the dense matrix: a forward block
+    substitution over its own super-blocks."""
+    z = np.zeros_like(r)
+    done = np.zeros(0, dtype=int)
+    for sb in precond.sbs:
+        idx = sb.global_idx
+        rk = r[idx] - A[np.ix_(idx, done)] @ z[done]
+        z[idx] = np.linalg.solve(A[np.ix_(idx, idx)], rk)
+        done = np.concatenate([done, idx])
+    return z
+
+
+def check_gravity():
+    """A buoyancy term is ``-sigma G B`` on the DISPLACEMENT columns
+    (``BlockTerm.col_op``): a kernel block applied to a transformed column.
+    Every consumer of a term has to apply the transform -- the matvec, the
+    dense readback, the exact-row reference, the preconditioner's diagonal
+    blocks and its lower couplings -- and one that did not would drop gravity
+    from that piece alone and still converge. So each is held to the dense
+    operator here."""
+    from mbem.la.preconditioner import BlockGaussSeidel
+
+    model, eps = _gravity_model()
+    system = generate_system(model)
+    n = system.layout.n_unknowns
+    n_buoy = sum(t.col_op is not None for t in system.terms)
+    dense = AssembledDense(system, eps, "direct")
+    bare = AssembledDense(generate_system(_gravity_model(False)[0]), eps,
+                          "direct")
+    live = _relmax(bare.A, dense.A)
+    print(f"    plate over a relaxed substrate: {n} unknowns, {n_buoy} "
+          f"buoyancy terms; they move the operator by {live:.2e}")
+    hasm = HBackend().assemble(system, eps)
+    op_err = _relmax(hasm.to_dense(), dense.A)
+    rng = np.random.default_rng(11)
+    v = rng.normal(size=n)
+    ref = dense.A @ v
+    mv_err = _relmax(hasm.matvec(v), ref)
+    rows = rng.choice(n, 400, replace=False)
+    row_err = float(np.max(np.abs(hasm.matvec_exact_rows(v, rows) - ref[rows]))
+                    / np.max(np.abs(ref)))
+    sol_d = dense.solve()
+    sol_h = hasm.solve(rtol=1e-9)
+    rep = hasm.report
+    sol_err = max(_relmax(sol_h[k], sol_d[k]) for k in sol_d
+                  if np.max(np.abs(sol_d[k])) > 0)
+    print(f"    operator {op_err:.2e}  matvec {mv_err:.2e}  exact rows "
+          f"{row_err:.2e}  solution {sol_err:.2e}  ({rep.iterations} "
+          f"iterations, converged={rep.converged})")
+    ok = (n_buoy == 6 and live > 1.0e-3 and op_err < OP_PARITY
+          and mv_err < OP_PARITY and row_err < OP_PARITY
+          and sol_err < SOL_PARITY and rep.converged)
+    for grouping in ("patch", "region"):
+        pc = BlockGaussSeidel(hasm, grouping=grouping)
+        blk = max(_relmax(pc.diagonal_block(k), dense.A[np.ix_(sb.global_idx,
+                                                               sb.global_idx)])
+                  for k, sb in enumerate(pc.sbs))
+        r = rng.normal(size=n)
+        gs = _relmax(pc(r), _exact_block_gauss_seidel(dense.A, pc, r))
+        lower = sum(len(sb.lower_terms) for sb in pc.sbs)
+        buoy = sum(t.col_op is not None for sb in pc.sbs
+                   for t in sb.lower_terms)
+        print(f"    preconditioner, {grouping:6s}: diagonal blocks {blk:.2e}; "
+              f"its apply against the exact block Gauss-Seidel {gs:.2e} "
+              f"({buoy} of {lower} lower couplings are buoyancy)")
+        ok &= blk < OP_PARITY and gs < OP_PARITY and (
+            buoy > 0 or grouping == "region")
+    return bool(ok)
+
+
 def main():
     checks = [
         ("pair-level ACA", check_pair_aca),
@@ -1233,6 +1335,8 @@ def main():
          check_bj_rung),
         ("convergence rate and grouping across sizes",
          check_convergence_rate),
+        ("gravity: a term on a transformed column, every consumer",
+         check_gravity),
     ]
     results = []
     for name, fn in checks:

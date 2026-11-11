@@ -2,6 +2,7 @@ from .core import (
     FAULT_KINDS,
     FAULT_ORIENTATION,
     BCType,
+    Gravity,
     Patch,
     Region,
     RegionModel,
@@ -14,7 +15,7 @@ from .equations import (BlockTerm, RhsTerm, RhsValue, BlockSystem, generate_syst
 
 __all__ = [
     "FAULT_KINDS", "FAULT_ORIENTATION",
-    "BCType", "Patch", "Region", "RegionModel", "patch_solid_angle",
+    "BCType", "Gravity", "Patch", "Region", "RegionModel", "patch_solid_angle",
     "SharedNodes", "build_shared_nodes",
     "Slot", "UnknownLayout",
     "BlockTerm", "RhsTerm", "RhsValue", "BlockSystem", "generate_system",

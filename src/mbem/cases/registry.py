@@ -109,13 +109,19 @@ def layered_box_meshes(*, scale: float = 1.0, half_x: float = 400.0,
 def layered_box_model(bundle: MeshBundle, *, slip_mag: float = 0.001,
                       mu_plate: float = 30.0, lam_plate: float = 30.0,
                       mu_substrate: float = 30.0, lam_substrate: float = 30.0,
-                      sides: str = "free", order_top: int = 0):
+                      sides: str = "free", order_top: int = 0,
+                      rho_plate: float = 0.0, rho_substrate: float = 0.0,
+                      g: float | None = None):
+    """Densities in kg/m^3; both zero (the default) is no gravity at all,
+    not gravity on a weightless body."""
     from mbem import ElasticMaterial
     from mbem.cases.layered_box import build_model
+    density = (rho_plate, rho_substrate) if (rho_plate or rho_substrate) \
+        else None
     return build_model(bundle.flat(), slip_mag,
                        ElasticMaterial(mu=mu_plate, lam=lam_plate),
                        ElasticMaterial(mu=mu_substrate, lam=lam_substrate),
-                       sides=sides, order_top=order_top)
+                       sides=sides, order_top=order_top, density=density, g=g)
 
 
 # ---------------------------------------------------------------------

@@ -160,6 +160,7 @@ from .. import defaults
 from ..kernels import KERNEL_T, KERNEL_U, kernel_coeffs, kernel_n_basis
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
+from ..model.equations import diagonal_matvec
 from .octree import InteractionLists, Octree, XMargin
 
 
@@ -1178,11 +1179,25 @@ class FarGroup(NamedTuple):
     kernel: str
     pair: "PairFMM"
     rows: list
-    cols: list
+    cols: list               # per source patch: [(start, stop, col_op), ...]
     field_patches: list
     source_patches: list
     scales: list
     row_names: list          # SLOT names, which is what a caller indexes by
+
+    def gather(self, x: np.ndarray) -> np.ndarray:
+        """The group's source vector from the global ``x``: per source patch
+        the SUM of its contributions, each ``col_op @ x[start:stop]``. A patch
+        has one, its slot -- or, under gravity, a traction slot and the
+        buoyancy of its displacement slot on the same single layer
+        (``BlockTerm.col_op``), which is why this is a sum."""
+        out = []
+        for parts in self.cols:
+            v = 0.0
+            for a, b, op in parts:
+                v = v + (x[a:b] if op is None else diagonal_matvec(op, x[a:b]))
+            out.append(v)
+        return np.concatenate(out)
 
 
 class FarGroups:
@@ -1227,39 +1242,53 @@ class FarGroups:
             sps: dict = {}
             for t in terms:
                 fps.setdefault(id(t.field_patch), (t.field_patch, t.row))
-                sps.setdefault(id(t.source_patch),
-                               (t.source_patch, t.col, t.scale))
-            if len(terms) != len(fps) * len(sps):
-                raise ValueError(
-                    f"({rname}, {kernel}) couples {len(terms)} of "
-                    f"{len(fps) * len(sps)} patch pairs: a group whose "
-                    "coupling is incomplete cannot fold sigma into the source")
-            for t in terms:                      # one sigma per source patch
-                if t.scale != sps[id(t.source_patch)][2]:
+                sp = sps.setdefault(id(t.source_patch),
+                                    [t.source_patch, t.scale, {}])
+                if t.scale != sp[1]:             # one sigma per source patch
                     raise ValueError(
                         f"({rname}, {kernel}) gives source patch "
                         f"{t.source_patch.name} two scales")
-            srcs = [sp for sp, _c, _s in sps.values()]
+                # one CONTRIBUTION per (source, column slot): the slot itself,
+                # or a second slot through its col_op (gravity)
+                part = sp[2].setdefault(t.col.name, [t.col, t.col_op, 0])
+                if part[1] is not t.col_op:
+                    raise ValueError(
+                        f"({rname}, {kernel}) gives column {t.col.name} of "
+                        f"source patch {t.source_patch.name} two operators")
+                part[2] += 1
+            # Every contribution must reach EVERY field patch of the group:
+            # the source vector is summed before the traversal, so one that
+            # coupled to some rows only would be sent to all of them.
+            for sp, _s, parts in sps.values():
+                for col, _op, count in parts.values():
+                    if count != len(fps):
+                        raise ValueError(
+                            f"({rname}, {kernel}) couples column {col.name} "
+                            f"of {sp.name} to {count} of {len(fps)} field "
+                            "patches: a group whose coupling is incomplete "
+                            "cannot fold sigma into the source")
+            srcs = [sp for sp, _s, _p in sps.values()]
+            scales = [s for _sp, s, _p in sps.values()]
             pair = PairFMM([fp.mesh for fp, _r in fps.values()],
                            [sp.mesh for sp in srcs], kernel,
                            [kb.resolve_patch_eps(eps, sp) for sp in srcs],
                            p=order[kernel], geom=geom, arrays=arrays,
-                           scales=[s for _sp, _c, s in sps.values()], **kw)
+                           scales=scales, **kw)
             self.groups.append(FarGroup(
                 rname, kernel, pair,
                 [(r.offset, r.stop) for _f, r in fps.values()],
-                [(c.offset, c.stop) for _sp, c, _s in sps.values()],
-                [fp for fp, _r in fps.values()], srcs,
-                [s for _sp, _c, s in sps.values()],
+                [[(c.offset, c.stop, op) for c, op, _n in parts.values()]
+                 for _sp, _s, parts in sps.values()],
+                [fp for fp, _r in fps.values()], srcs, scales,
                 [r.name for _f, r in fps.values()]))
 
     def matvec(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Accumulate every term's ``scale * A_term @ x[col]`` into ``y``."""
         for g in self.groups:
             rname, kernel = g.region, g.kernel
-            pair, rows, cols = g.pair, g.rows, g.cols
+            pair, rows = g.pair, g.rows
             c = np.asarray(kernel_coeffs(kernel, self.materials[rname]))
-            yg = pair.matvec(c, np.concatenate([x[a:b] for a, b in cols]))
+            yg = pair.matvec(c, g.gather(x))
             off = 0
             for a, b in rows:
                 y[a:b] += yg[off:off + (b - a)]

@@ -6,6 +6,10 @@ Representation formula for x strictly inside region R (c(x) = 1):
          - sum_p sigma(R,p) * H_xp @ u_p
          - sum_f sigma(R,f) * H_xf @ slip_f
 
+(under gravity the single-layer density is ``t_p + B u_p``,
+``RegionModel.buoyancy``, and the stress returned is the stress at a fixed
+point of space -- ``core.Gravity``)
+
 with all kernels at region R's material, READ FROM THE MODEL PASSED IN. A
 solution solved at another material state (``rebuild_for_materials``) is
 therefore read through ``model.with_materials(...)`` at that state: the
@@ -102,6 +106,18 @@ def _density(patch, kind: str, solution: dict) -> np.ndarray:
     return solution[f"{kind}:{patch.name}"]
 
 
+def _traction(model: RegionModel, region: Region, patch,
+              solution: dict) -> np.ndarray:
+    """The single-layer density ``region`` carries on ``patch``: the slot or
+    datum ``t_p``, plus the buoyancy ``B u_p`` where gravity puts one
+    (``RegionModel.buoyancy``, the same B the equations used)."""
+    t = _density(patch, "t", solution)
+    B = model.buoyancy(region, patch)
+    if B is None:
+        return t
+    return t + np.einsum("nij,nj->ni", B, _density(patch, "u", solution))
+
+
 def _warn_near_boundary(points, region):
     """Warn when observation points lie within NEAR_BOUNDARY_H_RATIO local
     h (mean edge) of a BOUNDARY patch (exact point-to-triangle distance):
@@ -191,7 +207,7 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
             u -= sigma * _disp_from_source(points, p.mesh, u_p, KERNEL_T,
                                            mat, kb.resolve_patch_eps(eps, p),
                                            p.order)
-        t_p = _density(p, "t", solution)
+        t_p = _traction(model, region, p, solution)
         if np.any(t_p):
             u += sigma * _disp_from_source(points, p.mesh, t_p, KERNEL_U,
                                            mat, kb.resolve_patch_eps(eps, p),
@@ -460,10 +476,14 @@ class DisplacementEvaluator:
                else _region(model, self.region)).material
         tc = np.asarray(kb.t_coeffs(mat.mu, mat.lam))
         uc = np.asarray(kb.u_coeffs(mat.mu, mat.lam))
+        state = self.model if model is None else model
+        region = _region(state, self.region)
         u = np.zeros(3 * self.cloud.n_triangles)
         for kind, src, sign, pair in self._terms:
             coeffs = uc if kind == "t" else tc
-            dens = np.asarray(_density(src, kind, solution), float).ravel()
+            dens = np.asarray(
+                _traction(state, region, src, solution) if kind == "t"
+                else _density(src, kind, solution), float).ravel()
             if np.any(dens):
                 u += sign * pair.matvec(coeffs, dens)
         return u.reshape(-1, 3)
@@ -539,7 +559,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
             sig += _add(p.mesh, u_p, sigma, kb.resolve_patch_eps(eps, p),
                         p.order)
         # t_p term (single layer): + sigma * SG @ t_p
-        t_p = _density(p, "t", solution)
+        t_p = _traction(model, region, p, solution)
         if np.any(t_p):
             sig += sigma * _stress_from_source(
                 points, p.mesh, t_p, "force", mu, lam,

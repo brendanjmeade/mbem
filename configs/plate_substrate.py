@@ -34,6 +34,12 @@ keep ``"auto"``.
 the Kelvin spring ``kelvin`` times the unrelaxed modulus; ``tau`` is then its
 steady (Maxwell) time, still 1. Lower ``t_min`` with it: the fit is trusted
 only inside its window, and the transient is over by a few ``tau_K``.
+
+``rho_plate`` / ``rho_substrate`` (kg/m^3) turn gravity on: buoyancy on the
+free surface and on the interface (docs/viscoelastic.md, section 7). It leaves
+the fault-parallel motion of a long strike-slip fault alone and holds back the
+vertical motion, which without it grows for as long as the substrate relaxes.
+A Laplace run refuses a substrate lighter than the plate.
 """
 from mbem import laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
@@ -45,7 +51,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              fault_half_len: float = 0.0, eps_substrate: float = 1.5,
              mu_substrate: float = 30.0, tau_K: float = 0.0,
              kelvin: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
-             per_decade: int = 3) -> Run:
+             per_decade: int = 3, rho_plate: float = 0.0,
+             rho_substrate: float = 0.0) -> Run:
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
@@ -69,7 +76,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                                           edge_side=half_x / 6.0)),
             builder="layered_box",
             params=dict(sides=sides, mu_substrate=mu_substrate,
-                        lam_substrate=mu_substrate),
+                        lam_substrate=mu_substrate, rho_plate=rho_plate,
+                        rho_substrate=rho_substrate),
             eps=eps),
         backend=Backend(kind=backend),
         solve=Solve(),

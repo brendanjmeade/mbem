@@ -8,7 +8,8 @@ Sections 2 and 3 are properties of the kernels, and section 5, the Laplace
 route, is built on them (`mbem.rheology`, `mbem.laplace`, `Run.laplace`); all
 three are gated by `tests/gates/mbem/verify_viscoelastic.py`. Sections 1 and 4
 are the algebra around them. Section 6, time-stepping, is a design and is NOT
-built. Section 7 is what is open.
+built. Section 7, gravity, is built: buoyancy on the free surface and on
+density interfaces, with nothing in the volume. Section 8 is what is open.
 
 Notation as in `clq-derivation.md`: $\mathbf d=\mathbf x-\mathbf y$,
 $R_\varepsilon=\sqrt{|\mathbf d|^2+\varepsilon^2}$. One new symbol carries the
@@ -307,7 +308,132 @@ In a relaxing region the eigenstress is hereditary,
 $\sigma^*(t)=\int_0^tC(t-\tau)\,d\epsilon^*(\tau)$: after a step of slip it
 decays with the shear modulus.
 
-## 7. Open
+## 7. Gravity
+
+Built (`mbem.model.Gravity`) and gated against a body that has an exact
+solution under gravity. In this section $w=\rho\,\mathrm g$ is the weight
+density (GPa/km; 0.0294 for 3000 kg/m$^3$), so that $g$ keeps its meaning,
+$1/(1-\nu)$.
+
+**The equations.** Before it is deformed the body is at rest under gravity,
+its prestress hydrostatic: $\sigma_0=-p_0\mathbf I$,
+$\nabla p_0=-w\,\hat{\mathbf e}$, $\hat{\mathbf e}$ pointing up. A displacement
+carries prestressed material with it, so there are two stress increments: the
+MATERIAL one $\tau^L$, the change in the stress of a particle, and the LOCAL
+one, the change at a fixed point of space,
+
+$$ \tau=\tau^L-w\,(\mathbf u\cdot\hat{\mathbf e})\,\mathbf I . $$
+
+(A column lifted by $u_z$ puts at each point the material from $u_z$ deeper:
+more pressure at the point, none in any particle.) With uniform density in a
+region and no self-gravitation, equilibrium of the perturbation is
+
+$$ \nabla\cdot\tau+w\,(\nabla\cdot\mathbf u)\,\hat{\mathbf e}=0 , $$
+
+the second term being the buoyancy of material whose density the deformation
+has changed.
+
+**What is kept.** Two things are done, and both are exact for an
+incompressible material: the internal buoyancy
+$w(\nabla\cdot\mathbf u)\hat{\mathbf e}$ is dropped, and Hooke's law is applied
+to $\tau$ (the pressure of an incompressible body is not constitutive, so it
+cannot tell $\tau$ from $\tau^L$). Then
+
+$$ \nabla\cdot\big(C{:}\epsilon(\mathbf u)\big)=0 $$
+
+inside every region, which is the equation the kernels already solve: gravity
+has left the volume. For a compressible material the error is of relative
+order $wL/K$, $L$ the scale of the deformation: 6 % per 100 km at $K=50$ GPa.
+The compressible treatments in use differ from one another at that same order.
+Keeping the internal buoyancy in uniform compressible layers has no solution
+at long wavelength (Wang 2005); keeping only the advection of prestress, in
+the material frame, leaves a body force $w\nabla u_z$, which a boundary method
+would need the volume for.
+
+**Where gravity went.** What is continuous across a material surface is the
+material traction $\tau^L\mathbf n$. So, for the local traction
+$\mathbf t=\tau\mathbf n$ and any normal $\mathbf n$:
+
+| surface | condition |
+|---|---|
+| the free surface: air above, applied load $\bar{\mathbf t}$ | $\mathbf t=\bar{\mathbf t}-w\,(\mathbf u\cdot\hat{\mathbf e})\,\mathbf n$ |
+| a welded interface between regions 1 and 2 | $\mathbf t_2=\mathbf t_1-(w_2-w_1)\,(\mathbf u\cdot\hat{\mathbf e})\,\mathbf n$ |
+| a fault, inside one region | $\mathbf t$ continuous: no term |
+| an outer face that is a cut and not a surface (the sides and base of a box) | $\mathbf t=\bar{\mathbf t}$: no term |
+
+*The fault.* Its two faces at one point of space are different particles, but
+$\tau$ is the stress AT THE POINT, and that is continuous. Prescribed slip and
+the rows of a traction fault are untouched, and a fault needs no density.
+
+*The cut.* The body continues beyond the side of a box. If what lies beyond is
+hydrostatic at the same density it loads the face with exactly the term that
+would otherwise appear, and nothing is left. That is also a reservoir: a
+relaxed substrate with such sides holds no pressure, as under a half-space it
+would not, while clamped sides trap it.
+
+One rule covers the table (`RegionModel.buoyancy`, its only statement):
+**region $R$ sees on patch $p$ the traction $\mathbf t_p+B\,\mathbf u_p$,**
+
+$$ B=-(w_R-w_{\rm ref})\ \mathbf n\otimes\hat{\mathbf e}, $$
+
+with $w_{\rm ref}$ zero on a patch named as the free surface, the first
+region's weight on an interface, and $w_R$ everywhere else. In the equations
+that is one more block on the displacement columns,
+
+$$ A[\,\cdot\,,\mathbf u_p]\ \mathrel{+}=\ -\sigma(R,p)\,G^{m(R)}B_p , $$
+
+a single layer whose density is proportional to the displacement:
+$\tilde\mu^{-1}(U_A+g\,U_B)$ times $w$ times geometry. No kernel work, and
+nothing outside the structure of section 2. $w$ is not a modulus, so section 1
+stands: a state under gravity is an elastic solve.
+
+**It contains the classical results.** On a half-space a normal load of
+wavenumber $k$ meets the stiffness $w+\tilde\mu\,g\,k$, whose ratio
+$w/(\mu g)=(1-\nu)\rho\,\mathrm g/\mu$ is the buoyancy wavenumber of Barbot &
+Fialko (2010). For an incompressible Maxwell half-space ($g=2$) its one pole
+is at $\tau=\tau_M+2\eta k/w$: the relaxation time of a viscous half-space
+under gravity (Haskell 1935) plus the Maxwell time. And relaxed, a substrate
+is hydrostatic, so a plate on it feels $w_p$ per unit deflection at its top
+and $w_s-w_p$ at its base, $w_s$ in all: flexural isostasy.
+
+**Stable stratification only, on the Laplace route.** Where the heavier side
+is above, a body that relaxes has a growing mode, and the fit of section 5 has
+only decaying exponentials in it; the runner refuses
+(`rheology.require_stable`). An elastic run may keep such a contrast. With
+stable contrasts this treatment has no instability of its own: the stiffness
+above is positive for every $k$ and every $s>0$.
+
+**What a readout means.** On the free surface `Patch.value` is the applied
+load. A traction slot is the local traction (on an interface, the first
+region's). `evaluate_stress` returns $\tau$, the stress at a fixed point; the
+material stress is $\tau+w(\mathbf u\cdot\hat{\mathbf e})\mathbf I$. The shear
+components are the same; the normal stress on a fault differs by
+$w\,(\mathbf u\cdot\hat{\mathbf e})$.
+
+**Anchors.** A flat earth under gravity has no exact solution on a finite
+body, so the reference is a sphere: elastic shells welded on a rigid core,
+loaded on the outer surface by $\sigma P_2(\cos\theta)$, with RADIAL buoyancy
+(`Gravity(center=...)`) on the surface and on the density interface. It is a
+4-by-4 system per shell in Love's spheroidal solutions, itself pinned by
+Kelvin's stiffness of the incompressible sphere. It is physical, not
+manufactured, so it fixes the sign and the size of the term.
+
+| case | measured |
+|---|---|
+| one elastic shell, $wa/\mu=2$: surface displacement over exact | 0.984 without gravity, 0.989 with; gravity stiffens it by 28 %, and the solved ratio is the exact one to 0.4 % |
+| its interior displacement | 0.6 % (36 % if the readout leaves the buoyancy out) |
+| two shells, weights 150 and 60 | surface 0.984, interface 0.992; the contrast moves the interface by 20 % |
+| the shell relaxing, per $s$ and in time, Maxwell and Burgers | 0.974 .. 0.998 per $s$, 0.976 .. 0.995 in time, with no secular term |
+| relaxed to $\tilde\mu/\mu=10^{-4}$ | $U\,w/\sigma=1$ to 4e-4, where without gravity the same load has sunk 2500 times as far |
+| a relaxed flat box under a smooth load, `up` vertical | $u_z=(P-\text{load})/w$ to 3e-3: $P=0$ with free sides, the mean load over $1+wH/K$ with clamped ones |
+
+The P0 bias of the elastic state vanishes as the shell relaxes: the isostatic
+answer $\sigma/w$ has no elasticity in it. The compressed backends carry the
+term exactly as the dense one does (ACA: operator, preconditioner blocks and
+its Gauss-Seidel sweep to 5e-8 of dense; FMM: the same error with and without
+gravity).
+
+## 8. Open
 
 - **A plate with free sides floats.** As $\tilde\mu(s)\to0$ only the shear of
   the substrate holds the plate against a rigid horizontal translation. A
@@ -324,15 +450,19 @@ decays with the shear modulus.
   fits the $1/\tilde\mu$ growth but has not been isolated.
 - A region that extends to infinity while touching an interface (a true
   half-space under a plate). Regions must close today.
-- Gravity. A buoyancy term on the free surface and on density interfaces is a
-  boundary term, but a new condition type.
+- Gravity beyond section 7: the coupling of gravity with COMPRESSION, of
+  order $wL/K$, is a term in the volume; so is self-gravitation. And no case
+  here has a dipping fault, which is where gravity is a first-order effect on
+  the cycle: on the plate of section 5, whose fault is vertical strike-slip,
+  it moves the fault-parallel displacement at mid-strike by 6e-4 of its peak
+  and takes 16 % off the rms vertical motion at ten Maxwell times.
 - A solved (traction) fault that crosses an interface.
 - Nonlinear rheology is out of scope: it needs the viscous strain in the
   volume.
 
 ## References
 
-Rizzo & Shippy (1971) SIAM J. Appl. Math. Kusama & Mitsui (1982) Appl.
+Haskell (1935) Physics 6. Rizzo & Shippy (1971) SIAM J. Appl. Math. Kusama & Mitsui (1982) Appl.
 Math. Model. Sim & Kwak (1988) Comput. Struct. Schanz & Antes (1997)
 Comput. Mech. Gaul & Schanz (1999) Comput. Methods Appl. Mech. Eng. 179.
 Pan, Sassolas, Amadei & Pfeffer (1997) Comput. Mech. 19. Syngellakis & Wu
@@ -340,7 +470,10 @@ Pan, Sassolas, Amadei & Pfeffer (1997) Comput. Mech. 19. Syngellakis & Wu
 "A boundary element methodology for viscoelastic analysis: Part II without
 cells". Panagiotopoulos, Mantic & Roubicek (2014) arXiv:1402.6631. Hetland &
 Hager (2005) J. Geophys. Res. 110. Fukahata & Matsu'ura (2006) Geophys. J.
-Int. 166. Wang, Lorenzo-Martin & Roth (2006) Comput. Geosci. 32. Barbot, Moore
+Int. 166. Wang (2005) Geophys. J. Int. 161, 191. Wang, Lorenzo-Martin & Roth (2006)
+Comput. Geosci. 32. Barbot & Fialko (2010) Geophys. J. Int. 182, 568 (the
+half-space under surface buoyancy) and 1124. Love (1927) A Treatise on the
+Mathematical Theory of Elasticity (the sphere). Barbot, Moore
 & Lambert (2017) Bull. Seismol. Soc. Am. Miyake & Noda (2019) Earth Planets
 Space 71. Mallick, Lambert & Meade (2022) J. Geophys. Res. 127. Loveless &
 Meade (2025) Earth Space Sci.

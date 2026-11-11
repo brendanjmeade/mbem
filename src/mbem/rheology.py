@@ -149,3 +149,22 @@ def require_one_eps(model, eps, regions) -> None:
                 f"eps; it has eps from {lo:.4g} to {hi:.4g}. Pass eps as a "
                 f"number, or as a dict giving those patches the same number "
                 f"(docs/viscoelastic.md, section 3)")
+
+
+def require_stable(model) -> None:
+    """Refuse a Laplace run on a body with a density contrast heavy side up.
+
+    Under gravity such a body has a GROWING mode once anything in it relaxes
+    (Rayleigh-Taylor), so its response to a step is not a constant plus
+    decaying exponentials, and the fit this route inverts with has nothing
+    else in it: the answer would be wrong and smooth. An elastic run may keep
+    the contrast; rigidity holds it.
+    """
+    bad = model.unstable_contrasts()
+    if bad:
+        raise ValueError(
+            f"gravity: the density contrast on {', '.join(bad)} is heavy side "
+            f"up somewhere. A relaxing body is unstable there and has no "
+            f"decaying-exponential response; give the Laplace run a stable "
+            f"stratification (or equal densities)")
+

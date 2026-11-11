@@ -373,9 +373,8 @@ class AssembledH:
             for g in sub.groups:
                 c = np.asarray(kernel_coeffs(g.kernel,
                                              self.materials[g.region]))
-                y = g.pair.matvec(c, np.concatenate(
-                    [z[a:b] for a, b in g.cols]),
-                    far=not defaults.PRECOND_LOWER_NEAR_ONLY)
+                y = g.pair.matvec(c, g.gather(z),
+                                  far=not defaults.PRECOND_LOWER_NEAR_ONLY)
                 off = 0
                 for name, (a, b) in zip(g.row_names, g.rows):
                     m = b - a
@@ -533,7 +532,7 @@ class AssembledH:
                 pair = self.pair_for(term)
                 mat = self.materials[term.region.name]
                 y[term.row.offset:term.row.stop] += term.scale * pair.matvec(
-                    kernel_coeffs(term.kernel, mat), seg)
+                    kernel_coeffs(term.kernel, mat), term.col_vector(seg))
             D = term_diagonal(term, self.calib)
             if D is not None:
                 y[term.row.offset:term.row.stop] += diagonal_matvec(D, seg)
@@ -564,7 +563,8 @@ class AssembledH:
             c, comp = local // 3, local % 3
             pts, inv = np.unique(c, return_inverse=True)
             q, p = term.field_patch, term.source_patch
-            dens = x[term.col.offset:term.col.stop].reshape(-1, 3)
+            dens = np.ascontiguousarray(term.col_vector(
+                x[term.col.offset:term.col.stop]).reshape(-1, 3))
             coeffs = kernel_coeffs(term.kernel, self.materials[term.region.name])
             xq = np.ascontiguousarray(arrays.collocation_points(q)[pts])
             tv, nrm = arrays.source_arrays(p.mesh)
@@ -593,7 +593,7 @@ class AssembledH:
         for term in self.system.terms:
             pair = self.pair_for(term)
             mat = self.materials[term.region.name]
-            blk = pair.to_dense(kernel_coeffs(term.kernel, mat))
+            blk = term.col_block(pair.to_dense(kernel_coeffs(term.kernel, mat)))
             A[term.row.offset:term.row.stop,
               term.col.offset:term.col.stop] += term.scale * blk
             D = term_diagonal(term, self.calib)

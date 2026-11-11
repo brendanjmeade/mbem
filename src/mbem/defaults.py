@@ -984,6 +984,18 @@ LAPLACE_PAD_DECADES = 0.5
 # grid from dividing by rounding.
 PRONY_RCOND = 1.0e-13
 
+# --- Gravity (model/core.py ``Gravity``; docs/viscoelastic.md section 7) ---
+# Standard gravity, m/s^2. A model overrides it by passing ``g``.
+GRAVITY = 9.8
+# kg/m^3 times m/s^2 is Pa/m; the trunk's units are km and GPa (rule 12), so a
+# weight density rho g is in GPa/km: 3000 kg/m^3 at 9.8 m/s^2 is 0.0294.
+WEIGHT_GPA_PER_KM = 1.0e-6
+# A density contrast is STABLE where the heavier side is below. Its sign is
+# read per element as contrast x (outward normal . up); a face is called
+# unstable only past this, so a vertical wall (exactly zero, up to the mesher's
+# rounding) is neither.
+BUOYANCY_UNSTABLE_TOL = 1.0e-9
+
 # --- Not here ---------------------------------------------------------
 # The fault SIGN CONVENTION is not a tolerance and does not live here:
 # it is ``FAULT_ORIENTATION`` in ``mbem/model/core.py``, next to the

@@ -78,6 +78,18 @@ the real-axis fit under test.
      substrate the reference is that series put through the fit, held to the
      same contour.
 
+  m  GRAVITY on the Laplace route (``model.Gravity``; docs/viscoelastic.md
+     section 7). The buoyancy coefficient is not a modulus, so a state under
+     gravity is still an elastic solve. A relaxing shell on a rigid core under
+     a sustained load and radial buoyancy -- the body of verify_solved_bvp B10
+     -- per s and in time, Maxwell and Burgers, with NO secular term: without
+     gravity the load would sink for ever, with it the surface settles where
+     its relief weighs what the load does, sigma / rho g. Then the same limit on a
+     flat earth, which has no exact solution short of it: a relaxed box under
+     a smooth load is hydrostatic, each column carrying its own load if the
+     sides are free (a reservoir) and all of them sharing a trapped pressure
+     P = mean load / (1 + rho g H / K) if the sides are clamped.
+
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
 
@@ -93,8 +105,9 @@ import numpy as np
 import clq
 import inclusion_mesh
 import mollified_bem as mb
-import verify_solved_bvp as VB                # sibling: the B9 sphere fixture
-from _sphere import icosphere                 # sibling; see tests/conftest.py
+import _sphere as SPH                         # sibling; see tests/conftest.py
+import verify_solved_bvp as VB                # sibling: the B9, B10 fixtures
+from _sphere import icosphere
 from mbem import laplace, rheology
 from mbem.backends.dense import AssembledDense
 from mbem.cases import layered_box, penny
@@ -161,6 +174,23 @@ TOL_BASIS_MODE = 1.0e-12         # basis-mode operator vs direct; rounding
 PENNY_BAND = (0.990, 1.000)
 PENNY_FLAT = 3.0e-3              # spread over s; 1e-3 measured
 TOL_PLATE_FORMS = 1.0e-10        # series vs contour inversion; 2e-13 measured
+# [m] the B10 shell, relaxing, one scalar eps. The P0 bias is -2.6 % on the
+# elastic state and VANISHES as the shell relaxes, the isostatic answer
+# sigma / rho g having no elasticity in it: U over exact 0.9745 .. 0.9975 per
+# s and 0.976 .. 0.995 in time (Maxwell; Burgers, whose steady time is 5, has
+# relaxed less by the end of the window: .. 0.993 and .. 0.989).
+GRAV_EPS = 0.03
+GRAV_BAND = (0.96, 1.005)
+GRAV_DEEP = 1.0e-4               # s tau of a state relaxed to mu(s)/mu = 1e-4
+TOL_GRAV_ISOSTATIC = 2.0e-3      # U rho g / sigma - 1 there; 4e-4 measured
+GRAV_SINKS = 1.0e3               # the SAME load without gravity, over the
+#                                  isostatic value, there: 2.5e3, and unbounded
+# the flat box at mu(s)/mu = 1e-3: 3.1e-3 (free sides), 3.3e-3 (clamped), the
+# distance from the limit, which falls as mu(s); the trapped pressure 2.1 % of
+# the peak load
+GRAV_BOX = dict(edge=4.0, half_width=12.0, peak=1.0e-3, weight=3.0, eps=0.5,
+                relaxed=1.0e-3)
+TOL_GRAV_HYDROSTATIC = 1.0e-2
 
 
 def check(name, ok, extra="") -> bool:
@@ -792,6 +822,85 @@ def l_plate_closed_forms() -> None:
           float(series[-1, -1] / series[0, -1]), 3.0)
 
 
+def m_gravity() -> None:
+    print("\n[m] gravity: a relaxing shell settles; a relaxed box is hydrostatic")
+    w, mat, radii = VB.GRAV_W, VB.GRAV_MAT, (VB.GRAV_CORE, 1.0)
+    model = VB._shell_model(mat, w)
+    asm = AssembledDense(generate_system(model), GRAV_EPS, "basis")
+    direct = AssembledDense(generate_system(model), GRAV_EPS, "direct")
+    close("the buoyancy block: basis mode == direct mode",
+          float(np.abs(asm.A - direct.A).max() / np.abs(direct.A).max()),
+          TOL_BASIS_MODE)
+
+    def closed(m, weight=w):
+        return SPH.shells_on_core(2, [(m.mu, m.lam)], radii, [weight], 1.0)[0]
+
+    t = times()
+    for rheo in (MAXWELL, BURGERS):
+        s, mats = states(rheo, mat)
+        got = np.array([VB._amplitude(model, (
+            asm if k == 0 else asm.rebuild_for_materials(
+                {"shell": elastic(mm)})).solve(), "outer")
+            for k, mm in enumerate(mats)])
+        ratio = got / np.array([float(closed(mm)) for mm in mats])
+        check(f"{rheo.kind}: surface displacement per s, over exact",
+              GRAV_BAND[0] < ratio.min() and ratio.max() < GRAV_BAND[1],
+              f"{ratio.min():.4f} .. {ratio.max():.4f}")
+        ref = step_response(lambda sv: closed(relaxed(rheo, mat, sv)), t)
+        rt = laplace.Prony(s).weights(t) @ got / ref
+        check(f"{rheo.kind}: ... in time, with no secular term",
+              GRAV_BAND[0] < rt.min() and rt.max() < GRAV_BAND[1],
+              f"{rt.min():.4f} .. {rt.max():.4f}")
+    # where it is going: relaxed, the surface stands where its relief weighs
+    # what the load does, sigma / rho g, whatever the elasticity was
+    deep = relaxed(MAXWELL, mat, GRAV_DEEP)
+    settled = VB._amplitude(model, asm.rebuild_for_materials(
+        {"shell": elastic(deep)}).solve(), "outer")
+    close("relaxed, the shell is isostatic: U rho g / sigma == 1",
+          abs(settled * w - 1.0), TOL_GRAV_ISOSTATIC)
+    above("... where WITHOUT gravity the same load has sunk this many times "
+          "as far", float(closed(deep, 0.0) * w), GRAV_SINKS)
+
+    # the flat earth, in the limit where it is exact
+    from mbem.model import Gravity
+    from mbem import defaults
+    b = GRAV_BOX
+    box = VB._closed_box(b["edge"])
+    top = box["top"]
+    x = top.centroids()
+    area = top.normals_and_areas()[1]
+    load = b["peak"] * np.exp(-(x[:, 0] ** 2 + x[:, 1] ** 2) / b["half_width"] ** 2)
+    K = LAM + 2.0 * MU / 3.0
+    mu_s = MU * b["relaxed"]
+    soft = mb.ElasticMaterial(mu=mu_s, lam=K - 2.0 * mu_s / 3.0)
+
+    def pressure(xx, n):          # a normal load pushing down on the surface
+        return -(b["peak"] * np.exp(-(xx[:, 0] ** 2 + xx[:, 1] ** 2)
+                                    / b["half_width"] ** 2))[:, None] * n
+
+    for sides, bc in (("free", BCType.FREE_TRACTION),
+                      ("clamped", BCType.PRESCRIBED_DISPLACEMENT)):
+        flat = RegionModel([Region("box", soft, [
+            Patch("top", top, BCType.FREE_TRACTION, value=pressure),
+            Patch("sides", box["sides"], bc),
+            Patch("base", box["base"], BCType.PRESCRIBED_DISPLACEMENT)],
+            probe_point=np.array([0.0, 0.0, -0.5 * VB.BOX_H]))],
+            gravity=Gravity(density={"box": b["weight"]}, surface="top",
+                            g=1.0 / defaults.WEIGHT_GPA_PER_KM))
+        uz = AssembledDense(generate_system(flat), b["eps"],
+                            "direct").solve()["u:top"][:, 2]
+        # free sides are a reservoir and hold no pressure; clamped sides trap
+        # the fluid, which then carries the mean load less what its own
+        # compression takes up
+        trapped = 0.0 if sides == "free" else float(
+            (load * area).sum() / (area.sum() * (1.0 + b["weight"] * VB.BOX_H / K)))
+        exact = (trapped - load) / b["weight"]
+        close(f"relaxed box, {sides} sides: u_z == (P - load) / rho g"
+              + ("" if sides == "free" else f", P = {trapped / b['peak']:.3f} peak"),
+              float(np.abs(uz - exact).max() / np.abs(exact).max()),
+              TOL_GRAV_HYDROSTATIC)
+
+
 def main() -> bool:
     t0 = time.time()
     print("=" * 76)
@@ -810,6 +919,7 @@ def main() -> bool:
     j_torsion()
     k_penny()
     l_plate_closed_forms()
+    m_gravity()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

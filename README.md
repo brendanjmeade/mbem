@@ -32,8 +32,9 @@ This package contains only the elastic full-space machinery: the point-source
 kernel, the triangular displacement-discontinuity solution, the `mbem` BEM
 solver (region model + calibrated dense backend), and worked examples.  There is
 **no half-space / Mindlin code and no LaTeX** here.  Linear viscoelasticity
-(Maxwell, Burgers) is available by the Laplace route, with no volume mesh; see
-"Viscoelastic relaxation" below.
+(Maxwell, Burgers) is available by the Laplace route, and gravity as buoyancy
+on the boundary, both with no volume mesh; see "Viscoelastic relaxation" and
+"Gravity" below.
 
 Boundary patches and faults carry a piecewise-constant (P0) density by default
 or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
@@ -185,8 +186,58 @@ form.  The postseismic displacement 16-32 km from the fault is 0.86 / 0.96 /
 box half-widths of 400 / 800 / 1600 km: it converges, and it tells you how much
 box a result needs.
 
+A Burgers substrate (`--set tau_K=0.1 --set t_min=0.02`) converges on the same
+ladder at the same rate.
+
 The time-stepper with memory on the boundary, which would couple this to
 stress-driven fault slip, is designed in `docs/viscoelastic.md` and not built.
+
+## Gravity
+
+A body that relaxes with no gravity sinks under a load for ever; with it, the
+surface settles where the relief it has built weighs what the load does.
+`mbem.model.Gravity` puts that in as a condition on the boundary:
+
+```python
+from mbem.model import Gravity, RegionModel
+model = RegionModel(regions, gravity=Gravity(
+    density={"plate": 2700.0, "substrate": 3300.0},   # kg/m^3, every region
+    surface=("top",)))                                # the patches open to the air
+```
+
+```
+python -m mbem run configs/plate_substrate.py --set rho_plate=2700 --set rho_substrate=3300
+```
+
+The body is prestressed hydrostatically and a displacement carries that
+prestress with it.  Treating the material as incompressible IN THE GRAVITY
+TERMS ONLY, the equations inside a region stay the homogeneous elastic ones
+and all that is left is a traction proportional to the displacement:
+`rho g (u . up)` along the normal on the free surface, the same with the
+density CONTRAST on an interface between regions, and nothing on a fault, or
+on the sides and base of a box, which are cuts through material that
+continues.  So there is no kernel work and no volume term, the buoyancy
+coefficient is not a modulus (a Laplace state under gravity is still an elastic
+solve), and both compressed backends carry it.  The price is an error of
+relative order `rho g L / K` in a compressible body, 6 % per 100 km of
+deformation scale at K = 50 GPa; `docs/viscoelastic.md` section 7 has the
+derivation.
+
+It is gated against a body that HAS an exact solution under gravity, which a
+flat earth does not: shells welded on a rigid core with radial buoyancy
+(`Gravity(center=...)`).  The solved surface displacement is within 2 % of
+exact with and without gravity while gravity itself stiffens the shell by
+28 %; relaxing, it follows the exact response in time to the same 2 % and
+ends isostatic to 4e-4, where without gravity the load has sunk 2500 times as
+far.  A relaxed flat box under a smooth load is hydrostatic to 3e-3.
+
+Three things to know.  The stress `evaluate_stress` returns is the stress at a
+fixed point of space; the stress of the material is that plus
+`rho g (u . up) I`, the same in shear.  A Laplace run refuses a stratification
+with the heavier side up, because a body that relaxes then has a growing mode
+and the fit has only decaying ones.  And a long strike-slip fault barely feels
+any of this (6e-4 of the fault-parallel displacement on the plate above);
+gravity acts on vertical motion, and no case here has a dipping fault yet.
 
 ## Layout
 

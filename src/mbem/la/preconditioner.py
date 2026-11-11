@@ -69,7 +69,7 @@ from ..kernels import KERNEL_T, kernel_coeffs
 from ..kernels import basis as kb
 from ..kernels import tri_kernels as tk
 from ..model.core import BCType
-from ..model.equations import term_diagonal
+from ..model.equations import block_times_diagonal, term_diagonal
 from .cluster import build_cluster_tree
 from .hodlr import HodlrSolver
 
@@ -208,7 +208,8 @@ class _SBEvaluator:
             mat = assembled.materials[t.region.name]
             self.recipes.append((
                 t.kernel, kernel_coeffs(t.kernel, mat), t.scale,
-                g_row, g_col, r_off, c_off, term_diagonal(t, calib)))
+                g_row, g_col, r_off, c_off, term_diagonal(t, calib),
+                t.col_op))
 
         # unit -> concat permutation: unit layout position
         # d*(unit0[g] + e) + 3*idx + a  holds concat entry
@@ -236,7 +237,7 @@ class _SBEvaluator:
         gc, ec = self.group_id[cols], self.elem_id[cols]
         a3 = np.arange(3)
         r_cache, c_cache = {}, {}
-        for kernel, coeffs, scale, g_row, g_col, r_off, c_off, D \
+        for kernel, coeffs, scale, g_row, g_col, r_off, c_off, D, col_op \
                 in self.recipes:
             if g_row not in r_cache:
                 sel = np.flatnonzero(gr == g_row)
@@ -258,6 +259,8 @@ class _SBEvaluator:
                 blk = tk.t_matrix_direct(xf, tv, nv, ee, *coeffs)
             else:
                 blk = tk.u_matrix_direct(xf, tv, ee, *coeffs)
+            if col_op is not None:      # the buoyancy term (BlockTerm.col_op)
+                blk = block_times_diagonal(blk, col_op[e_c])
             # Accumulate one (a, b) component at a time, and through a
             # SLICE wherever the group's units are a run of positions --
             # which is every single-group block and every whole-block
@@ -532,7 +535,7 @@ class BlockGaussSeidel:
                     pair = self.asm.pair_for(term)
                     coeffs = kernel_coeffs(
                         term.kernel, self.asm.materials[term.region.name])
-                    xseg = z[term.col.offset:term.col.stop]
+                    xseg = term.col_vector(z[term.col.offset:term.col.stop])
                     contrib = term.scale * pair.matvec(coeffs, xseg)
                     r0 = sb.local_offset[term.row.name]
                     rk[r0:r0 + term.row.size] -= contrib

@@ -4,7 +4,8 @@ Guidance for Claude Code in this repo: a research package for the **mollified
 boundary element method (mbem)** and mollified elastic dislocation theory, built
 on the Cortez blob regularization of the Kelvin/Somigliana
 kernels. 3-D linear elasticity, full space, no half space, no LaTeX; linear
-viscoelasticity by the Laplace route (rule 16), no time-stepper yet. `README.md` has the physics and references; `BACKLOG.md` is the one
+viscoelasticity by the Laplace route (rule 16), no time-stepper yet; gravity
+as buoyancy on the boundary (rule 17). `README.md` has the physics and references; `BACKLOG.md` is the one
 status document and history lives in `git log`.
 
 Installed, not path-hacked: `pip install -e .` once, then everything imports as
@@ -29,7 +30,7 @@ is the bug.
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
 | `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`, `clq-rules.md`. |
-| `docs/viscoelastic.md` | The derivation viscoelasticity rests on (branch `ve1`). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; the time-stepper with boundary memory, which is a design and NOT built; why a region that relaxes needs ONE scalar eps; and what is open (the floating plate, a true half-space, gravity). |
+| `docs/viscoelastic.md` | The derivation viscoelasticity rests on (branch `ve1`). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; the time-stepper with boundary memory, which is a design and NOT built; why a region that relaxes needs ONE scalar eps; gravity as a condition on the boundary (section 7) and the sphere it is gated against; and what is open (the floating plate, a true half-space, gravity's coupling with compression). |
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
@@ -54,6 +55,7 @@ python -m mbem run configs/topo_inclusion.py --sweep surface=topo,flat
 python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top=0,1
 python -m mbem run configs/penny.py --sweep a_over_h=8,16 --sweep order=0,2   # the traction-BC crack
 python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sides=free,clamped   # a Laplace run
+python -m mbem run configs/plate_substrate.py --set rho_plate=2700 --set rho_substrate=3300       # ... under gravity
 python -m mbem figure point_kernel                # model-free: no solve
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list                              # runs, newest first
@@ -174,3 +176,21 @@ gates FAIL rather than skip without them.
     substrate relaxes, and a result is trusted only inside the fit's window.
     **A state is the base model with its own materials**, never cumulative,
     and is read back through `RegionModel.with_materials`.
+17. **Gravity is a condition on the boundary** (`model.Gravity`, held as
+    `RegionModel.gravity`; `docs/viscoelastic.md` section 7): every region a
+    density, the free surface NAMED. Region R sees on patch p the traction
+    `t_p + B u_p`, `B = -(rho_R - rho_ref) g n (x) up`, stated once in
+    `RegionModel.buoyancy`: `rho_ref` is 0 on the free surface, the first
+    region's density on an interface, and `rho_R` (no term) on every other
+    outer face -- the sides and base of a box are cuts, not cliffs. No term on
+    a fault. It is exact for an incompressible material and off by
+    `rho g L / K` otherwise, and it is NOT a body force: nothing enters the
+    volume or the kernels. It is a `BlockTerm` with `col_op = B`, a kernel
+    block on a transformed column, so **every consumer of `system.terms` goes
+    through `term.col_vector` / `term.col_block`**; one that reads `x[col]`
+    itself drops gravity from that piece and still converges. `Patch.value` on
+    the free surface is the applied load; `evaluate_stress` returns the stress
+    at a fixed point of space (material stress minus `rho g (u . up) I`).
+    `deflate` is refused under gravity, and a Laplace run refuses a contrast
+    heavy side up (a relaxing body has a growing mode there). The exact
+    reference is a sphere with RADIAL buoyancy (`Gravity(center=...)`).

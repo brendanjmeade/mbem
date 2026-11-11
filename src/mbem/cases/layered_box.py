@@ -6,7 +6,7 @@ interface) holding the fault, and ``substrate`` (the interface, its four sides,
 a clamped base). Give the substrate a rheology and this is the earthquake-cycle
 model of Nur & Mavko and Savage & Prescott, on a FINITE box: mbem has no
 half-space and no region that runs to infinity (docs/viscoelastic.md, section
-7), so the box is part of the model and its size is a parameter to be laddered.
+8), so the box is part of the model and its size is a parameter to be laddered.
 
 ``sides`` is the condition on the PLATE's sides. ``"free"`` is the natural one
 and it floats: as the substrate relaxes only its shear holds the plate against
@@ -14,6 +14,8 @@ a rigid horizontal translation, and the discrete net force of the fault, which
 is small rather than zero, is divided by a shear modulus going to zero.
 ``"clamped"`` removes that mode at the price of holding the plate edges. The
 two bracket the truth; neither is a half-space.
+
+Under gravity (``density``) the plate's free top is the free surface.
 
 Also here, because the gate and the study both need them: the closed forms for
 an infinitely long fault in a plate over a half-space (antiplane), which the
@@ -80,12 +82,19 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
 
 
 def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
-                order_top=0):
+                order_top=0, density=None, g=None):
     """RIGHT-lateral slip ``slip_mag`` on the fault, in the plate. The
     substrate's closed boundary is ``interface``, ``sides_lower``, ``base``: a
     Laplace run needs one scalar eps on those three (docs/viscoelastic.md,
-    section 3), and the runner refuses otherwise."""
-    from mbem.model import BCType, Patch, Region, RegionModel
+    section 3), and the runner refuses otherwise.
+
+    ``density = (plate, substrate)`` in kg/m^3 turns gravity on
+    (``model.Gravity``): buoyancy on ``top``, the free surface, and on the
+    interface if the two differ. The sides and the base are cuts through
+    material that continues and carry none -- which also leaves the
+    substrate's free sides a reservoir, so that relaxed it holds no pressure,
+    as a half-space would not."""
+    from mbem.model import BCType, Gravity, Patch, Region, RegionModel
 
     if sides not in SIDES:
         raise ValueError(f"sides {sides!r} must be one of {SIDES}")
@@ -112,7 +121,12 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
          Patch("sides_lower", meshes["sides_lower"], BCType.FREE_TRACTION),
          Patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)],
         probe_point=np.array([0.45 * hx, 0.45 * hx, 0.5 * (zi + zb)]))
-    return RegionModel([plate, substrate])
+    gravity = None
+    if density is not None:
+        gravity = Gravity(density={PLATE: density[0], SUBSTRATE: density[1]},
+                          surface=("top",),
+                          **({} if g is None else {"g": g}))
+    return RegionModel([plate, substrate], gravity=gravity)
 
 
 # ---------------------------------------------------------------------

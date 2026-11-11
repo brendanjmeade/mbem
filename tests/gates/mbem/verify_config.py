@@ -48,6 +48,13 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      returns the stack in the order the fit takes it; a stored Laplace state is
      read back at its own moduli; and the run is REFUSED when the relaxing
      region is not on one scalar eps, or names a region the model lacks.
+  k  GRAVITY reaches a run through the builder's parameters and nowhere else
+     (``rho_plate`` / ``rho_substrate`` of the layered box): the dump records
+     the ``Gravity`` the model carried, and null when it carried none; the
+     model rebuilt from the dump for ``mbem sample`` carries the same one, so
+     a volume is read with the buoyancy it was solved with; it changes the
+     solution, the vertical motion most; and a Laplace run is REFUSED when
+     the stratification is heavy side up.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -467,6 +474,53 @@ def j_laplace_run(tmp: pathlib.Path) -> None:
           refused_with(ghost, KeyError, "not in the model"))
 
 
+def k_gravity_run(tmp: pathlib.Path) -> None:
+    """[k] gravity through the config path."""
+    print("\n[k] gravity: a builder parameter, recorded and rebuilt")
+    from mbem import cli, laplace
+    from mbem.model import Gravity
+    path = CONFIGS / "plate_substrate.py"
+    small = dict(half_x=150.0, fault_half_len=40.0, backend="dense",
+                 t_min=0.3, t_max=3.0, per_decade=2)
+    rho = dict(rho_plate=2700.0, rho_substrate=3300.0)
+    run = cfg.load(path, **small, **rho)
+    d = tmp / "gravity"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run under gravity finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    want = Gravity(density={"plate": 2700.0, "substrate": 3300.0},
+                   surface=("top",))
+    rec = resolved["model"]["gravity"]
+    check("the dump records the gravity the model carried",
+          rec == json.loads(json.dumps(dataclasses.asdict(want))), f"{rec}")
+    bare = json.loads((tmp / "laplace" / "resolved.json").read_text())
+    check("... and null for a model that carried none",
+          "gravity" in bare["model"] and bare["model"]["gravity"] is None)
+    _b, model, _e = cli._rebuild(resolved)
+    check("the model rebuilt from the dump carries the same gravity",
+          model.gravity == want and model.unstable_contrasts() == [])
+    s, stack = laplace.run_stack(d)
+    _s0, stack0 = laplace.run_stack(tmp / "laplace")
+    uz, uz0 = stack["u:top"][-1, :, 2], stack0["u:top"][-1, :, 2]
+    uy, uy0 = stack["u:top"][-1, :, 1], stack0["u:top"][-1, :, 1]
+    dz = float(np.linalg.norm(uz - uz0) / np.linalg.norm(uz0))
+    dy = float(np.linalg.norm(uy - uy0) / np.linalg.norm(uy0))
+    check("it changes the solution, the vertical motion most",
+          dz > 1.0e-3 and dz > 3.0 * dy,
+          f"u_z by {dz:.2e}, fault-parallel by {dy:.2e}")
+
+    heavy = cfg.load(path, **small, rho_plate=3300.0, rho_substrate=2700.0)
+    db = tmp / "heavy"
+    db.mkdir()
+    try:
+        runner.execute(heavy, db, path)
+        refused = False
+    except ValueError as e:
+        refused = "heavy side up" in str(e) and "interface" in str(e)
+    check("REFUSED: a Laplace run with the heavier region on top", refused)
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -487,6 +541,7 @@ def main() -> bool:
         h_penny_run(penny_dir)
         i_states(pathlib.Path(tmp))
         j_laplace_run(pathlib.Path(tmp))
+        k_gravity_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

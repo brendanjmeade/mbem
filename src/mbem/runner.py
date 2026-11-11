@@ -129,6 +129,9 @@ def _model_fingerprint(model, system) -> dict:
                         "material": {"mu": r.material.mu, "lam": r.material.lam},
                         "patches": patches})
     return {"regions": regions,
+            # None is "no gravity", which is not gravity on a weightless body
+            "gravity": (None if model.gravity is None
+                        else dataclasses.asdict(model.gravity)),
             "n_unknowns": int(system.layout.n_unknowns),
             "n_tris": int(sum(p["n_triangles"] for r in regions
                               for p in r["patches"])),
@@ -187,6 +190,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                            f"model: {sorted(unknown)} (model has "
                            f"{sorted(known)})")
         rheology.require_one_eps(model, run.model.eps, relaxing)
+        rheology.require_stable(model)
         states = rheology.laplace_states(
             {r.name: (r.material.mu, r.material.lam) for r in model.regions},
             relaxing, run.laplace.s)

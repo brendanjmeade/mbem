@@ -433,6 +433,17 @@ term exactly as the dense one does (ACA: operator, preconditioner blocks and
 its Gauss-Seidel sweep to 5e-8 of dense; FMM: the same error with and without
 gravity).
 
+**On the plate of section 5** (`--set rho_plate=2700 --set rho_substrate=3300`,
+clamped sides, half-widths 800 and 1600 km) gravity does what it should to a
+long vertical strike-slip fault, which is very little. The fault-parallel
+displacement at mid-strike moves by at most 6e-4 of its peak, and the
+comparison with the antiplane closed form is unchanged to the third digit.
+The vertical motion near the fault, 5 % of the slip at its ends, is smaller
+in rms by 4 % at $0^+$, 6 % at $\tau$, 9 % at $3\tau$ and 16 % at $10\tau$,
+the same on both boxes. A state costs one more single-layer product on the
+surface and the interface (solves 52 s against 42, 159 against 129) and
+converges in fewer iterations (at most 27 against 38).
+
 ## 8. Open
 
 - **A plate with free sides floats.** As $\tilde\mu(s)\to0$ only the shear of

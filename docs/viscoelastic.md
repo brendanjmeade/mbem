@@ -257,6 +257,24 @@ modulus and so is its own Laplace-domain reference at $\tilde\mu(s)$; for a
 Maxwell substrate $G(s)$ has one pole and the time response is a series of
 incomplete gamma functions (`maxwell_series`).
 
+That reference is an infinitely long fault over a half-space, which a box can
+only approach, so the study is a ladder: the box half-width doubled twice with
+the fault kept half as long as the box is wide (plate 30 km, fault to 15 km,
+equal moduli). Model over closed form at mid-strike, clamped plate sides (free
+sides are 1-3 points closer at the smaller boxes and the same at the largest):
+
+| half-width | $u(0^+)$, 16-32 km | $u(10\tau)$, 16-32 km | postseismic at $\tau$ | postseismic at $10\tau$ |
+|---|---|---|---|---|
+| 400 km | 0.980 | 0.912 | 0.862 | 0.768 |
+| 800 km | 0.995 | 0.970 | 0.960 | 0.912 |
+| 1600 km | 0.997 | 0.989 | 0.988 | 0.969 |
+
+The postseismic part $u(t)-u(0^+)$ is the long-wavelength part and feels the
+box first. Within 8 km of the fault the total displacement is within 1.1 % at
+every size and time. So a result near the fault at a few Maxwell times wants a
+box some fifty plate thicknesses across; `mbem run configs/plate_substrate.py
+--sweep half_x=400,800,1600 --sweep sides=clamped,free` draws the figure.
+
 ## 6. Design: time-stepping with memory on the boundary
 
 Multiplying by $s/(s+\beta)$ is, in time, the variable

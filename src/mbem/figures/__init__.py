@@ -41,6 +41,7 @@ FIGURES: dict[str, str] = {
     "backend_agreement": "mbem.figures.compare:backend_agreement",
     "eps_convergence": "mbem.figures.convergence:eps_convergence",
     "onfault_stress": "mbem.figures.onfault:onfault_stress",
+    "plate_substrate": "mbem.figures.plate:plate_substrate",
     # model-free: no model, no backend, no solve -- the kernels alone
     "point_kernel": "mbem.figures.point_kernel:figure",
     "triangle_field": "mbem.figures.triangle_field:figure",
@@ -53,7 +54,7 @@ FIGURES: dict[str, str] = {
 # Which registry entries take a STUDY (several runs) rather than one run.
 STUDY_FIGURES = {"topo_inclusion_showcase", "topo_inclusion_contour",
                  "backend_agreement", "eps_convergence",
-                 "onfault_stress"}
+                 "onfault_stress", "plate_substrate"}
 # Which take no model at all: pure kernel figures, no solve.
 MODEL_FREE = {"point_kernel", "triangle_field", "triangle_eps_sweep",
               "anelastic_subtraction", "onfault_convergence",

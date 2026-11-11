@@ -177,6 +177,14 @@ sides floats as its substrate relaxes, which clamped sides prevent.  And a
 fault in a fluid under a sustained traction creeps for ever, which the fit
 represents only with `Prony(secular=True)`.
 
+`configs/plate_substrate.py` is the Nur-Mavko / Savage-Prescott model, an
+elastic plate over a Maxwell (or Burgers) substrate with a strike-slip fault in
+the plate, and its study is a box-size ladder against the antiplane closed
+form.  The postseismic displacement 16-32 km from the fault is 0.86 / 0.96 /
+0.99 of the closed form at one Maxwell time and 0.77 / 0.91 / 0.97 at ten, for
+box half-widths of 400 / 800 / 1600 km: it converges, and it tells you how much
+box a result needs.
+
 The time-stepper with memory on the boundary, which would couple this to
 stress-driven fault slip, is designed in `docs/viscoelastic.md` and not built.
 

@@ -14,7 +14,10 @@ times, and a year enters only when someone multiplies by one.
 
 This is a box, not a half-space, and two of its parameters exist because of
 that. ``half_x`` is the box: relaxation spreads deformation outward with time,
-so how far the answer can be trusted depends on it and it is laddered.
+so how far the answer can be trusted depends on it and it is laddered. The
+fault is half as long as the box is wide unless ``fault_half_len`` says
+otherwise, so a ladder in ``half_x`` lengthens the fault with it and the
+mid-strike profile approaches the infinitely long fault of the closed form.
 ``sides`` is the condition on the plate's sides: free sides let the plate float
 as the substrate relaxes (a spurious net translation that grows as 1/mu(s)),
 clamped sides do not, and the truth lies between them. The box is as deep as it
@@ -36,10 +39,12 @@ from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
 def run_spec(half_x: float = 600.0, sides: str = "clamped",
              backend: str = "hmat", scale: float = 1.0,
              thickness: float = 30.0, depth: float = 15.0,
-             fault_half_len: float = 200.0, eps_substrate: float = 1.5,
+             fault_half_len: float = 0.0, eps_substrate: float = 1.5,
              mu_substrate: float = 30.0, tau_K: float = 0.0,
              kelvin: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
              per_decade: int = 3) -> Run:
+    if fault_half_len <= 0.0:
+        fault_half_len = 0.5 * half_x
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
                  if tau_K > 0.0 else rheology.Maxwell(tau=1.0))
     eps = dict(top="auto", sides_upper="auto", fault="auto",
@@ -67,6 +72,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
         solve=Solve(),
         laplace=Laplace(rheology={"substrate": substrate},
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade)),
-        outputs=Output(slots=(), save_meshes=True),
+        outputs=Output(slots=(), save_meshes=True,
+                       figures=("plate_substrate",)),
         notes="plate over a relaxing substrate; times in Maxwell times",
         tags=("viscoelastic", "laplace"))

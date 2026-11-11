@@ -66,6 +66,12 @@ the real-axis fit under test.
      set (an interface, a free wall, a clamped base).
   k  a penny crack under a sustained stress drop in a Maxwell full space
      (FAULT_TRACTION): the slip creeps for ever, at 8 a dtau / (3 pi eta).
+  l  the closed forms the plate-over-substrate study is compared with
+     (``cases.layered_box``): the image series has its two limits (a
+     half-space; a plate over a fluid, where every point ends at D / 2H of
+     the slip), and the Maxwell time series IS the image series at mu(s),
+     inverted -- one pole n-fold, equal and unequal moduli. A reference that
+     is wrong is worse than none, and these two share no step.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -86,7 +92,7 @@ import verify_solved_bvp as VB                # sibling: the B9 sphere fixture
 from _sphere import icosphere                 # sibling; see tests/conftest.py
 from mbem import laplace, rheology
 from mbem.backends.dense import AssembledDense
-from mbem.cases import penny
+from mbem.cases import layered_box, penny
 from mbem.evaluate import evaluate_displacement, evaluate_stress
 from mbem.kernels import basis as kb
 from mbem.model import BCType, Patch, Region, RegionModel, generate_system
@@ -148,6 +154,7 @@ TORSION_FLAT = 6.0e-3            # spread of that bias over s; 3e-3 measured
 # exact one 0.9944-0.9954 at every s and in time; fitted creep rate 0.995.
 PENNY_BAND = (0.990, 1.000)
 PENNY_FLAT = 3.0e-3              # spread over s; 1e-3 measured
+TOL_PLATE_FORMS = 1.0e-10        # series vs contour inversion; 2e-13 measured
 
 
 def check(name, ok, extra="") -> bool:
@@ -710,6 +717,43 @@ def k_penny() -> None:
               float(ref[-1] / ref[0]), 2.0)
 
 
+def l_plate_closed_forms() -> None:
+    print("\n[l] the antiplane closed forms of the plate over a half-space")
+    depth, thick, mu = 15.0, 30.0, 30.0
+    x = np.array([5.0, 30.0, 90.0, 300.0])
+    close("image series, equal moduli == the half-space, atan(D/x)/pi",
+          float(np.abs(layered_box.image_series(x, depth, thick, mu, mu)
+                       - np.arctan(depth / x) / np.pi).max()), 1.0e-15)
+    fluid = layered_box.image_series(x[2:], depth, thick, mu, 1.0e-7 * mu,
+                                     rtol=1.0e-10)
+    close("image series over a fluid -> D / 2H far from the fault",
+          float(np.abs(fluid - depth / (2.0 * thick)).max()), 1.0e-4)
+    t = np.array([0.1, 1.0, 5.0, 30.0])
+    for mu_sub in (mu, 2.0 * mu):
+        series = layered_box.maxwell_series(x, t, depth, thick, mu, mu_sub, 1.0)
+
+        def transform(sv, xx):
+            """The image series at mu(s), summed at the contour's precision."""
+            gam = (mu - mu_sub * MAXWELL.shear_ratio(sv)) \
+                / (mu + mu_sub * MAXWELL.shear_ratio(sv))
+            tot, gn = mp.atan(depth / xx), mp.mpf(1)
+            for n in range(1, 4000):
+                gn = gn * gam
+                term = gn * (mp.atan((2 * n * thick + depth) / xx)
+                             - mp.atan((2 * n * thick - depth) / xx))
+                tot += term
+                if abs(term) < mp.mpf(10) ** (-24) * abs(tot):
+                    break
+            return tot / mp.pi
+        ref = np.array([step_response(lambda sv: transform(sv, mp.mpf(xx)), t)
+                        for xx in x]).T
+        close(f"Maxwell series == the image series at mu(s), inverted "
+              f"(substrate {mu_sub / mu:g} x plate)",
+              float(np.abs(series - ref).max()), TOL_PLATE_FORMS)
+    above("... and it relaxes: the far field grows several-fold",
+          float(series[-1, -1] / series[0, -1]), 3.0)
+
+
 def main() -> bool:
     t0 = time.time()
     print("=" * 76)
@@ -727,6 +771,7 @@ def main() -> bool:
     i_sphere()
     j_torsion()
     k_penny()
+    l_plate_closed_forms()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

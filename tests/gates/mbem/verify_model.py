@@ -16,6 +16,10 @@ Checks (PASS/FAIL):
      the closure sum 4 pi, is_anchored() is False and sigma_table() empty; it
      is refused without a fault; and clause d still rejects a fault outside
      a bounded region afterwards (the empty-boundary branch loosened nothing)
+  i. with_materials() is a material STATE of the same geometry: the named
+     region gets the new material, every Patch and fault object is shared
+     (an interface is identified by ``is``), the orientation table is the
+     same, the base model is untouched, and an unknown region is refused
 """
 import pathlib
 import sys
@@ -125,6 +129,7 @@ def main() -> bool:
     print("  [ok] mbem.cases.fault_box.build_model validates")
     ok &= _ring_clears_the_trace()
     ok &= _full_space()
+    ok &= _material_state()
     # Printed HERE rather than in __main__, so a caller that imports this gate
     # and calls main() sees the verdict too -- every other gate prints its own.
     print(("PASS" if ok else "FAIL") + ": RegionModel fault validation")
@@ -156,6 +161,35 @@ def _full_space() -> bool:
     ok &= _rejects("h''. clause d after h: fault outside a bounded region still rejected",
                    lambda: _two_layer([_fault("f", -1.8, -1.2)], []), "not inside")
     return bool(ok)
+
+
+def _material_state() -> bool:
+    """i. A material state shares the geometry and replaces only moduli."""
+    base = _two_layer([_fault("f1", -0.8, -0.2)], [_fault("f2", -1.8, -1.2)])
+    other = mb.ElasticMaterial(mu=7.0, lam=19.0)
+    st = base.with_materials({"lower": other})
+    up0, lo0 = base.regions
+    up1, lo1 = st.regions
+    shared = all(p is q for a, b in ((up0, up1), (lo0, lo1))
+                 for p, q in zip(a.patches + a.faults, b.patches + b.faults))
+    good = (lo1.material is other and up1.material is MAT
+            and lo0.material is MAT                       # the base is left alone
+            and shared and len(lo1.patches) == len(lo0.patches)
+            and st.sigma_table() == base.sigma_table()
+            and st.orientation(lo1, lo1.faults[0])
+            == base.orientation(lo0, lo0.faults[0])
+            and [r.name for r in st.interface_regions(lo1.patches[0])]
+            == ["upper", "lower"])
+    print(f"  [{'ok' if good else 'FAIL'}] i. with_materials: new moduli on "
+          f"the named region, geometry and sigma shared, base untouched")
+    try:
+        base.with_materials({"mantle": other})
+        refused = False
+    except KeyError as e:
+        refused = "unknown region" in str(e)
+    print(f"  [{'ok' if refused else 'FAIL'}] i'. with_materials refuses a "
+          f"region the model does not have")
+    return bool(good and refused)
 
 
 def _ring_clears_the_trace() -> bool:

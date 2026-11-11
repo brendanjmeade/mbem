@@ -29,12 +29,23 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      runner.execute records bc FAULT_TRACTION, layout continuous, n_dofs and
      the locked count in the fingerprint, ONE numeric eps for the fault, the
      slot "b:penny", and writes it to the fields npz with (n_dofs, 3) rows.
+  i  a STATE is the base model with its own materials replaced, on every
+     backend. The two ``rebuild_for_materials`` disagree about a region the
+     map does not name (dense keeps the operator's current material,
+     compressed resets to the base), so the runner hands over the complete
+     map and a run means one thing. Pinned on DENSE, the backend whose own
+     rule is the other one: a state after an unrelated state equals the same
+     state run alone, an empty state after a non-empty one is the base again,
+     and both differ from what carrying materials over would give. Also: two
+     labels that collide as file names are refused, and the dump's states
+     resolve to the materials the run was solved at.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import pathlib
@@ -279,6 +290,72 @@ def h_penny_run(run_dir: pathlib.Path) -> None:
               f"{z['b:penny'].shape if 'b:penny' in z.files else z.files}")
 
 
+def _fields(run_dir: pathlib.Path, label: str) -> np.ndarray:
+    with np.load(run_dir / f"fields_{cfg.slug(label)}.npz") as z:
+        return np.concatenate([z[k].ravel() for k in sorted(z.files)])
+
+
+def _rel(a, b) -> float:
+    return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
+
+def i_states(tmp: pathlib.Path) -> None:
+    """[i] what a state's materials are, stated once and honoured."""
+    print("\n[i] a state is the base with its own materials, on any backend")
+    path = CONFIGS / "topo_inclusion.py"
+    base = cfg.load(path, surface="flat", backend="dense", scale=0.35)
+    soft = cfg.Material(mu=6.0, lam=11.0)        # the inclusion, state A
+    stiff = cfg.Material(mu=45.0, lam=20.0)      # the HOST, state B
+    quiet = cfg.Output(slots=(), figures=())
+
+    def run(tag, states):
+        d = tmp / tag
+        d.mkdir()
+        r = dataclasses.replace(base, states=states, outputs=quiet)
+        rep = runner.execute(r, d, path)
+        check(f"run {tag!r} finished", rep["status"] == "OK", rep["status"])
+        return d
+
+    chain = run("chain", (cfg.State("base"),
+                          cfg.State("A", {"inclusion": soft}),
+                          cfg.State("B", {"host": stiff}),
+                          cfg.State("again")))
+    alone = run("alone", (cfg.State("B", {"host": stiff}),))
+    carried = run("carried", (cfg.State("AB", {"inclusion": soft,
+                                               "host": stiff}),))
+    b = _fields(chain, "B")
+    got = _rel(b, _fields(alone, "B"))
+    check("B after A == B alone (nothing carries over)", got < 1e-10,
+          f"{got:.1e}")
+    got = _rel(_fields(chain, "again"), _fields(chain, "base"))
+    check("an empty state after others == the base state", got < 1e-10,
+          f"{got:.1e}")
+    miss = _rel(b, _fields(carried, "AB"))
+    check("... and B is NOT A's inclusion carried into B (tripwire)",
+          miss > 1e-3, f"{miss:.1e}")
+
+    spec = json.loads((chain / "resolved.json").read_text())["spec"]
+    live = cfg.state_overrides(
+        dataclasses.replace(base, states=(cfg.State("A", {"inclusion": soft}),
+                                          cfg.State("B", {"host": stiff}))
+                            ).states)
+    dumped = cfg.state_overrides(spec["states"])
+    check("the dump's states resolve to the materials that were solved",
+          all(dumped[k] == live[k] for k in live)
+          and dumped["base"] == {} and dumped["again"] == {},
+          f"{sorted(dumped)}")
+
+    try:
+        dataclasses.replace(base, states=(cfg.State("s=1e+03"),
+                                          cfg.State("s=1e-03")))
+        refused = ""
+    except ValueError as e:
+        refused = str(e)
+    check("labels that collide as file names are refused",
+          "collide as file names" in refused,
+          f"{cfg.slug('s=1e+03')} / {cfg.slug('s=1e-03')}")
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -297,6 +374,7 @@ def main() -> bool:
         penny_dir = pathlib.Path(tmp) / "penny"
         penny_dir.mkdir()
         h_penny_run(penny_dir)
+        i_states(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

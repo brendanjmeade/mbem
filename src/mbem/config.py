@@ -31,6 +31,7 @@ import dataclasses
 import importlib
 import importlib.util
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -41,6 +42,16 @@ from typing import Any, Callable, Mapping
 EpsSpec = float | str | Mapping[str, Any]      # scalar | "auto" | {patch: spec}
 
 BACKENDS = ("dense", "hmat", "fmm")
+
+
+def slug(s) -> str:
+    """A label as it appears in a file or directory name.
+
+    Lossy on purpose (``+`` and spaces collapse to ``-``), so two labels can
+    share one: ``Run`` refuses states whose slugs collide, because the second
+    ``fields_<slug>.npz`` would overwrite the first without a word.
+    """
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s)).strip("-") or "x"
 
 
 @dataclass(frozen=True)
@@ -140,9 +151,34 @@ class State:
     is the whole reason they are states of a run rather than separate runs: the
     compressed geometry is reused. Anything that changes the MESH is a
     different run, because it is a different operator.
+
+    A state is the BASE model with ``materials`` replaced: it names every
+    region that differs from the base, and nothing carries over from the state
+    before it. So states do not depend on their order, and an empty one is the
+    base. The solve and every later readout of the state take its materials
+    from here (``state_overrides``); a readout through the base model would
+    apply the base moduli to this state's solution.
     """
     label: str
     materials: Mapping[str, Material] = field(default_factory=dict)
+
+
+def state_overrides(states) -> dict:
+    """``{file slug: {region name: Material}}``, the materials each state
+    replaces on the base model.
+
+    Takes ``State`` objects or the ``spec.states`` rows of a resolved dump, so
+    the runner that solves a state and the sampler that reads it back years
+    later resolve its materials through one function. Keyed by slug because
+    that is how a state's fields are found on disk.
+    """
+    out = {}
+    for st in states:
+        row = st if isinstance(st, Mapping) else dataclasses.asdict(st)
+        out[slug(row["label"])] = {
+            name: m if isinstance(m, Material) else Material(**m)
+            for name, m in row["materials"].items()}
+    return out
 
 
 @dataclass(frozen=True)
@@ -182,6 +218,12 @@ class Run:
         labels = [s.label for s in self.states]
         if len(set(labels)) != len(labels):
             raise ValueError(f"duplicate state labels: {labels}")
+        slugs = [slug(s) for s in labels]
+        if len(set(slugs)) != len(slugs):
+            raise ValueError(
+                f"state labels {labels} collide as file names {slugs}: each "
+                f"state writes fields_<slug>.npz, and the later one would "
+                f"overwrite the earlier")
 
 
 # ---------------------------------------------------------------------

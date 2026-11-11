@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import enum
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -714,3 +714,28 @@ class RegionModel:
 
     def sigma_table(self) -> dict[tuple[str, str], int]:
         return dict(self._sigma)
+
+    def with_materials(self, material_map: dict) -> "RegionModel":
+        """This model with some regions' materials replaced, nothing else.
+
+        ``material_map`` maps region name -> ElasticMaterial-compatible. A
+        solution solved after ``rebuild_for_materials`` must be READ BACK
+        through the result, because the evaluators take the moduli from the
+        ``Region`` and the rebuild changes them only inside the operator:
+        read through the base model, another state's densities are combined
+        with the base coefficients, and the answer is wrong and plausible.
+
+        Geometry is shared, not copied: the same Patch objects (an interface
+        is identified by ``is``) and the same orientation table, which depend
+        on the mesh alone. So nothing is re-validated, and this model is left
+        untouched.
+        """
+        unknown = set(material_map) - {r.name for r in self.regions}
+        if unknown:
+            raise KeyError(f"unknown region(s) {sorted(unknown)} "
+                           f"(regions: {[r.name for r in self.regions]})")
+        new = RegionModel.__new__(RegionModel)
+        new.regions = [replace(r, material=material_map[r.name])
+                       if r.name in material_map else r for r in self.regions]
+        new._sigma = self._sigma
+        return new

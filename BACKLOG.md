@@ -85,7 +85,13 @@ with a Burgers substrate. Gravity (`model.Gravity`, rule 17): buoyancy on the
 free surface and on density interfaces as a condition on the boundary, on the
 dense and both compressed backends, gated against loaded shells on a rigid
 core (exact) elastically, per s and in time, and against hydrostatics on a
-flat box.
+flat box. A dipping fault (`layered_box` takes `dip`, the model `rake`) and a
+30-degree thrust in the plate under gravity, against a plane-strain reference
+that is its own calculation (`dip_slip_profile`: held to cutde, to the
+classical stiffnesses, to the exact rotation of a dislocated free plate and to
+a contour inversion in time): the postseismic displacement within 120 km of
+the trace is off by 2.6 % / 4 % / 9 % at 1 / 10 / 100 Maxwell times on an
+800 km box, where gravity halves the late vertical motion.
 
 OPEN, in the order they bite:
 
@@ -101,13 +107,22 @@ OPEN, in the order they bite:
   the fault's discrete net force over the only stiffness left; not isolated.
 * **Time-stepping with memory on the boundary** (the note's section 6): what
   couples relaxation to stress-driven fault slip. Not built.
-* **A dipping fault under gravity.** Gravity is built, but the only case with
-  a relaxing substrate has a vertical strike-slip fault, which barely feels
-  it (6e-4 of the fault-parallel displacement; 16 % of the rms vertical motion
-  at ten Maxwell times). A thrust in the plate is where it is first order, and
-  where Rundle (1982), Pollitz (1997) and Barbot & Fialko (2010, their Fig. 9:
-  the vertical displacement halved near full relaxation) are there to compare
-  with. It needs a dip in `layered_box`, nothing in the solver.
+* **P0 bends a plate too little.** The relaxed vertical motion of the thrust
+  is short by an amount first order in the elements of the plate's two faces
+  and in the interface's eps: trough over the reference's 0.885 at 10 km /
+  15 km / 1.5 km on a 30 km plate, 0.943 at half of each, 0.958 at 5 / 5 /
+  0.5. A P1 top at 10 km is worth a P0 top at 5, so the remedy is higher
+  order on BOTH faces, and the compressed backend, which a plate this size
+  needs (205,026 unknowns at 800 km on the finer plate), is P0 only.
+* **A relaxed plate slides to the walls.** The thrust's horizontal
+  postseismic motion is 8-12 % short at 100 Maxwell times on every box:
+  clamped sides hold a plate whose halves would approach from farther than
+  the box. Free sides give the amplitude back and float the plate; this is
+  the half-space problem again, in the plane of the plate.
+* **Beyond a planar thrust that ends in the plate:** a megathrust crossing
+  the interface, a slab, and solved slip while the substrate relaxes. Not
+  attempted. Published cases to compare with: Rundle (1982), Pollitz (1997),
+  Barbot & Fialko (2010, their Fig. 9).
 * **Gravity's coupling with compression.** The treatment is exact for an
   incompressible body and off by `rho g L / K` otherwise (6 % per 100 km at
   K = 50 GPa). The missing term lives in the volume, as does self-gravitation.

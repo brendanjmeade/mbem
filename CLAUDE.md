@@ -17,7 +17,7 @@ is the bug.
 | path | what it is |
 |---|---|
 | `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults (slip prescribed, or solved from a traction condition: `BCType.FAULT_TRACTION`), the continuous P2 shared-node fault layout (`model/shared_nodes.py`), dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
-| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a strike-slip fault in the plate, and the antiplane closed forms it is compared with). Library code, because the gates and the studies both build from them. |
+| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a fault in the plate -- vertical strike-slip unless `dip` and `rake` say otherwise -- and what it is compared with: the antiplane closed forms, and for dip slip `dip_slip_profile`, a plane-strain reference under gravity that shares nothing with the boundary elements). Library code, because the gates and the studies both build from them. |
 | `src/mbem/rheology.py`, `src/mbem/laplace.py` | **Linear viscoelasticity, the Laplace route.** `rheology`: `Maxwell`, `Burgers` as operational shear moduli, stated in relaxation TIMES and modulus ratios (never viscosities), bulk modulus elastic; the states of a Laplace run; the one-eps rule. `laplace`: the collocation points for a window of times, and `Prony`, the fixed-pole fit that turns the stack of per-s elastic solutions into value, rate and periodic-cycle sums in time as one linear map. No kernel work: an operator at any s is the elastic one at `(mu(s), lam(s))`. |
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
@@ -30,7 +30,7 @@ is the bug.
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
 | `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`, `clq-rules.md`. |
-| `docs/viscoelastic.md` | The derivation viscoelasticity rests on (branch `ve1`). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; the time-stepper with boundary memory, which is a design and NOT built; why a region that relaxes needs ONE scalar eps; gravity as a condition on the boundary (section 7) and the sphere it is gated against; and what is open (the floating plate, a true half-space, gravity's coupling with compression). |
+| `docs/viscoelastic.md` | The derivation viscoelasticity rests on (branch `ve1`). With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; the time-stepper with boundary memory, which is a design and NOT built; why a region that relaxes needs ONE scalar eps; gravity as a condition on the boundary (section 7), the sphere it is gated against and the thrust in the plate measured under it; and what is open (the floating plate, a true half-space, gravity's coupling with compression, P0 on a plate that bends). |
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
@@ -56,6 +56,8 @@ python -m mbem run configs/onfault_stress.py --sweep eps=4,2,1 --sweep order_top
 python -m mbem run configs/penny.py --sweep a_over_h=8,16 --sweep order=0,2   # the traction-BC crack
 python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sides=free,clamped   # a Laplace run
 python -m mbem run configs/plate_substrate.py --set rho_plate=2700 --set rho_substrate=3300       # ... under gravity
+python -m mbem run configs/plate_substrate.py --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
+    --set edge_near=5 --set edge_interface=7.5 --set eps_substrate=0.75 --sweep gravity=0,1       # ... a thrust
 python -m mbem figure point_kernel                # model-free: no solve
 python -m mbem run configs/fault_box.py --dry-run   # validate only, build nothing
 python -m mbem list                              # runs, newest first
@@ -174,6 +176,12 @@ gates FAIL rather than skip without them.
     fluid creeps and needs `Prony(secular=True)`. The box is part of the
     model: there is no half-space, a plate with free sides floats as the
     substrate relaxes, and a result is trusted only inside the fit's window.
+    **A plate that BENDS is only as good as its two faces:** dip slip over a
+    relaxed substrate is short in the vertical by an amount first order in
+    the P0 elements of the top and the interface and in the interface's eps
+    (12 % at 10 km / 15 km / 1.5 km on a 30 km plate, 6 % at half of each;
+    `verify_viscoelastic` [n] pins it). Strike slip does not bend the plate
+    and never showed it, so budget those three before trusting a thrust.
     **A state is the base model with its own materials**, never cumulative,
     and is read back through `RegionModel.with_materials`.
 17. **Gravity is a condition on the boundary** (`model.Gravity`, held as

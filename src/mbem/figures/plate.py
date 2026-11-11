@@ -362,7 +362,7 @@ def plate_thrust(study):
         a2.set_xticks([float(b) for b in boxes])
         a2.set_xticklabels([f"{float(b):g}" for b in boxes])
         a2.minorticks_off()
-    top = np.ceil(worst * 5.0) / 5.0
+    top = np.ceil(worst * 15.0) / 10.0             # the legend's third is clear
     a2.set_ylim(0.0, top)
     a2.set_yticks([0.0, top / 2.0, top])
     a2.set_xlabel("box half-width (km)")

@@ -9,7 +9,8 @@ route, is built on them (`mbem.rheology`, `mbem.laplace`, `Run.laplace`); all
 three are gated by `tests/gates/mbem/verify_viscoelastic.py`. Sections 1 and 4
 are the algebra around them. Section 6, time-stepping, is a design and is NOT
 built. Section 7, gravity, is built: buoyancy on the free surface and on
-density interfaces, with nothing in the volume. Section 8 is what is open.
+density interfaces, with nothing in the volume, and a thrust in the plate
+held to an independent reference under it. Section 8 is what is open.
 
 Notation as in `clq-derivation.md`: $\mathbf d=\mathbf x-\mathbf y$,
 $R_\varepsilon=\sqrt{|\mathbf d|^2+\varepsilon^2}$. One new symbol carries the
@@ -444,6 +445,104 @@ the same on both boxes. A state costs one more single-layer product on the
 surface and the interface (solves 52 s against 42, 159 against 129) and
 converges in fewer iterations (at most 27 against 38).
 
+**A thrust in the plate** (`--set dip=30 --set rake=90`: `layered_box` takes
+a dip, the model a rake) is where gravity is first order. Dip slip bends the
+plate, and under a wavelength the substrate has relaxed beneath, only the
+plate's stiffness and gravity are left to resist. No closed form covers it,
+so the reference is a second calculation that shares nothing with the
+boundary elements (`layered_box.dip_slip_profile`): plane strain, one
+wavenumber at a time, the slip an eigenstrain that enters only as a jump at
+its depth, the conditions of the table above at the surface and the
+interface, a half-space or a rigid base below; inverted as the half-space
+closed form (Freund & Barnett 1976) plus the transform of the difference,
+and put through the same fit in time as the solution. A reference is only as
+good as its own anchors:
+
+| the reference against | measured |
+|---|---|
+| cutde's half-space, a very long thrust, three dips | 4e-6 of the slip |
+| a buried fault's transform, inverted with no closed form's help | 3e-7 |
+| a load on a half-space, $w+\mu g k$; on a plate over a fluid, $w_s+Dk^4$ | rounding; 4e-4 at $kH=0.09$ |
+| a dislocated FREE plate, its halves turned by $6\,b_x d\,(H-d)/H^3$ and closed by $b_x d/H$ | 7e-5 |
+| its fit in time against a contour inversion (Talbot), to $100\tau$ | 3e-4 |
+
+The free plate is the one exact result in which the source meets the plate's
+lower face. Far from the fault each half is rigid, and reciprocity with pure
+bending and with a pull gives the rotation and the closure of the mid-planes
+for a fault of depth $d$ and horizontal slip $b_x$, whatever its dip.
+
+*What gravity does.* A 30-degree thrust to 15 km in a 30 km plate, 2700 over
+3300 kg/m$^3$, a Maxwell substrate; displacements over the slip, in the
+reference. At the earthquake the hanging wall is up 0.41 at the trace and a
+trough of 0.11 lies over the fault's lower edge. Relaxation deepens the
+trough and raises a bulge either side of it:
+
+| depth of the trough | $0^+$ | $\tau$ | $10\tau$ | $100\tau$ | relaxed |
+|---|---|---|---|---|---|
+| under gravity | 0.11 | 0.14 | 0.30 | 0.52 | 0.52 |
+| without | 0.11 | 0.14 | 0.33 | 0.97 | none: a free plate keeps a kink |
+
+Gravity is little for ten Maxwell times and a factor of two by a hundred,
+when the plate is afloat (flexural parameter 69 km). Without it the answer
+also belongs to whatever lies below: a rigid base 400 km down takes the
+trough at $100\tau$ from 0.97 to 0.81, and under gravity from 0.52 to 0.49.
+
+*The model against it* (clamped sides, at mid-strike, $|x|<120$ km, the fault
+half as long as the box is wide). The elastic state is within 3 % in $u_x$
+and 4 % in $u_z$ of the reference with a rigid base where the model's is, 2 %
+and 3 % on the finer plate. The misfit of the postseismic displacement from
+the reference over a half-space, both components, rms over rms:
+
+| half-width (km) | top / interface / $\varepsilon$ (km) | gravity: $\tau$ | $10\tau$ | $100\tau$ | none: $\tau$ | $10\tau$ | $100\tau$ |
+|---|---|---|---|---|---|---|---|
+| 400 | 10 / 15 / 1.5 | 0.065 | 0.104 | 0.178 | 0.121 | 0.116 | 0.199 |
+| 800 | | 0.037 | 0.074 | 0.142 | 0.068 | 0.074 | 0.145 |
+| 1600 | | 0.039 | 0.074 | 0.136 | 0.046 | 0.071 | 0.136 |
+| 400 | 5 / 7.5 / 0.75 | 0.065 | 0.083 | 0.138 | 0.126 | 0.103 | 0.139 |
+| 800 | | 0.026 | 0.041 | 0.092 | 0.074 | 0.056 | 0.085 |
+
+The box matters at 400 km and no longer by 800. Two other things are in what
+is left, and the gravity term is neither: the gate holds the same thrust
+under ten times gravity to 5 % and 10 % where the reference without gravity
+misses by 64 %.
+
+*A plate that bends is only as good as its two faces.* On the first mesh the
+trough at $100\tau$ under gravity is 0.87-0.89 of the reference's on all
+three boxes. Followed down in $\tilde\mu$, the model's trough stops deepening where
+the reference's goes on, so it is the plate afloat that differs, and it is
+discretization. Afloat at $\tilde\mu/\mu=10^{-4}$, dense, a 300 km box,
+$\nu=0.31$, trough over the reference's:
+
+| top / interface / $\varepsilon$ / fault (km) | trough |
+|---|---|
+| 10 / 15 / 1.5 / 5 | 0.885 |
+| 5 / 15 / 1.5 / 5 | 0.911 |
+| 10 / 7.5 / 1.5 / 5 | 0.890 |
+| 10 / 15 / 0.75 / 5 | 0.898 |
+| 5 / 7.5 / 0.75 / 5 | 0.943 |
+| 5 / 5 / 0.5 / 2.5 | 0.958 |
+| P1 top at 10, the rest as the first row | 0.915 |
+
+First order in the elements of each face and in the interface's
+$\varepsilon$, each modest and all of one sign; a P1 top is worth a P0 top of
+half the size. It is not the box, the walls, the fault's length, the mesh
+beyond the near field or the compressed backend, each of which was varied.
+The strike-slip plate never showed it because antiplane shear does not bend
+the plate, and while the substrate still carries load, at
+$\tilde\mu/\mu=0.03$, the first mesh is within 3 %. On the finer plate the
+trough at $100\tau$ is 0.93-0.94 of the reference's.
+
+*A relaxed plate slides, and the walls hold it.* The horizontal postseismic
+motion is short by 8-12 % at $100\tau$ on the largest boxes. Over a relaxed
+substrate the two halves of the plate approach from as far as the
+substrate's remaining shear reaches, which late on is farther than any box
+here, and clamped sides stop them. Free sides give the amplitude back (0.98
+of the reference against 0.93 at $\tilde\mu/\mu=0.003$ on the 300 km box)
+and float the plate (section 8).
+
+The 800 km box on the finer plate is 205,026 unknowns, 14 states in 19
+minutes, 42-48 iterations a state under gravity and up to 98 without.
+
 ## 8. Open
 
 - **A plate with free sides floats.** As $\tilde\mu(s)\to0$ only the shear of
@@ -462,22 +561,30 @@ converges in fewer iterations (at most 27 against 38).
 - A region that extends to infinity while touching an interface (a true
   half-space under a plate). Regions must close today.
 - Gravity beyond section 7: the coupling of gravity with COMPRESSION, of
-  order $wL/K$, is a term in the volume; so is self-gravitation. And no case
-  here has a dipping fault, which is where gravity is a first-order effect on
-  the cycle: on the plate of section 5, whose fault is vertical strike-slip,
-  it moves the fault-parallel displacement at mid-strike by 6e-4 of its peak
-  and takes 16 % off the rms vertical motion at ten Maxwell times.
+  order $wL/K$, is a term in the volume; so is self-gravitation.
+- **A plate that bends, on P0 faces.** The relaxed vertical motion of a
+  dipping fault is short by an amount first order in the elements of the
+  plate's two faces and in the interface's $\varepsilon$ (section 7: 12 % at
+  a third and a half of the plate's thickness, 6 % at half of each). Higher
+  order on BOTH faces is the remedy and the compressed backend, which a
+  plate this size needs, is P0 only.
+- The dipping fault here is a planar thrust that ends inside the plate. A
+  megathrust that crosses the interface, a slab, and slip that is solved
+  rather than prescribed while the substrate relaxes are not attempted.
 - A solved (traction) fault that crosses an interface.
 - Nonlinear rheology is out of scope: it needs the viscous strain in the
   volume.
 
 ## References
 
-Haskell (1935) Physics 6. Rizzo & Shippy (1971) SIAM J. Appl. Math. Kusama & Mitsui (1982) Appl.
+Haskell (1935) Physics 6. Rizzo & Shippy (1971) SIAM J. Appl. Math. Freund &
+Barnett (1976) Bull. Seismol. Soc. Am. 66, 667 (dip slip in a half-space,
+plane strain). Kusama & Mitsui (1982) Appl.
 Math. Model. Sim & Kwak (1988) Comput. Struct. Schanz & Antes (1997)
 Comput. Mech. Gaul & Schanz (1999) Comput. Methods Appl. Mech. Eng. 179.
 Pan, Sassolas, Amadei & Pfeffer (1997) Comput. Mech. 19. Syngellakis & Wu
-(2004) Eng. Anal. Bound. Elem. 28. Mesquita & Coda (2007) Appl. Math. Model.,
+(2004) Eng. Anal. Bound. Elem. 28. Abate & Valko (2004) Int. J. Numer.
+Methods Eng. 60, 979 (the fixed Talbot contour). Mesquita & Coda (2007) Appl. Math. Model.,
 "A boundary element methodology for viscoelastic analysis: Part II without
 cells". Panagiotopoulos, Mantic & Roubicek (2014) arXiv:1402.6631. Hetland &
 Hager (2005) J. Geophys. Res. 110. Fukahata & Matsu'ura (2006) Geophys. J.

@@ -237,7 +237,39 @@ fixed point of space; the stress of the material is that plus
 with the heavier side up, because a body that relaxes then has a growing mode
 and the fit has only decaying ones.  And a long strike-slip fault barely feels
 any of this (6e-4 of the fault-parallel displacement on the plate above);
-gravity acts on vertical motion, and no case here has a dipping fault yet.
+gravity acts on vertical motion.
+
+A thrust is where it is first order, and `configs/plate_substrate.py` runs one:
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
+    --set edge_near=5 --set edge_interface=7.5 --set eps_substrate=0.75 \
+    --sweep half_x=400,800 --sweep gravity=0,1
+```
+
+The fault breaks the surface along x = 0 and dips toward +x; `rake` is Aki &
+Richards' (180 right-lateral, the default; 90 a thrust).  Dip slip bends the
+plate.  In the reference a 30-degree thrust to 15 km in a 30 km plate leaves
+a trough over its lower edge 0.11 of the slip deep at the earthquake, 0.30
+after ten Maxwell times and 0.52 after a hundred, where it stops, the plate
+afloat; without gravity it is 0.97 at a hundred and has no limit.
+
+That reference is a second calculation, since no closed form covers a plate
+over a relaxing substrate under gravity: plane strain, one wavenumber at a
+time (`mbem.cases.layered_box.dip_slip_profile`), itself held to cutde's
+half-space (4e-6), to the classical stiffness of a loaded half-space and of a
+plate on a fluid, to the exact rotation of a dislocated free plate (7e-5) and
+to a contour inversion in time (3e-4).  Against it, on the 800 km box above,
+the postseismic displacement within 120 km of the trace is off by 2.6 % at
+one Maxwell time, 4 % at ten and 9 % at a hundred.
+
+One thing to know that the strike-slip plate never showed.  A plate that
+bends is only as good as its two faces: with piecewise-constant elements the
+relaxed vertical motion is short by an amount first order in the elements on
+the top and on the interface and in the interface's eps -- 12 % at 10 km,
+15 km and 1.5 km on a 30 km plate, 6 % at half of each, which is what the
+three `--set edge_near / edge_interface / eps_substrate` above are for.
 
 ## Layout
 
@@ -345,7 +377,7 @@ python tests/gates/mbem/verify_evaluate_stress.py            # mbem stress == cl
 python tests/gates/mbem/verify_stress_assembler.py           # numba batched stress assemblers == scalar oracle (machine precision)
 python tests/gates/mbem/verify_eigenstress_exact.py           # EXACT finite-triangle eigenstress == moss/clq oracles; sign; rim disagreement with anelastic.py
 python tests/gates/mbem/verify_boundary_eigenstress.py       # boundary double layers subtracted too: near-boundary interior stress converges (icosphere vs exact Kelvin)
-python tests/gates/mbem/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space and manufactured solutions (end to end)
+python tests/gates/mbem/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space (strike slip, and a 30-degree thrust) and manufactured solutions (end to end)
 python tests/gates/mbem/verify_disp_contract.py              # matrix-free displacement evaluation == dense matrices == legacy oracle
 python tests/gates/mbem/verify_dense_backend.py              # dense assembly invariants (calibration cache bit-identity, rebuilds)
 python tests/gates/mbem/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, rung ladder)
@@ -354,7 +386,7 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
 python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
-python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack)
+python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack); gravity on a relaxing shell; a dipping fault's plane-strain reference and a thrust under gravity against it
 ```
 
 ## The field in the volume

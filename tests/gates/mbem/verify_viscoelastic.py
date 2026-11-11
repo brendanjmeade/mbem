@@ -74,7 +74,9 @@ the real-axis fit under test.
      half-space; a plate over a fluid, where every point ends at D / 2H of
      the slip), and the Maxwell time series IS the image series at mu(s),
      inverted -- one pole n-fold, equal and unequal moduli. A reference that
-     is wrong is worse than none, and these two share no step.
+     is wrong is worse than none, and these two share no step. For a Burgers
+     substrate the reference is that series put through the fit, held to the
+     same contour.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -747,15 +749,15 @@ def l_plate_closed_forms() -> None:
     close("image series over a fluid -> D / 2H far from the fault",
           float(np.abs(fluid - depth / (2.0 * thick)).max()), 1.0e-4)
     t = np.array([0.1, 1.0, 5.0, 30.0])
-    for mu_sub in (mu, 2.0 * mu):
-        series = layered_box.maxwell_series(x, t, depth, thick, mu, mu_sub, 1.0)
 
+    def contour(rheo, mu_sub, tt):
+        """The image series at mu(s), summed at the contour's precision and
+        inverted there: ``(n_t, n_x)``."""
         def transform(sv, xx):
-            """The image series at mu(s), summed at the contour's precision."""
-            gam = (mu - mu_sub * MAXWELL.shear_ratio(sv)) \
-                / (mu + mu_sub * MAXWELL.shear_ratio(sv))
+            gam = (mu - mu_sub * rheo.shear_ratio(sv)) \
+                / (mu + mu_sub * rheo.shear_ratio(sv))
             tot, gn = mp.atan(depth / xx), mp.mpf(1)
-            for n in range(1, 4000):
+            for n in range(1, 20000):
                 gn = gn * gam
                 term = gn * (mp.atan((2 * n * thick + depth) / xx)
                              - mp.atan((2 * n * thick - depth) / xx))
@@ -763,11 +765,29 @@ def l_plate_closed_forms() -> None:
                 if abs(term) < mp.mpf(10) ** (-24) * abs(tot):
                     break
             return tot / mp.pi
-        ref = np.array([step_response(lambda sv: transform(sv, mp.mpf(xx)), t)
-                        for xx in x]).T
+        return np.array([step_response(lambda sv: transform(sv, mp.mpf(xx)), tt)
+                         for xx in x]).T
+
+    for mu_sub in (mu, 2.0 * mu):
+        series = layered_box.maxwell_series(x, t, depth, thick, mu, mu_sub, 1.0)
         close(f"Maxwell series == the image series at mu(s), inverted "
               f"(substrate {mu_sub / mu:g} x plate)",
-              float(np.abs(series - ref).max()), TOL_PLATE_FORMS)
+              float(np.abs(series - contour(MAXWELL, mu_sub, t)).max()),
+              TOL_PLATE_FORMS)
+    # A Burgers substrate has no such series, so the study's reference for it
+    # is the image series at mu(s_k) put through the SAME fit as the solution
+    # (``figures.plate.reference``). Held here to the contour, over a window
+    # that reaches below the transient time.
+    burgers = rheology.Burgers(tau_M=1.0, tau_K=0.1, kelvin=1.0)
+    s = laplace.s_grid(0.02, 10.0)
+    stack = np.array([layered_box.image_series(
+        x, depth, thick, mu, mu * burgers.shear_ratio(sv))
+        for sv in (np.inf,) + s])
+    tb = np.array([0.03, 0.3, 3.0, 10.0])
+    fitted = laplace.Prony(s).weights(tb) @ stack
+    close("Burgers substrate: the fitted image series == its contour inversion",
+          float(np.abs(fitted / contour(burgers, mu, tb) - 1.0).max()),
+          TOL_INV_VALUE)
     above("... and it relaxes: the far field grows several-fold",
           float(series[-1, -1] / series[0, -1]), 3.0)
 

@@ -80,7 +80,8 @@ DONE. The structure it rests on (every operator of a region is geometry times
 `mbem.rheology` (Maxwell, Burgers; bulk elastic), `Run.laplace` (states derived
 from the model), `mbem.laplace` (collocation points, the fixed-pole fit, rate
 and periodic sums), gated per s and in time against four closed forms. The
-plate-over-substrate case and config.
+plate-over-substrate case and config, run on a box ladder with a Maxwell and
+with a Burgers substrate.
 
 OPEN, in the order they bite:
 

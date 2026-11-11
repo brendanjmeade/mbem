@@ -269,6 +269,15 @@ sides are 1-3 points closer at the smaller boxes and the same at the largest):
 | 800 km | 0.995 | 0.970 | 0.960 | 0.912 |
 | 1600 km | 0.997 | 0.989 | 0.988 | 0.969 |
 
+A Burgers substrate (`--set tau_K=0.1 --set t_min=0.02`: transient time
+$0.1\tau$, Kelvin spring equal to the unrelaxed modulus, the window reaching
+below the transient) converges on the same ladder at the same rate:
+postseismic 0.84 / 0.95 / 0.98 at $\tau$ and 0.76 / 0.91 / 0.97 at $10\tau$,
+and 0.87 / 0.96 / 0.99 at $0.03\tau$, inside the transient. It has no series
+in closed form, so its reference is the image series at $\tilde\mu(s_k)$ put
+through the same fit as the solution, which the gate holds to the contour
+inversion (2e-4).
+
 The postseismic part $u(t)-u(0^+)$ is the long-wavelength part and feels the
 box first. Within 8 km of the fault the total displacement is within 1.1 % at
 every size and time. So a result near the fault at a few Maxwell times wants a

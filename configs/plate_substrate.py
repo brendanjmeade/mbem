@@ -7,6 +7,8 @@ elastic state plus one elastic solve per real s, all on one assembly, which
     python -m mbem run configs/plate_substrate.py
     python -m mbem run configs/plate_substrate.py \
         --sweep half_x=400,800 --sweep sides=free,clamped
+    python -m mbem run configs/plate_substrate.py \
+        --set tau_K=0.1 --set t_min=0.02 --sweep half_x=400,800   # Burgers
 
 Lengths are km. TIME IS IN UNITS OF THE SUBSTRATE'S MAXWELL TIME (``tau = 1``),
 which is all a linear problem needs: the rheology is stated in relaxation
@@ -30,7 +32,8 @@ keep ``"auto"``.
 
 ``tau_K > 0`` makes the substrate a Burgers body with that transient time and
 the Kelvin spring ``kelvin`` times the unrelaxed modulus; ``tau`` is then its
-steady (Maxwell) time, still 1.
+steady (Maxwell) time, still 1. Lower ``t_min`` with it: the fit is trusted
+only inside its window, and the transient is over by a few ``tau_K``.
 """
 from mbem import laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve

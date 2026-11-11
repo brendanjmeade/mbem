@@ -20,12 +20,32 @@ Regenerating the manifest defeats the gate.  Do it ONLY when a change to the
 slip kernels is intended, and say so in the commit message:
 
     python verify/verify_baseline_bitwise.py --regenerate
+
+BYTES ARE PER PLATFORM.  The hashes are of float64 bytes, and those depend on
+the CPU and on numpy's SIMD kernels as well as on the code: on x86-64 Linux
+576 of the 648 arrays differ from the manifest recorded on the Mac, by
+rounding, with identical sources.  A tolerance is still the wrong answer --
+the gate would stop being bitwise everywhere -- so a platform may carry its
+OWN pin under ``platforms[<sys.platform>-<machine>]``, compared bitwise in
+place of the reference entries.  A platform with no pin of its own is compared
+against the reference, exactly as before.
+
+    python verify/verify_baseline_bitwise.py --record-platform
+
+records one, and refuses unless the clq closed-form sources are byte-identical
+to the frozen-oracle manifest (``tests/gates/mbem/oracle_manifest.json``, the
+one statement of what the oracle IS): a platform pin is a statement about the
+oracle on that platform, not about whatever tree happens to be checked out.
+``--regenerate`` rewrites this platform's pin if it has one and the reference
+entries otherwise, so on the reference platform it does what it always did;
+other platforms' pins then fail there until recorded again, which is right.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import pathlib
+import platform
 import sys
 
 import numpy as np
@@ -34,6 +54,23 @@ import clq                                                       # noqa: E402
 
 MANIFEST = pathlib.Path(__file__).resolve().parent / "baseline_uhe.json"
 BASELINE_COMMIT = "72c2840"
+PLATFORM = f"{sys.platform}-{platform.machine()}"
+ORACLES = (pathlib.Path(__file__).resolve().parents[1] / "mbem"
+           / "oracle_manifest.json")
+
+
+def _drifted_oracles() -> list:
+    """clq sources that are NOT the frozen oracle's, by the oracle manifest."""
+    root = ORACLES.resolve().parents[3]
+    pins = json.loads(ORACLES.read_text())
+    return sorted(
+        name for name, pin in pins.items() if name.startswith("clq.")
+        and hashlib.sha256((root / pin["path"]).read_bytes()).hexdigest()
+        != pin["sha256"])
+
+
+def _write(man: dict) -> None:
+    MANIFEST.write_text(json.dumps(man, indent=1, sort_keys=True))
 
 TRIS = {
     "equilateral": [[0., 0., 0.], [1., 0., 0.], [0.5, np.sqrt(3) / 2, 0.]],
@@ -77,24 +114,60 @@ def sweep():
     return out
 
 
+def _platform_pin(cur: dict) -> dict:
+    return {"entries": {k: v[0] for k, v in cur.items()},
+            "recorded": {"numpy": np.__version__,
+                         "python": platform.python_version(),
+                         "note": "clq closed-form sources byte-identical to "
+                                 "oracle_manifest.json when recorded"}}
+
+
 def main(argv):
+    man = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+    pins = man.get("platforms", {})
+
+    if "--record-platform" in argv:
+        drift = _drifted_oracles()
+        if drift:
+            print(f"FAIL: not recording a pin for {PLATFORM}: {drift} differ "
+                  f"from the frozen-oracle manifest, so this tree is not the "
+                  f"oracle")
+            return False
+        if not man:
+            print(f"FAIL: no reference manifest at {MANIFEST} to add to")
+            return False
+        cur = sweep()
+        man.setdefault("platforms", {})[PLATFORM] = _platform_pin(cur)
+        _write(man)
+        print(f"recorded a bitwise pin for {PLATFORM} ({len(cur)} arrays); "
+              f"the reference entries are untouched")
+        return True
+
     if "--regenerate" in argv:
         cur = sweep()
-        MANIFEST.write_text(json.dumps(
-            {"baseline_commit": BASELINE_COMMIT,
-             "note": "sha256 of float64 bytes; see verify_baseline_bitwise.py",
-             "entries": {k: v[0] for k, v in cur.items()},
-             "shapes": {k: v[1] for k, v in cur.items()}}, indent=1, sort_keys=True))
+        if PLATFORM in pins:
+            pins[PLATFORM] = _platform_pin(cur)
+            _write(man)
+            print(f"regenerated the {PLATFORM} pin with {len(cur)} entries")
+            return True
+        man.update({"baseline_commit": BASELINE_COMMIT,
+                    "note": "sha256 of float64 bytes; see "
+                            "verify_baseline_bitwise.py",
+                    "entries": {k: v[0] for k, v in cur.items()},
+                    "shapes": {k: v[1] for k, v in cur.items()}})
+        _write(man)
         print(f"regenerated {MANIFEST.name} with {len(cur)} entries -- "
               "the bitwise gate is now pinned to the CURRENT tree")
         return True
 
-    if not MANIFEST.exists():
+    if not man:
         print(f"FAIL: baseline bitwise -- no manifest at {MANIFEST}")
         return False
-    man = json.loads(MANIFEST.read_text())
-    want, shapes = man["entries"], man.get("shapes", {})
+    own = PLATFORM in pins
+    want = pins[PLATFORM]["entries"] if own else man["entries"]
+    shapes = man.get("shapes", {})
     cur = sweep()
+    print(f"reference: {'the ' + PLATFORM + ' pin' if own else 'the baseline entries (no pin for ' + PLATFORM + ')'}")
 
     missing = sorted(set(want) - set(cur))
     extra = sorted(set(cur) - set(want))
@@ -118,6 +191,10 @@ def main(argv):
         print(f"    missing: {k}")
 
     bad = bool(changed or missing or reshaped)
+    if changed and not own:
+        print(f"  note: byte hashes are per platform, and {PLATFORM} has no "
+              f"pin of its own. If verify_oracle_provenance passes, the "
+              f"sources are the oracle's and --record-platform pins them here")
     if extra and not bad:
         print("  note: new configurations are not a failure, but run "
               "--regenerate to pin them once the change is intended")

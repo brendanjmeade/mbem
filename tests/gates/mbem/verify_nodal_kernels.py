@@ -24,7 +24,12 @@ BY FILE PATH from ``../clq`` (a missing clq is a FAIL, never a skip).
         G, the stress drivers are H and S, the eigenstress driver is E.
         Block-wise max|diff| / max|clq| < 1e-12 over the near, on and far
         observers (E over all observers), and the near, on and far groups
-        each meet 1e-12 on their own scale.  Away from the element the
+        each meet 1e-12 on their own scale -- except ON the sliver, which
+        has its own pin of 1e-11: at L / height = 50 and P2 the on-element
+        rounding is 1.0-1.6e-12 on x86-64 Linux and under 1e-12 on the Mac
+        the pin was first set on, with identical sources (the same
+        amplification the next sentence describes, at its mildest).  Away
+        from the element the
         divergence-theorem closed form amplifies ulp-level differences between
         two implementations (more with the order and with L / height; the
         reason for the Gauss crossover at defaults.NODAL_D_STAR), so the
@@ -78,8 +83,13 @@ NUS = (0.25, 0.30)
 ORDERS = (0, 1, 2)
 EPS_OVER_H = (0.05, 0.3)
 TOL_PRIM = 1e-14         # edge primitives vs clq, entrywise
-TOL_BLOCK = 1e-12        # near + far observers, U G H S; all observers, E
-TOL_GROUP = 1e-12        # near and far groups on their own scale
+# near + on + far observers, U G H S; all observers, E. Per triangle: measured
+# worst 4e-14 on the well-shaped ones and 1.2e-12 on the sliver (P2,
+# eps/h = 0.3, x86-64 Linux), so one number for all three either fails on a
+# platform or stops testing the triangles that can be tested hard.
+TOL_BLOCK = {"equilateral": 1e-12, "scalene": 1e-12, "sliver": 1e-11}
+TOL_GROUP = 1e-12        # near, on and far groups on their own scale
+TOL_ON_SLIVER = 1e-11    # the on-element group ON THE SLIVER; 1.6e-12 measured
 TOL_BROAD = {"equilateral": 1e-11, "scalene": 1e-11, "sliver": 1e-9}    # 2 L broadside, own scale
 TOL_MID_QUAD = {"equilateral": 1e-8, "scalene": 1e-8, "sliver": 1e-6}   # 2-9.9 L vs Gauss
 N_GAUSS_REF = 40
@@ -288,8 +298,12 @@ def i_clq_parity(clq):
                                 Estar=clq_eigen_tensor(ref.E, nrm, MU, nu))
                     for key in keys + ("Estar",):
                         for g in PINNED:
-                            worst[(g, key)] = max(worst.get((g, key), 0.0),
-                                                  relmax(got[key][sl[g]], refd[key][sl[g]]))
+                            # the sliver's on-element group is pinned apart
+                            # (TOL_ON_SLIVER), so the well-shaped triangles
+                            # keep the tight pin
+                            gk = "on_sliver" if (g, name) == ("on", "sliver") else g
+                            worst[(gk, key)] = max(worst.get((gk, key), 0.0),
+                                                   relmax(got[key][sl[g]], refd[key][sl[g]]))
                         worst[("broad", name)] = max(
                             worst.get(("broad", name), 0.0),
                             relmax(got[key][sl["broad"]], refd[key][sl["broad"]]))
@@ -304,13 +318,15 @@ def i_clq_parity(clq):
                     label = f"{name} eps/h={eh:g} nu={nu:.2f} p={p}"
                     val = max(max(relmax(got[k][nf], refd[k][nf]) for k in keys),
                               relmax(got["Estar"], refd["Estar"]))
-                    check(f"{label}: U,G,H,S near+on+far, E all, block-wise", val, TOL_BLOCK)
+                    check(f"{label}: U,G,H,S near+on+far, E all, block-wise", val, TOL_BLOCK[name])
                     check(f"{label}: U,G,H,S mid 2-9.9 L per observer vs Gauss-{N_GAUSS_REF}",
                           mid_quad, TOL_MID_QUAD[name])
     for key in keys + ("Estar",):
         check(f"{key}: near group on its own scale (worst over all)", worst[("near", key)], TOL_GROUP)
         check(f"{key}: on-element group (z = 0: nodes, edge lines) on its own scale",
               worst[("on", key)], TOL_GROUP)
+        check(f"{key}: on-element group, the sliver (L / height = 50)",
+              worst[("on_sliver", key)], TOL_ON_SLIVER)
         check(f"{key}: far group 10.1-60 L on its own scale (Gauss)", worst[("far", key)], TOL_GROUP)
     for name, _tri in triangles(clq):
         check(f"{name}: broadside 2 L group on its own scale, U G H S E", worst[("broad", name)],

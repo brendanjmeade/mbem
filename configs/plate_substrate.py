@@ -12,8 +12,8 @@ A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
         --set tau_K=0.1 --set t_min=0.02 --sweep half_x=400,800   # Burgers
     python -m mbem run configs/plate_substrate.py \
         --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
-        --set edge_near=5 --set edge_interface=7.5 --set eps_substrate=0.75 \
-        --sweep half_x=400,800 --sweep gravity=0,1                # a thrust
+        --set edge_near=10 --set t_max=100 \
+        --sweep refine=1,2 --sweep gravity=0,1                    # a thrust
 
 Lengths are km. TIME IS IN UNITS OF THE SUBSTRATE'S MAXWELL TIME (``tau = 1``),
 which is all a linear problem needs: the rheology is stated in relaxation
@@ -57,6 +57,10 @@ elements the relaxed vertical motion is short by an amount first order in
 ``edge_near`` (the top within ``near_field_radius`` of the trace),
 ``edge_interface`` (the interface beneath it) and ``eps_substrate`` -- 12 %
 at 10 km, 15 km and 1.5 km on a 30 km plate, 6 % at half of each.
+
+``refine`` divides exactly those three, so ``--sweep refine=1,2`` is a pair
+on one ray and the error cancels between them: the thrust figure draws the
+two-mesh limit (``layered_box.two_mesh_limit``) and the misfit of each.
 """
 from mbem import defaults, laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
@@ -72,9 +76,13 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              rho_substrate: float = 0.0, gravity: float = 1.0,
              dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
              near_field_radius: float = 90.0,
-             edge_interface: float = 15.0) -> Run:
+             edge_interface: float = 15.0, refine: float = 1.0) -> Run:
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
+    # the plate's two faces and the interface's eps: what a plate that bends
+    # is first order in, kept in one ratio
+    edge_near, edge_interface, eps_substrate = (
+        v / refine for v in (edge_near, edge_interface, eps_substrate))
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
                  if tau_K > 0.0 else rheology.Maxwell(tau=1.0))
     eps = dict(top="auto", sides_upper="auto", fault="auto",
@@ -108,7 +116,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
         laplace=Laplace(rheology={"substrate": substrate},
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade)),
         outputs=Output(slots=(), save_meshes=True,
-                       figures=("plate_substrate" if rake % 180.0 == 0.0
-                                else "plate_thrust",)),
+                       figures=(("plate_substrate",) if rake % 180.0 == 0.0
+                                else ("plate_thrust", "plate_cycle"))),
         notes="plate over a relaxing substrate; times in Maxwell times",
         tags=("viscoelastic", "laplace"))

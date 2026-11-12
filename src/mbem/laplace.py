@@ -137,6 +137,30 @@ class Prony:
         """... and its rate: the interseismic velocity of the relaxation."""
         return self._basis(t, "cycle_rate", period) @ self._pinv
 
+    def relaxed_weights(self) -> np.ndarray:
+        """``(n_states,)``: the fit's constant, ``u(inf) = relaxed_weights() @
+        stack``. It is where the response stood at the END of the window;
+        whether the body had settled by then is the caller's to know."""
+        if self.secular:
+            raise ValueError("a creeping response never settles")
+        return self._pinv[0]
+
+    def locked_rate_weights(self, t, period: float) -> np.ndarray:
+        """``(n_t, n_states)``: the velocity, per unit slip RATE, of a fault
+        LOCKED between earthquakes that repeat every ``period``, measured
+        from the same fault slipping steadily at that rate:
+        ``period * sum_n du/dt(t + n period) - u(inf)``, at ``t`` after the
+        latest earthquake.
+
+        Its mean over a cycle is MINUS THE ELASTIC RESPONSE: the back-slip
+        model (Savage 1983) is the cycle's average, and relaxation only moves
+        velocity between early and late in it. What the response does long
+        after a period enters the sum and the limit alike and all but
+        cancels, so this asks less of the window than the limit itself does:
+        a few periods."""
+        return (float(period) * self.cycle_rate_weights(t, period)
+                - self.relaxed_weights()[None, :])
+
 
 def run_stack(run_dir) -> tuple:
     """``(s, {slot: (1 + len(s), ...) array})`` of a stored Laplace run.

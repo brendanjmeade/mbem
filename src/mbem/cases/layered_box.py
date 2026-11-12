@@ -170,6 +170,22 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
     return RegionModel([plate, substrate], gravity=gravity)
 
 
+def two_mesh_limit(coarse, fine, ratio):
+    """Richardson's limit of a result whose error is FIRST ORDER in an element
+    size, from two meshes with that size in ``ratio`` (coarse over fine):
+    ``(ratio fine - coarse) / (ratio - 1)``, both at the same points.
+
+    Here because a plate that BENDS needs it. Its relaxed vertical motion is
+    short by an amount first order in the P0 elements of its two faces and in
+    the interface's eps (docs/viscoelastic.md, section 7), so a pair must
+    have all three in ONE ratio, and the limit then stands where a mesh
+    several times finer would. It removes that error and no other: not the
+    box, and not the fault's own band at the trace."""
+    if not ratio > 1.0:
+        raise ValueError(f"ratio {ratio} must exceed 1: coarse over fine")
+    return (ratio * np.asarray(fine) - np.asarray(coarse)) / (ratio - 1.0)
+
+
 # ---------------------------------------------------------------------
 # the antiplane closed forms: an infinitely long fault, a half-space below
 # ---------------------------------------------------------------------

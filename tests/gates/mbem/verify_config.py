@@ -527,11 +527,23 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
           and all(weightless.buoyancy(r, q) is None
                   for r in weightless.regions for q in r.patches))
     thrust = cfg.load(path, **small, dip=30.0, rake=90.0)
-    check("a dip-slip plate names the in-plane figure, strike slip the other",
-          thrust.outputs.figures == ("plate_thrust",)
+    check("a dip-slip plate names the in-plane figures, strike slip the other",
+          thrust.outputs.figures == ("plate_thrust", "plate_cycle")
           and run.outputs.figures == ("plate_substrate",)
           and thrust.model.geometry.params["dip"] == 30.0
           and thrust.model.params["rake"] == 90.0)
+    # ``refine`` is one ray: the plate's two faces and the interface's eps,
+    # the three a plate that bends is first order in, and nothing else
+    fine = cfg.load(path, **small, dip=30.0, rake=90.0, refine=2.0)
+    gp, gf = thrust.model.geometry.params, fine.model.geometry.params
+    check("refine halves the top, the interface and the substrate's eps "
+          "together, and leaves the rest",
+          all(gf[k] == gp[k] / 2.0 for k in ("edge_near", "edge_interface"))
+          and all(fine.model.eps[k] == thrust.model.eps[k] / 2.0
+                  for k in ("interface", "sides_lower", "base"))
+          and all(gf[k] == gp[k] for k in gp
+                  if k not in ("edge_near", "edge_interface"))
+          and fine.model.eps["top"] == thrust.model.eps["top"] == "auto")
 
     heavy = cfg.load(path, **small, rho_plate=3300.0, rho_substrate=2700.0)
     db = tmp / "heavy"

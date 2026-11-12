@@ -51,7 +51,8 @@ the real-axis fit under test.
   g  the inversion, on transforms that are known exactly: poles OFF the
      collocation grid, value and rate, a creeping response (which needs the
      term linear in t, and is visibly wrong without it), and the closed-form
-     sum over an infinite train of repeating steps.
+     sum over an infinite train of repeating steps -- with it the velocity
+     of a fault LOCKED between them, whose mean over the cycle is back slip.
   h  a dislocation in a relaxing FULL SPACE, Maxwell and Burgers: the fault
      inside a viscoelastic region. Kernel parity against the clq oracle AT
      nu(s), which reaches 0.49 where no other gate goes; then u(t) and the
@@ -99,13 +100,18 @@ the real-axis fit under test.
      plate on a fluid); a deep clamped base against the half-space; the
      source and the plate's lower face together, on a dislocated FREE plate,
      whose halves are rigid far from the fault and turned by
-     6 b_x d (H - d) / H^3 (reciprocity with pure bending); and its fit in
-     time against a contour inversion. Then mbem against it: a 30-degree
+     6 b_x d (H - d) / H^3 (reciprocity with pure bending); its fit in
+     time against a contour inversion; and the earthquake cycle of the
+     locked thrust against a Fourier series on the imaginary axis, which
+     needs no fit, where the far hanging wall moves against the cycle's mean
+     early and with it late. Then mbem against it: a 30-degree
      thrust over a relaxed substrate under gravity, which the same reference
      without gravity misses several-fold. And the price of P0 on a plate that
      BENDS: afloat at real gravity its trough is 12 % shallow on faces 10 and
      15 km across, an error first order in those elements and in the
-     interface's eps, which the strike-slip plate never showed.
+     interface's eps, which the strike-slip plate never showed -- first
+     order to the point that the limit of two meshes with those three in one
+     ratio (layered_box.two_mesh_limit) lands on the reference.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -164,10 +170,12 @@ WINDOW = (0.1, 10.0)                         # the times the solved clauses read
 TOL_RHEOLOGY = 1.0e-13   # closed forms of mu(s), g(s), K; 2e-16
 # [g] at the default 3 points per decade, poles off the grid; measured
 # 3.4e-4 (value), 4.8e-3 (rate), 6.2e-5 / 2.4e-4 with the secular term,
-# 1.8e-3 / 4.5e-4 for the periodic sum and its rate.
+# 1.8e-3 / 4.5e-4 for the periodic sum and its rate, 2.4e-4 for a locked
+# fault's velocity.
 TOL_INV_VALUE = 2.0e-3
 TOL_INV_RATE = 2.0e-2
 TOL_INV_CYCLE = 5.0e-3
+TOL_INV_IDENTITY = 1.0e-9    # the cycle's mean is back slip: the fit's own algebra
 MISS_NO_SECULAR = 1.0e-2     # a creeping response fitted without c t; 6.8e-2
 # [h] parity with clq at nu(s): 6e-14 (u), 8e-12 (sigma) measured, the stress
 # losing digits to lam = 2 mu nu/(1 - 2 nu) inside the ORACLE as nu -> 1/2.
@@ -218,6 +226,7 @@ TOL_DIP_FLEXURE = 1.0e-3         # a thin plate on a fluid, kH = 0.09; 3.8e-4
 TOL_DIP_BASE = 2.0e-6            # a base 3e5 km down vs the half-space; 3e-7
 TOL_DIP_TIME = 1.0e-3            # fitted vs contour to 100 tau; 3.1e-4
 TOL_DIP_KINK = 5.0e-4            # a dislocated free plate's rotation and closure; 7e-5
+TOL_DIP_CYCLE = 2.0e-3           # a locked thrust: fitted vs its Fourier series; 3.7e-4
 # The solved thrust: 30 degrees, a 300 km fault, the substrate relaxed to
 # 0.03 mu, clamped base and plate sides, under TEN times the Earth's gravity
 # so that it is first order in a box this small.
@@ -235,6 +244,9 @@ THRUST_BLIND = 0.4               # ... against the reference WITHOUT gravity; 0.
 THRUST_FLUID = 1.0e-4            # mu(s)/mu of the plate afloat: both have stopped changing
 TOL_THRUST_BEND = 0.15           # ... its trough short of the reference's; 0.118, and
 #                                  first order in the elements of the plate's two faces
+THRUST_COARSER = 1.5             # ... so a second mesh, those faces and the eps this
+TOL_THRUST_LIMIT = 0.03          # much larger (0.176 short), and the limit of the two:
+#                                  4e-4 here, 1.4 % at nu = 1/4
 
 
 def check(name, ok, extra="") -> bool:
@@ -547,6 +559,17 @@ def g_inversion() -> None:
         close(f"a step every {period:g}: its rate",
               float(np.abs(pr.cycle_rate_weights(tc, period) @ stack(False)
                            - rate).max() / np.abs(rate).max()), TOL_INV_CYCLE)
+        locked = period * rate - a0
+        close(f"a fault locked between them: its velocity from steady slip",
+              float(np.abs(pr.locked_rate_weights(tc, period) @ stack(False)
+                           - locked).max() / np.abs(locked).max()),
+              TOL_INV_CYCLE)
+        # over a whole cycle the relaxation adds u(inf) - u(0+), so the mean
+        # of that velocity is minus the elastic response: back slip
+        close("... whose mean over the cycle is back slip, -u(0+)",
+              abs(float((pr.cycle_weights(period, period)[0]
+                         - pr.relaxed_weights()) @ stack(False))
+                  / stack(False)[0] + 1.0), TOL_INV_IDENTITY)
     try:
         laplace.Prony(s, secular=True).cycle_weights(tc, 5.0)
         refused = False
@@ -960,6 +983,28 @@ def talbot(transform, t, m: int = 24) -> np.ndarray:
     return r / m * np.real(np.tensordot(weight, transform(nodes), axes=1))
 
 
+def locked_series(solution, t, period, n: int = 400) -> np.ndarray:
+    """The velocity of a locked fault (``Prony.locked_rate_weights``) summed
+    where no fit is needed. A train of earthquakes is periodic, so its
+    response is a Fourier series, and the coefficient at ``s_n = 2 pi i n /
+    period`` is the solution AT THE MODULI OF ``s_n``:
+
+        v(t) = -u(0+) + 2 Re sum_{n >= 1} [u~(s_n) - u(0+)] exp(s_n t)
+
+    on ``0 < t < period``. ``u~ - u(0+)`` falls like ``c / s``, whose series
+    is a sawtooth summed in closed form, ``c`` read off a large real ``s``.
+    ``solution`` takes the points at once (``inf`` among them) and returns
+    ``(m, ...)``; 400 terms leave 1e-6."""
+    sn = 2.0j * np.pi * np.arange(1, n + 1) / period
+    big = 1.0e7
+    u0, at_big = (np.real(v) for v in solution(np.array([np.inf, big])))
+    c = big * (at_big - u0)
+    rest = solution(sn) - u0 - c / sn[:, None]
+    t = np.atleast_1d(np.asarray(t, float))
+    return (-u0 + 2.0 * np.real(np.exp(np.outer(t, sn)) @ rest)
+            + np.outer(0.5 * period - t, c))
+
+
 def _long_thrust(x, dip, depth, nu, half_length=4.0e5):
     """cutde's half space under a thrust so long that its mid-profile is the
     plane-strain one: ``(u_x, u_z)`` per unit slip."""
@@ -1070,6 +1115,22 @@ def n_dip_slip() -> None:
     close("Maxwell substrate under gravity: the fitted reference == its "
           "contour inversion", float(np.abs(fitted - contour).max()
                                      / np.abs(contour).max()), TOL_DIP_TIME)
+    # the earthquake cycle: a locked thrust's velocity through the same fit,
+    # against its Fourier series on the imaginary axis
+    period = 20.0
+    tc = period * np.array([0.05, 0.25, 0.5, 0.9])
+    exact = locked_series(stack, tc, period)
+    locked = laplace.Prony(sg).locked_rate_weights(tc, period) @ fitted_from
+    close("... locked between earthquakes every 20 tau: the fitted velocity "
+          "== its Fourier series", float(np.abs(locked - exact).max()
+                                         / np.abs(exact).max()), TOL_DIP_CYCLE)
+    far = xs.size - 1                           # 80 km into the hanging wall
+    check("... early in the cycle the far hanging wall moves AGAINST the "
+          "cycle's mean, late with it",
+          exact[0, far] * -fitted_from[0, far] < 0.0
+          and exact[-1, far] > -fitted_from[0, far] > 0.0,
+          f"u_x rate {exact[0, far]:+.3f}, {exact[-1, far]:+.3f}; mean "
+          f"{-fitted_from[0, far]:+.3f}")
     above("... and gravity is in it: the vertical motion at 100 tau differs",
           float(np.abs(contour[-1, xs.size:] - talbot(
               lambda sv: np.concatenate(lb.dip_slip_profile(
@@ -1078,16 +1139,19 @@ def n_dip_slip() -> None:
                   axis=1) / sv[:, None], tt[-1])[xs.size:]).max()), 0.3)
 
     # the solved thrust
-    meshes = lb.build_layered_box(**THRUST)
-    eps = dict(top="auto", sides_upper="auto", fault="auto",
-               interface=THRUST_EPS, sides_lower=THRUST_EPS, base=THRUST_EPS)
-    c = meshes["top"].centroids()
-    strip = ((np.abs(c[:, 1]) < 0.08 * THRUST["fault_half_len"])
-             & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 60.0))
-
-    def solved(relaxed, g_acc):
+    def solved(relaxed, g_acc, coarser=1.0):
         """Mid-strike ``(u_x, u_z)`` over the slip, the reference under the
-        model's gravity, and the reference under none."""
+        model's gravity, and the reference under none. ``coarser`` scales
+        the plate's two faces and the interface's eps together."""
+        meshes = lb.build_layered_box(**dict(
+            THRUST, edge_near=coarser * THRUST["edge_near"],
+            edge_interface=coarser * THRUST["edge_interface"]))
+        e = coarser * THRUST_EPS
+        eps = dict(top="auto", sides_upper="auto", fault="auto",
+                   interface=e, sides_lower=e, base=e)
+        c = meshes["top"].centroids()
+        strip = ((np.abs(c[:, 1]) < 0.08 * THRUST["fault_half_len"])
+                 & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 60.0))
         mu_s = relaxed * MU
         soft = (mu_s, LAM + 2.0 * (MU - mu_s) / 3.0)
         model = lb.build_model(meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
@@ -1117,6 +1181,12 @@ def n_dip_slip() -> None:
     check("... and afloat at real gravity: its trough short of the "
           "reference's by", 0.0 <= short <= TOL_THRUST_BEND,
           f"{short:.3f} <= {TOL_THRUST_BEND}")
+    wide = solved(THRUST_FLUID, defaults.GRAVITY, THRUST_COARSER)[0]
+    limit = lb.two_mesh_limit(wide[:, 1].min(), got[:, 1].min(), THRUST_COARSER)
+    check("... first order in those faces: the two-mesh limit of the trough "
+          "is off by", abs(1.0 - limit / ref[:, 1].min()) <= TOL_THRUST_LIMIT,
+          f"{1.0 - limit / ref[:, 1].min():+.4f}, {1.0 - wide[:, 1].min() / ref[:, 1].min():.3f} "
+          f"coarser; <= {TOL_THRUST_LIMIT}")
 
 def main() -> bool:
     t0 = time.time()

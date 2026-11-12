@@ -36,6 +36,9 @@ X_MAX = 120.0                       # km: the profile shown
 X_BINS = np.geomspace(2.0, X_MAX, 13)
 STRIP = 0.06                        # half-width of the mid-strike strip / fault half-length
 PROBE = (16.0, 32.0)                # km: where panel c reads the postseismic part
+CYCLES = 5.0                        # the cycle drawn repeats this often in the fit's window
+PHASES = (0.05, 0.95)               # early and late in it, as fractions of the period
+X_FAR = 100.0                       # km into the hanging wall: where the cycle is followed
 BLUE, ORANGE = "#1f5fa6", "#d9731a"
 
 
@@ -199,10 +202,48 @@ def plate_substrate(study):
 # a dip-slip fault: the plane-strain reference, both in-plane components
 # ---------------------------------------------------------------------
 
-def in_plane(run):
+def face_ratio(coarse, fine) -> float:
+    """How many times larger ``coarse``'s plate faces are than ``fine``'s,
+    read from the two runs: the top, the interface and the interface's eps,
+    which must be in ONE ratio (``layered_box.two_mesh_limit``)."""
+    def faces(run):
+        m = run.resolved["spec"]["model"]
+        return np.array([m["geometry"]["params"]["edge_near"],
+                         m["geometry"]["params"]["edge_interface"],
+                         m["eps"]["interface"]], float)
+
+    r = faces(coarse) / faces(fine)
+    if not np.allclose(r, r[0], rtol=1e-9):
+        raise ValueError(f"the top, the interface and its eps are in ratios "
+                         f"{r}: a two-mesh limit needs one")
+    return float(r[0])
+
+
+def in_plane(run, coarse=None):
     """``(s, x, u)``: as ``profile`` for a dip-slip fault, ``u[k]`` the
     ``(n_x, 2)`` horizontal (fault-normal) and vertical surface displacement
-    of state ``k`` per unit slip, at SIGNED distance from the trace."""
+    of state ``k`` per unit slip, at SIGNED distance from the trace.
+
+    With ``coarse``, the same model on larger plate faces, ``u`` is the
+    two-mesh limit of the pair at ``run``'s points."""
+    from mbem.cases import layered_box as lb
+
+    s, x, u = _in_plane(run)
+    if coarse is None:
+        return s, x, u
+    sc, xc, uc = _in_plane(coarse)
+    if sc.shape != s.shape or not np.allclose(sc, s):
+        raise ValueError("the two runs of a pair must share their states")
+    at = np.empty_like(u)
+    for side in (-1.0, 1.0):                # never across the trace: a jump
+        m, mc = np.sign(x) == side, np.sign(xc) == side
+        for k in range(u.shape[0]):
+            for j in range(u.shape[2]):
+                at[k, m, j] = np.interp(x[m], xc[mc], uc[k, mc, j])
+    return s, x, lb.two_mesh_limit(at, u, face_ratio(coarse, run))
+
+
+def _in_plane(run):
     from mbem import laplace
 
     s, stack = laplace.run_stack(run.run_dir)
@@ -251,14 +292,14 @@ def _reference_stack(run, s, x, z_bottom=None):
         weights(run), z_bottom), axis=-1)
 
 
-def in_plane_in_time(run, t, x_ref=None, z_bottom=None):
+def in_plane_in_time(run, t, x_ref=None, z_bottom=None, coarse=None):
     """``(x, u(t), x_ref, reference(t))``, ``t = 0`` the elastic state. The
     reference is its profile at ``(mu(s), lam(s))`` put through the SAME fit
     as the solution (``reference``), at the solution's points unless
-    ``x_ref`` gives others."""
+    ``x_ref`` gives others. ``coarse`` as for ``in_plane``."""
     from mbem import laplace
 
-    s, x, u = in_plane(run)
+    s, x, u = in_plane(run, coarse)
     x_ref = x if x_ref is None else x_ref
     t = np.atleast_1d(np.asarray(t, float))
     w = laplace.Prony(s).weights(np.maximum(t, 1e-300))
@@ -267,12 +308,12 @@ def in_plane_in_time(run, t, x_ref=None, z_bottom=None):
             np.tensordot(w, _reference_stack(run, s, x_ref, z_bottom), axes=1))
 
 
-def misfit(run, t, z_bottom=None):
+def misfit(run, t, z_bottom=None, coarse=None):
     """The postseismic displacement ``u(t) - u(0+)`` of a dip-slip run against
     the reference: rms of the difference over rms of the reference, both
     in-plane components, over the profile. ``(n_t,)``."""
     t = np.concatenate([[0.0], np.atleast_1d(np.asarray(t, float))])
-    _x, u, _xr, ref = in_plane_in_time(run, t, z_bottom=z_bottom)
+    _x, u, _xr, ref = in_plane_in_time(run, t, z_bottom=z_bottom, coarse=coarse)
     post, want = u[1:] - u[0], ref[1:] - ref[0]
     return np.sqrt(((post - want) ** 2).sum(axis=(1, 2))
                    / (want ** 2).sum(axis=(1, 2)))
@@ -289,6 +330,10 @@ def plate_thrust(study):
     under, so the late vertical motion is large and belongs to the box as
     much as to the fault; with it the motion is bounded and the box matters
     less.
+
+    A study that swept ``refine`` is a pair on one ray of the plate's faces:
+    the first two panels then draw the two-mesh limit, and the third the
+    misfit against the size of those faces, the limit at zero.
     """
     import matplotlib.pyplot as plt
     from mbem import laplace
@@ -299,10 +344,16 @@ def plate_thrust(study):
     grav = sorted(study.axis("gravity"), key=float, reverse=True) \
         if "gravity" in study.swept else [None]
 
-    def run_of(half_x, g):
-        sel = {k: v for k, v in (("half_x", half_x), ("gravity", g))
-               if v is not None}
+    faces = sorted(study.axis("refine"), key=float) \
+        if "refine" in study.swept else [None]
+
+    def run_of(half_x, g, refine=faces[-1]):
+        sel = {k: v for k, v in (("half_x", half_x), ("gravity", g),
+                                 ("refine", refine)) if v is not None}
         return study.one(**sel) if sel else study.rows[0][1]
+
+    def coarse_of(half_x, g):
+        return run_of(half_x, g, faces[0]) if len(faces) > 1 else None
 
     def named(g, tail=""):
         if g is None:
@@ -317,7 +368,8 @@ def plate_thrust(study):
     fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(10.6, 3.5))
     lo, hi = [0.0, 0.0], [0.0, 0.0]
     for g, color in zip(grav, (BLUE, ORANGE)):
-        x, u, _xf, ref = in_plane_in_time(run_of(boxes[-1], g), (0.0, late), xf)
+        x, u, _xf, ref = in_plane_in_time(run_of(boxes[-1], g), (0.0, late), xf,
+                                          coarse=coarse_of(boxes[-1], g))
         for ax, comp in ((a0, 1), (a1, 0)):
             if g == grav[0]:
                 ax.plot(xf, ref[0, :, comp], "-", color="k", lw=0.8)
@@ -345,19 +397,35 @@ def plate_thrust(study):
         ax.text(0.95, 0.95, letter, transform=ax.transAxes, ha="right", va="top")
     a0.legend(frameon=False, loc="lower left", handletextpad=0.2, fontsize=8)
     name = "" if boxes[-1] is None else f"half-width {float(boxes[-1]):g} km"
+    if len(faces) > 1:
+        name = "two-mesh limit" + (", " + name if name else "")
     a1.text(0.05, 0.05, name, transform=a1.transAxes, ha="left", va="bottom",
             fontsize=8)
 
     worst = 0.0
+    if len(faces) > 1:
+        # the faces' size over the coarsest's; the limit of the pair at zero
+        size = [float(faces[0]) / float(f) for f in faces] + [0.0]
     for g, color in zip(grav, (BLUE, ORANGE)):
-        m = np.array([misfit(run_of(hx, g), (1.0, late)) for hx in boxes])
+        if len(faces) > 1:
+            across = size
+            m = np.array([misfit(run_of(boxes[-1], g, f), (1.0, late))
+                          for f in faces]
+                         + [misfit(run_of(boxes[-1], g), (1.0, late),
+                                   coarse=coarse_of(boxes[-1], g))])
+        else:
+            across = [float(b or 0.0) for b in boxes]
+            m = np.array([misfit(run_of(hx, g), (1.0, late)) for hx in boxes])
         worst = max(worst, float(m.max()))
         for k, (t, ls, mfc) in enumerate(((1.0, "-", color),
                                           (late, "--", "white"))):
-            a2.plot([float(b or 0.0) for b in boxes], m[:, k], ls, color=color,
+            a2.plot(across, m[:, k], ls, color=color,
                     marker="o", ms=4.2, mfc=mfc, mec=color,
                     label=named(g, ", ") + rf"$t = {t:g}\,\tau$")
-    if boxes[-1] is not None:
+    if len(faces) > 1:
+        a2.set_xlim(-0.08, 1.08)
+        a2.set_xticks([0.0, 0.5, 1.0])
+    elif boxes[-1] is not None:
         a2.set_xscale("log")
         a2.set_xticks([float(b) for b in boxes])
         a2.set_xticklabels([f"{float(b):g}" for b in boxes])
@@ -365,7 +433,8 @@ def plate_thrust(study):
     top = np.ceil(worst * 15.0) / 10.0             # the legend's third is clear
     a2.set_ylim(0.0, top)
     a2.set_yticks([0.0, top / 2.0, top])
-    a2.set_xlabel("box half-width (km)")
+    a2.set_xlabel("size of the plate's faces (coarsest = 1)" if len(faces) > 1
+                  else "box half-width (km)")
     a2.set_ylabel("misfit to the reference")
     a2.set_box_aspect(1)
     a2.legend(frameon=False, loc="upper right", fontsize=8)
@@ -376,5 +445,136 @@ def plate_thrust(study):
 
     fig.tight_layout(w_pad=1.6)
     out = save_figure(fig, study.study_dir, "plate_thrust")
+    plt.close(fig)
+    return out
+
+
+def in_plane_locked(run, phase, period, x_ref=None, coarse=None):
+    """``(x, v, x_ref, reference)``: the in-plane surface velocity of the
+    fault LOCKED between earthquakes that repeat every ``period``, measured
+    from steady slip and per unit slip rate (``Prony.locked_rate_weights``),
+    at the fractions ``phase`` of the period after the latest one. The
+    reference goes through the same map; ``coarse`` as for ``in_plane``."""
+    from mbem import laplace
+
+    s, x, u = in_plane(run, coarse)
+    x_ref = x if x_ref is None else x_ref
+    w = laplace.Prony(s).locked_rate_weights(
+        np.atleast_1d(np.asarray(phase, float)) * period, period)
+    return (x, np.tensordot(w, u, axes=1), x_ref,
+            np.tensordot(w, _reference_stack(run, s, x_ref), axes=1))
+
+
+def plate_cycle(study):
+    """The earthquake cycle of a dip-slip fault that is LOCKED between
+    earthquakes: its surface velocity early and late in the cycle against
+    the plane-strain reference, measured from steady slip on the same fault
+    and in units of the slip rate.
+
+    The cycle's MEAN is elastic back slip whatever the substrate does
+    (``Prony.locked_rate_weights``), so relaxation is the difference between
+    the early and the late curve and the black one between them. The third
+    panel follows two points through the cycle, with and without gravity
+    when the study swept it: the far hanging wall, which just after an
+    earthquake moves the way the earthquake moved it, against the mean, and
+    the surface over the fault's lower edge, which sinks and then rises.
+
+    The period is the fit's window over ``CYCLES``: a locked fault's velocity
+    needs the response for a few periods and no longer.
+    """
+    import matplotlib.pyplot as plt
+    from mbem import laplace
+    set_paper_style()
+
+    def axis(key, **kw):
+        return sorted(study.axis(key), key=float, **kw) \
+            if key in study.swept else [None]
+
+    boxes, grav, faces = axis("half_x"), axis("gravity", reverse=True), axis("refine")
+
+    def pair(g):
+        sel = {k: v for k, v in (("half_x", boxes[-1]), ("gravity", g))
+               if v is not None}
+        if faces[-1] is None:
+            return (study.one(**sel) if sel else study.rows[0][1]), None
+        return (study.one(refine=faces[-1], **sel),
+                study.one(refine=faces[0], **sel) if len(faces) > 1 else None)
+
+    run, coarse = pair(grav[0])
+    period = float(f"{laplace.window(in_plane(run)[0])[1] / CYCLES:.3g}")
+    span = X_SIGNED[-1]
+    xf = np.linspace(-span, span, 241)
+    xf = xf[np.abs(xf) > 0.5]
+
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(10.6, 3.5))
+    x, v, _xf, ref = in_plane_locked(run, PHASES, period, xf, coarse)
+    _x, u, _xf, back = in_plane_in_time(run, (0.0,), xf, coarse=coarse)
+    for ax, comp, lab, letter in ((a0, 0, r"$v_x\,/\,V$", "a"),
+                                  (a1, 1, r"$v_z\,/\,V$", "b")):
+        ax.plot(xf, -back[0, :, comp], "-", color="k", lw=0.8)
+        ax.plot(x, -u[0, :, comp], "o", color="0.8", ms=3.4, mec="k", mew=0.3,
+                label="mean: back slip")
+        for k, (color, when) in enumerate(zip((ORANGE, BLUE), ("early", "late"))):
+            ax.plot(xf, ref[k, :, comp], "-", color=color, lw=0.8)
+            ax.plot(x, v[k, :, comp], "o", color=color, ms=3.4, mec="k",
+                    mew=0.3, label=rf"{when}, $t = {PHASES[k]:g}\,T$")
+        lo = min(v[:, :, comp].min(), ref[:, :, comp].min(), -back[0, :, comp].max())
+        hi = max(v[:, :, comp].max(), ref[:, :, comp].max(), -back[0, :, comp].min())
+        bottom, top = np.floor(lo * 5.0) / 5.0, np.ceil(hi * 5.0) / 5.0
+        ax.set_xlim(-span, span)
+        ax.set_xticks([-span, 0, span])
+        ax.set_ylim(bottom, top)
+        ax.set_yticks([bottom, 0.0, top])
+        ax.set_xlabel(r"$x$ (km)")
+        ax.set_ylabel(lab)
+        ax.set_box_aspect(1)
+        ax.axhline(0.0, color="0.5", lw=0.6)
+        ax.text(0.95, 0.95, letter, transform=ax.transAxes, ha="right", va="top")
+    a0.legend(frameon=False, loc="upper left", handletextpad=0.2, fontsize=8)
+    name = rf"$T = {period:g}\,\tau$"
+    if boxes[-1] is not None:
+        name += f", half-width {float(boxes[-1]):g} km"
+    a1.text(0.05, 0.95, name + ("\ntwo-mesh limit" if coarse is not None else ""),
+            transform=a1.transAxes, ha="left", va="top", fontsize=8)
+
+    # two points through the cycle: the far hanging wall (horizontal) and
+    # the surface over the fault's lower edge (vertical)
+    gp = run.resolved["spec"]["model"]["geometry"]["params"]
+    edge = gp["fault_depth"] / np.tan(np.deg2rad(gp["dip"]))
+    sites = ((int(np.argmin(np.abs(x - X_FAR))), 0, "k", r"$v_x$"),
+             (int(np.argmin(np.abs(x - edge))), 1, "0.55", r"$v_z$"))
+    phase = np.linspace(0.02, 0.98, 49)
+    dots = phase[::4]
+    lo = hi = 0.0
+    for g, ls, mfc in list(zip(grav, ("-", "--"), (None, "white")))[::-1]:
+        run, coarse = pair(g)                   # gravity last: drawn on top
+        _x, v, _xr, _ref = in_plane_locked(run, dots, period, coarse=coarse)
+        for site, comp, color, lab in sites:
+            _x, _v, _xr, ref = in_plane_locked(run, phase, period,
+                                               x[site:site + 1], coarse)
+            a2.plot(phase, ref[:, 0, comp], ls, color=color, lw=0.8)
+            a2.plot(dots, v[:, site, comp], "o", color=color, ms=3.4,
+                    mfc=color if mfc is None else mfc, mec="k", mew=0.3,
+                    label=lab + rf", $x = {x[site]:.0f}$ km"
+                    if g == grav[0] else None)
+            lo = min(lo, v[:, site, comp].min(), ref[:, 0, comp].min())
+            hi = max(hi, v[:, site, comp].max(), ref[:, 0, comp].max())
+    bottom, top = np.floor(lo * 5.0) / 5.0, np.ceil(hi * 5.0) / 5.0
+    a2.set_xlim(0.0, 1.0)
+    a2.set_xticks([0.0, 0.5, 1.0])
+    a2.set_ylim(bottom, top)
+    a2.set_yticks([bottom, 0.0, top])
+    a2.set_xlabel(r"$t\,/\,T$")
+    a2.set_ylabel(r"$v\,/\,V$")
+    a2.set_box_aspect(1)
+    a2.axhline(0.0, color="0.5", lw=0.6)
+    a2.legend(frameon=False, loc="lower right", handletextpad=0.2, fontsize=8)
+    if len(grav) > 1:
+        a2.text(0.05, 0.95, "open, dashed: no gravity", transform=a2.transAxes,
+                ha="left", va="top", fontsize=8)
+    a2.text(0.95, 0.95, "c", transform=a2.transAxes, ha="right", va="top")
+
+    fig.tight_layout(w_pad=1.6)
+    out = save_figure(fig, study.study_dir, "plate_cycle")
     plt.close(fig)
     return out

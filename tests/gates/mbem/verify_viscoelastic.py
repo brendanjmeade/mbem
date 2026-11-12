@@ -114,8 +114,9 @@ the real-axis fit under test.
      ratio (layered_box.two_mesh_limit) lands on the reference. Last, the
      fault taken THROUGH the interface, its lower reach a second fault in
      the substrate: the reference's lower source by an interface between
-     like materials, which is none, and by a plate 10 m thick, under which
-     the half-space closed form holds whatever the moduli; then the solved
+     like materials, which is none, by a plate 10 m thick, under which
+     the half-space closed form holds whatever the moduli, and by a fluid
+     substrate, in which slip moves nothing at the surface; then the solved
      model against it, at the earthquake and relaxed under gravity.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
@@ -235,6 +236,7 @@ TOL_DIP_CYCLE = 2.0e-3           # a locked thrust: fitted vs its Fourier series
 TOL_DIP_THROUGH = 1.0e-12        # an interface between like materials is none; 3e-15
 TOL_DIP_THIN = 1.0e-3            # under a plate 10 m thick the closed form, which knows
 #                                  no moduli; 4.8e-4
+TOL_DIP_FLUID = 1.0e-5           # slip in a fluid moves nothing at the surface; 1.1e-6
 # The solved thrust: 30 degrees, a 300 km fault, the substrate relaxed to
 # 0.03 mu, clamped base and plate sides, under TEN times the Earth's gravity
 # so that it is first order in a box this small.
@@ -1132,6 +1134,16 @@ def n_dip_slip() -> None:
             lb.half_space_dip_slip(x, 45.0, 20.0))))
     close("... and under a 10 m plate of another material == the half-space "
           "closed form", worst, TOL_DIP_THIN)
+    # ... and in a FLUID it leaves the plate unstressed: the surface cannot
+    # tell the fault that goes on from the one that stops at the interface
+    worst = 0.0
+    for dip, d, base, w in ((20.0, 45.0, None, weight), (45.0, 40.0, -300.0, weight),
+                            (45.0, 40.0, None, (0.0, 0.0))):
+        worst = max(worst, *(float(np.abs(a - b).max()) for a, b in zip(
+            *(lb.dip_slip_profile(x, dd, thick, dip, plate, fluid, w, base)
+              for dd in (d, thick)))))
+    close("... and slip in a fluid moves nothing at the surface", worst,
+          TOL_DIP_FLUID)
 
     # in time: the study's reference is this profile at mu(s_k) through the
     # SAME fit as the solution. Held to a contour inversion, to 100 tau.

@@ -164,8 +164,8 @@ u_top = np.tensordot(laplace.Prony(s).weights(t), stack["u:top"], axes=1)
 
 `Prony` fits a constant plus exponentials whose relaxation times are the
 reciprocals of the collocation points, so the map from the stack to any time
-is one matrix: value, rate, and the closed-form sum over an infinite train of
-repeating earthquakes.  At the default three points per decade the inversion
+is one matrix: value, rate, the closed-form sum over an infinite train of
+repeating earthquakes, and the velocity of a fault locked between them.  At the default three points per decade the inversion
 error is under 1e-3 on exact transforms, well below the spatial error.  Time
 has the unit the rheology's `tau` has.
 
@@ -244,8 +244,8 @@ A thrust is where it is first order, and `configs/plate_substrate.py` runs one:
 ```
 python -m mbem run configs/plate_substrate.py \
     --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
-    --set edge_near=5 --set edge_interface=7.5 --set eps_substrate=0.75 \
-    --sweep half_x=400,800 --sweep gravity=0,1
+    --set edge_near=10 --set t_max=100 --set half_x=800 \
+    --sweep refine=1,2 --sweep gravity=0,1
 ```
 
 The fault breaks the surface along x = 0 and dips toward +x; `rake` is Aki &
@@ -261,15 +261,42 @@ time (`mbem.cases.layered_box.dip_slip_profile`), itself held to cutde's
 half-space (4e-6), to the classical stiffness of a loaded half-space and of a
 plate on a fluid, to the exact rotation of a dislocated free plate (7e-5) and
 to a contour inversion in time (3e-4).  Against it, on the 800 km box above,
-the postseismic displacement within 120 km of the trace is off by 2.6 % at
-one Maxwell time, 4 % at ten and 9 % at a hundred.
+the postseismic displacement within 120 km of the trace is off by 2.8 % at
+one Maxwell time, 2.0 % at ten and 5.7 % at a hundred, and what is left at a
+hundred is horizontal (9 %, the walls of the box; the vertical is 2.9 %).
 
 One thing to know that the strike-slip plate never showed.  A plate that
 bends is only as good as its two faces: with piecewise-constant elements the
 relaxed vertical motion is short by an amount first order in the elements on
 the top and on the interface and in the interface's eps -- 12 % at 10 km,
-15 km and 1.5 km on a 30 km plate, 6 % at half of each, which is what the
-three `--set edge_near / edge_interface / eps_substrate` above are for.
+15 km and 1.5 km on a 30 km plate, 6 % at half of each.  Being first order,
+it cancels between two meshes that have those three in one ratio, which is
+what `--sweep refine=1,2` runs and the figure draws
+(`mbem.cases.layered_box.two_mesh_limit`): 14 % and 8 % in the vertical at a
+hundred Maxwell times become the 2.9 % above.
+
+**The earthquake cycle.**  A fault locked between earthquakes that repeat
+every `period` is the same fault slipping steadily, less a difference that is
+periodic, and the fit sums it in closed form:
+
+```python
+s, stack = laplace.run_stack(run_dir)
+v = np.tensordot(laplace.Prony(s).locked_rate_weights(t, period),
+                 stack["u:top"], axes=1)       # per unit slip RATE
+```
+
+is the surface velocity at `t` after the latest earthquake, measured from
+steady slip.  Its mean over the cycle is minus the elastic response: back
+slip is the cycle's average whatever relaxes, and relaxation only moves
+velocity between early and late.  For the thrust above, repeating every
+twenty Maxwell times, a point 97 km into the hanging wall moves at -0.14 of
+the slip rate just after an earthquake and +0.21 just before the next, about
+a mean of +0.11: it goes on the way the earthquake moved it and turns a sixth
+of the way through the cycle.  The reference for this needs no fit (a
+periodic response is a Fourier series, its coefficients the solution at
+imaginary `s`), and the model is within 2.3 % of it early in the cycle and
+2.1 % late.  Any dip-slip run of `configs/plate_substrate.py` draws it
+(`plate_cycle`).
 
 ## Layout
 
@@ -386,7 +413,7 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
 python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
-python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack); gravity on a relaxing shell; a dipping fault's plane-strain reference and a thrust under gravity against it
+python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack); gravity on a relaxing shell; a dipping fault's plane-strain reference and a thrust under gravity against it, its two-mesh limit, a locked fault's cycle against a Fourier series, and the fault taken through the interface
 ```
 
 ## The field in the volume

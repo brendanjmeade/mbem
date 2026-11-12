@@ -465,6 +465,8 @@ good as its own anchors:
 | a load on a half-space, $w+\mu g k$; on a plate over a fluid, $w_s+Dk^4$ | rounding; 4e-4 at $kH=0.09$ |
 | a dislocated FREE plate, its halves turned by $6\,b_x d\,(H-d)/H^3$ and closed by $b_x d/H$ | 7e-5 |
 | its fit in time against a contour inversion (Talbot), to $100\tau$ | 3e-4 |
+| a locked fault's velocity through the cycle against its Fourier series on the imaginary axis, $T=20\tau$ | 4e-4 |
+| a fault THROUGH the interface: between like materials, which is no interface; under a plate 10 m thick, where the closed form holds whatever the substrate | 7e-15; 5e-4 |
 
 The free plate is the one exact result in which the source meets the plate's
 lower face. Far from the fault each half is rigid, and reciprocity with pure
@@ -532,6 +534,30 @@ the plate, and while the substrate still carries load, at
 $\tilde\mu/\mu=0.03$, the first mesh is within 3 %. On the finer plate the
 trough at $100\tau$ is 0.93-0.94 of the reference's.
 
+*Two meshes cancel it.* An error that is first order in three lengths is
+gone from $(r\,u_{\rm fine}-u_{\rm coarse})/(r-1)$ when the three are in one
+ratio $r$ between the meshes (`layered_box.two_mesh_limit`). `refine` divides
+exactly those three, so `--sweep refine=1,2` is such a pair, and the thrust
+figure draws its limit. The 800 km box under gravity, misfit against the
+reference:
+
+| | 10 / 15 / 1.5 km | half of each | the limit of the two |
+|---|---|---|---|
+| vertical, postseismic: $\tau$ | 0.043 | 0.032 | 0.040 |
+| $10\tau$ | 0.087 | 0.045 | 0.011 |
+| $100\tau$ | 0.140 | 0.079 | 0.029 |
+| horizontal, postseismic: $100\tau$ | 0.147 | 0.116 | 0.093 |
+| trough at $100\tau$ over the reference's | 0.879 | 0.931 | 0.991 |
+| at the earthquake, $u_x$ and $u_z$ (reference with the model's base) | 0.030, 0.039 | 0.016, 0.027 | 0.003, 0.013 |
+
+It removes that error and no other. At $\tau$ it gains nothing, and the
+horizontal at $100\tau$, which is the walls and not the faces, is what is
+left: after the limit it is the largest error in the model. On the gate's
+dense box, afloat, the trough is 17.6 % short on faces 1.5 times the gate's
+and 11.8 % on the gate's, and the limit of the two is off by 4e-4 (1.4 % at
+$\nu=1/4$). So higher order on the faces, which buys what halving them does,
+is no longer the remedy: a second P0 mesh buys more.
+
 *A relaxed plate slides, and the walls hold it.* The horizontal postseismic
 motion is short by 8-12 % at $100\tau$ on the largest boxes. Over a relaxed
 substrate the two halves of the plate approach from as far as the
@@ -541,7 +567,46 @@ of the reference against 0.93 at $\tilde\mu/\mu=0.003$ on the 300 km box)
 and float the plate (section 8).
 
 The 800 km box on the finer plate is 205,026 unknowns, 14 states in 19
-minutes, 42-48 iterations a state under gravity and up to 98 without.
+minutes, 42-48 iterations a state under gravity and up to 98 without; the
+coarser one of the pair is 62,622 unknowns and 7 minutes.
+
+*The earthquake cycle.* A fault that is locked between earthquakes repeating
+every $T$ is the same fault slipping steadily at $V=b/T$, less the
+difference, and the difference is periodic. With $u(t)$ the response to a
+unit step of slip, the velocity measured from steady slip, per unit $V$, is
+
+$$v(t)=T\sum_{n\ge0}\dot u(t+nT)-u(\infty),\qquad 0<t<T$$
+
+(`Prony.locked_rate_weights`; the sum is geometric for each exponential of
+the fit, so it costs nothing). Three things follow. Its mean over the cycle
+is $-u(0^+)$: elastic back slip (Savage 1983) is the cycle's AVERAGE
+whatever relaxes, and relaxation only moves velocity between early and late.
+It does not need the body to have settled, because what the response does
+long after a period enters the sum and the limit alike and all but cancels;
+the window must hold a few periods, not the relaxed state. And it has a
+reference that needs no fit at all: the train is periodic, so its response
+is a Fourier series whose coefficient at $s_n=2\pi i n/T$ is the solution at
+the moduli of $s_n$,
+
+$$v(t)=-u(0^+)+2\,\mathrm{Re}\sum_{n\ge1}\left[\tilde u(s_n)-u(0^+)\right]e^{s_nt}.$$
+
+The fitted velocity of the reference agrees with that series to 4e-4 of its
+peak at $T=20\tau$ under gravity (window 0.1 to $100\tau$; 1.5e-4 at
+$T=5\tau$, 7e-4 at $50\tau$), and to 1 % without gravity on the same
+window, 0.2 % with the window to $1000\tau$.
+
+For the thrust above at $T=20\tau$ (`plate_cycle`, drawn by any dip-slip
+run), 97 km into the hanging wall the horizontal velocity is $-0.14\,V$ at
+$t=0.05\,T$ and $+0.21\,V$ at $0.95\,T$, about a mean of $+0.11\,V$: just
+after an earthquake the far hanging wall still moves the way the earthquake
+moved it, and it turns a sixth of the way through the cycle. Over the
+fault's lower edge the surface sinks at $0.38\,V$ early and rises at
+$0.27\,V$ late. The model's velocity (the two-mesh limit, both components,
+$|x|<120$ km) is within 2.3 % of the reference early and 2.1 % late, against
+4.6 % and 4.5 % on the coarser mesh alone. Gravity changes none of this by
+more than 0.02 $V$ at this period, because a cycle of $20\tau$ reads the
+response to a few tens of $\tau$, where gravity has done little (the table
+above); it is the long cycles it bounds.
 
 ## 8. Open
 

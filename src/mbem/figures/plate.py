@@ -452,9 +452,13 @@ def plate_thrust(study):
     a2.set_ylabel("misfit to the reference")
     a2.set_box_aspect(1)
     a2.legend(frameon=False, loc="upper right", fontsize=8)
-    a2.text(0.05, 0.05, r"$u(t) - u(0^+)$, both components, $|x| <$ "
-            f"{span:g} km", transform=a2.transAxes, ha="left", va="bottom",
-            fontsize=8)
+    what = (r"$u(t) - u(0^+)$, both components", f"$|x| <$ {span:g} km")
+    if len(faces) > 1:                  # the lines run along the bottom
+        a2.text(0.05, 0.62, "\n".join(what), transform=a2.transAxes,
+                ha="left", va="top", fontsize=8)
+    else:
+        a2.text(0.05, 0.05, ", ".join(what), transform=a2.transAxes,
+                ha="left", va="bottom", fontsize=8)
     a2.text(0.05, 0.95, "c", transform=a2.transAxes, ha="left", va="top")
 
     fig.tight_layout(w_pad=1.6)

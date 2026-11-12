@@ -1,5 +1,5 @@
-"""Shared builder: an elastic plate over a substrate, a vertical strike-slip
-fault in the plate.
+"""Shared builder: an elastic plate over a substrate, a fault from the
+surface down -- vertical and strike-slip in the plate unless told otherwise.
 
 Two regions in one closed box: ``plate`` (free top, its four sides, the
 interface) holding the fault, and ``substrate`` (the interface, its four sides,
@@ -7,6 +7,10 @@ a clamped base). Give the substrate a rheology and this is the earthquake-cycle
 model of Nur & Mavko and Savage & Prescott, on a FINITE box: mbem has no
 half-space and no region that runs to infinity (docs/viscoelastic.md, section
 8), so the box is part of the model and its size is a parameter to be laddered.
+
+A fault deeper than the plate is thick goes THROUGH the interface, and what
+lies below it is a second fault, in the substrate: a megathrust whose lower
+reach slips inside the region that relaxes.
 
 ``sides`` is the condition on the PLATE's sides. ``"free"`` is the natural one
 and it floats: as the substrate relaxes only its shear holds the plate against
@@ -72,17 +76,28 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
 
     The fault breaks the surface along x = 0 and reaches the DEPTH
     ``fault_depth``, dipping toward +x at ``dip`` degrees (90: vertical), so
-    +x is the hanging wall and the stored normal points into it."""
+    +x is the hanging wall and the stored normal points into it.
+
+    Deeper than the plate is thick, it goes THROUGH the interface. The part
+    below is a second mesh, ``fault_lower``, on the same plane, which belongs
+    to the substrate; and the interface is then aligned on the line where the
+    fault cuts it, as the top is on the trace, because the displacement of
+    the interface jumps there by the slip."""
     from local_box_mesh_eq import (make_rectangular_patch_eq,
                                    make_top_patch_with_fault,
                                    make_vertical_fault_eq)
 
     if not 0.0 < dip <= 90.0:
         raise ValueError(f"dip {dip} must be in (0, 90] degrees")
-
-    if not (z_bottom < z_interface < -fault_depth < 0.0):
-        raise ValueError("need z_bottom < z_interface < -fault_depth < 0: the "
-                         "fault must end inside the plate")
+    if not (z_bottom < z_interface < 0.0 and 0.0 < fault_depth < -z_bottom):
+        raise ValueError("need z_bottom < z_interface < 0 and the fault to "
+                         "end above the base")
+    sin_dip = np.sin(np.deg2rad(dip))
+    below = fault_depth + z_interface           # how far past the interface
+    if 0.0 < below < 0.5 * edge_fault * sin_dip:
+        raise ValueError(f"the fault ends {below:g} km below the interface, "
+                         f"less than half a fault element: end it at the "
+                         f"interface or take it deeper")
     r = (-half_x, half_x)
     trace = np.column_stack([np.zeros(2),
                              np.array([-fault_half_len, fault_half_len])])
@@ -90,24 +105,33 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
         r, r, 0.0, trace, edge_fault=edge_fault, edge_far=edge_far,
         near_field_radius=near_field_radius, edge_near=edge_near,
         normal_up=True)
+    # where the fault meets the interface, or under the trace if it does not
+    cut = trace if below < 0.0 else trace + np.array(
+        [-z_interface / np.tan(np.deg2rad(dip)) if dip != 90.0 else 0.0, 0.0])
     interface = make_top_patch_with_fault(
-        r, r, z_interface, trace, edge_fault=edge_interface, edge_far=edge_far,
+        r, r, z_interface, cut, edge_fault=edge_interface, edge_far=edge_far,
         near_field_radius=near_field_radius,
         edge_near=max(edge_near, edge_interface), normal_up=True)
     base = make_rectangular_patch_eq(r, r, z_bottom, edge_far, normal_up=False)
-    fault, n_hat, s_hat = make_vertical_fault_eq(
-        strike_length=2.0 * fault_half_len,
-        depth_range=(-fault_depth / np.sin(np.deg2rad(dip)), 0.0),
-        target_edge=edge_fault)
-    if dip != 90.0:
-        fault, n_hat = _tilt(fault, dip)
+    reach = (-fault_depth, z_interface)         # the depths the two parts end at
+
+    def panel(z_lo, z_hi):
+        mesh, n_hat, s_hat = make_vertical_fault_eq(
+            strike_length=2.0 * fault_half_len,
+            depth_range=(z_lo / sin_dip, z_hi / sin_dip), target_edge=edge_fault)
+        if dip != 90.0:
+            mesh, n_hat = _tilt(mesh, dip)
+        return mesh, n_hat, s_hat
+
+    fault, n_hat, s_hat = panel(max(reach), 0.0)
+    lower = dict(fault_lower=panel(*reach)[0]) if below > 0.0 else {}
     return dict(top=top, interface=interface, base=base,
                 sides_upper=_panels(half_x, (z_interface, 0.0), edge_side),
                 sides_lower=_panels(half_x, (z_bottom, z_interface), edge_side),
                 fault=fault, n_hat=n_hat, s_hat=s_hat, half_x=half_x,
                 z_interface=z_interface, z_bottom=z_bottom,
                 fault_depth=fault_depth, fault_half_len=fault_half_len,
-                dip=dip)
+                dip=dip, **lower)
 
 
 def burgers(slip_mag, rake, n_hat, s_hat):
@@ -123,8 +147,10 @@ def burgers(slip_mag, rake, n_hat, s_hat):
 
 def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
                 order_top=0, density=None, g=None, rake=180.0):
-    """Slip ``slip_mag`` on the fault, in the plate, at ``rake`` degrees
-    (``burgers``): RIGHT-lateral unless told otherwise. The
+    """Slip ``slip_mag`` on the fault at ``rake`` degrees (``burgers``):
+    RIGHT-lateral unless told otherwise. It is in the plate, and where the
+    meshes carry ``fault_lower`` the same slip continues on it in the
+    substrate. The
     substrate's closed boundary is ``interface``, ``sides_lower``, ``base``: a
     Laplace run needs one scalar eps on those three (docs/viscoelastic.md,
     section 3), and the runner refuses otherwise.
@@ -139,29 +165,31 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
 
     if sides not in SIDES:
         raise ValueError(f"sides {sides!r} must be one of {SIDES}")
-    fault = meshes["fault"]
     side_bc = (BCType.FREE_TRACTION if sides == "free"
                else BCType.PRESCRIBED_DISPLACEMENT)
     interface = Patch("interface", meshes["interface"], BCType.INTERFACE)
     # Patch.value is the Burgers vector b = u(+n) - u(-n); on the vertical
     # fault (n = +x, s_hat = +y) right-lateral slip is b = -slip_mag * s_hat.
-    fpatch = Patch("fault", fault, BCType.FAULT,
-                   value=np.broadcast_to(
-                       burgers(slip_mag, rake, meshes["n_hat"],
-                               meshes["s_hat"]), (fault.n_triangles, 3)))
+    b = burgers(slip_mag, rake, meshes["n_hat"], meshes["s_hat"])
+
+    def slipping(name):
+        return Patch(name, meshes[name], BCType.FAULT, value=np.broadcast_to(
+            b, (meshes[name].n_triangles, 3)))
+
     hx, zi, zb = meshes["half_x"], meshes["z_interface"], meshes["z_bottom"]
     plate = Region(
         PLATE, mat_plate,
         [Patch("top", meshes["top"], BCType.FREE_TRACTION, order=order_top),
          Patch("sides_upper", meshes["sides_upper"], side_bc), interface],
         probe_point=np.array([0.45 * hx, 0.45 * hx, 0.5 * zi]),
-        faults=[fpatch])
+        faults=[slipping("fault")])
     substrate = Region(
         SUBSTRATE, mat_substrate,
         [interface,
          Patch("sides_lower", meshes["sides_lower"], BCType.FREE_TRACTION),
          Patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)],
-        probe_point=np.array([0.45 * hx, 0.45 * hx, 0.5 * (zi + zb)]))
+        probe_point=np.array([0.45 * hx, 0.45 * hx, 0.5 * (zi + zb)]),
+        faults=[slipping("fault_lower")] if "fault_lower" in meshes else [])
     gravity = None
     if density is not None:
         gravity = Gravity(density={PLATE: density[0], SUBSTRATE: density[1]},
@@ -266,7 +294,9 @@ def maxwell_series(x, t, depth, thickness, mu_plate, mu_substrate, tau,
 # condition of docs/viscoelastic.md section 7 on the surface and on the
 # interface. So a wavenumber costs one small linear solve, and everything is
 # plain arithmetic in the substrate's moduli: real for a state, complex on an
-# inversion contour.
+# inversion contour. A fault that goes through the interface is two sources,
+# each in the moduli of the layer it lies in, the lower one entering on the
+# substrate's side of the interface conditions.
 
 def _modes(sign, kz, mu, lam):
     """The two solutions ~ exp(sign k z) at local height ``kz = k (z - z0)``:
@@ -326,11 +356,13 @@ def _layer_system(k, thickness, plate, substrate, weights, z_bottom):
     return A, top, bot
 
 
-def _dip_slip_source(k, depth, thickness, dip, plate, n_source: int = 128):
-    """The field of the slip in an unbounded plate material, at the surface
-    and at the interface: ``(nk, 4)`` each. It knows nothing of the substrate
-    or of gravity, so a stack over ``s`` computes it once."""
-    mu1, lam1 = plate
+def _slip_field(k, down_dip, dip, material, z_above, z_below=None,
+                n_source: int = 128):
+    """The field, in an UNBOUNDED ``material``, of unit thrust slip on the
+    stretch ``down_dip = (near, far)`` of the fault (distance from the trace),
+    at the height ``z_above`` over it and ``z_below`` under it: ``(nk, 4)``
+    each. It knows nothing of the other layer or of gravity."""
+    mu, lam = material
     d = np.deg2rad(dip)
     n_hat = np.array([np.sin(d), np.cos(d)])
     b = np.array([-np.cos(d), np.sin(d)])          # the hanging wall, up dip
@@ -338,27 +370,47 @@ def _dip_slip_source(k, depth, thickness, dip, plate, n_source: int = 128):
     exz = 0.5 * (b[0] * n_hat[1] + b[1] * n_hat[0])
     # the jump (above minus below) of (U, W, T/k, S/k) at a source point
     jump = np.array([2.0 * exz,
-                     -1j * (ezz + lam1 * exx / (lam1 + 2.0 * mu1)),
-                     4j * mu1 * (lam1 + mu1) / (lam1 + 2.0 * mu1) * exx, 0.0])
-    here = np.concatenate([_modes(-1, 0.0, mu1, lam1),
-                           -_modes(+1, 0.0, mu1, lam1)], axis=-1)
+                     -1j * (ezz + lam * exx / (lam + 2.0 * mu)),
+                     4j * mu * (lam + mu) / (lam + 2.0 * mu) * exx, 0.0])
+    here = np.concatenate([_modes(-1, 0.0, mu, lam),
+                           -_modes(+1, 0.0, mu, lam)], axis=-1)
     amp = np.linalg.solve(here, jump)              # decaying up, decaying down
     node, weight = np.polynomial.legendre.leggauss(n_source)
-    xi = 0.5 * depth / np.sin(d) * (1.0 + node)    # distance down dip
+    half = 0.5 * (down_dip[1] - down_dip[0])
+    xi = down_dip[0] + half * (1.0 + node)         # distance down dip
     xs, zs = xi * np.cos(d), -xi * np.sin(d)
-    phase = (0.5 * depth / np.sin(d) * weight)[None, :] \
-        * np.exp(-1j * k[:, None] * xs[None, :])
-    return (np.einsum("ks,ksij,j->ki", phase,
-                      _modes(-1, -k[:, None] * zs[None, :], mu1, lam1),
-                      amp[:2]),
-            np.einsum("ks,ksij,j->ki", phase,
-                      _modes(+1, k[:, None] * (-thickness - zs[None, :]),
-                             mu1, lam1), amp[2:]))
+    phase = (half * weight)[None, :] * np.exp(-1j * k[:, None] * xs[None, :])
+
+    def at(z, sign, a):
+        return np.einsum("ks,ksij,j->ki", phase, _modes(
+            sign, k[:, None] * (z - zs[None, :]), mu, lam), a)
+
+    return (at(z_above, -1, amp[:2]),
+            None if z_below is None else at(z_below, +1, amp[2:]))
 
 
-def _dip_slip_solve(k, source, thickness, plate, substrate, weights, z_bottom):
+def _dip_slip_source(k, depth, thickness, dip, plate):
+    """The slip IN THE PLATE, at the surface and at the interface. A stack
+    over ``s`` computes it once: the plate does not relax."""
+    return _slip_field(k, (0.0, min(depth, thickness) / np.sin(np.deg2rad(dip))),
+                       dip, plate, 0.0, -thickness)
+
+
+def _dip_slip_deep(k, depth, thickness, dip, substrate, z_bottom):
+    """The slip BELOW THE INTERFACE, in the substrate's moduli, at the
+    interface and at the base; ``None`` for a fault that ends in the plate."""
+    if depth <= thickness:
+        return None
+    sin_dip = np.sin(np.deg2rad(dip))
+    return _slip_field(k, (thickness / sin_dip, depth / sin_dip), dip,
+                       substrate, -thickness, z_bottom)
+
+
+def _dip_slip_solve(k, source, thickness, plate, substrate, weights, z_bottom,
+                    deep=None):
     """``(u_x^, u_z^)`` at the surface: the amplitudes that make the source
-    field satisfy the conditions of ``_layer_system``."""
+    fields satisfy the conditions of ``_layer_system``. ``source`` is the
+    slip in the plate, ``deep`` the slip in the substrate."""
     (mu1, _lam1), (w1, w2), (y_top, y_bot) = plate, weights, source
     A, top, _ = _layer_system(k, thickness, plate, substrate, weights, z_bottom)
     rhs = np.zeros(A.shape[:2], complex)
@@ -368,6 +420,14 @@ def _dip_slip_solve(k, source, thickness, plate, substrate, weights, z_bottom):
     rhs[:, 2], rhs[:, 3] = -y_bot[:, 0], -y_bot[:, 1]
     rhs[:, 4] = -y_bot[:, 2] / mu1
     rhs[:, 5] = y_bot[:, 3] / mu1 - g2 * y_bot[:, 1]
+    if deep is not None:
+        y_int, y_base = deep
+        rhs[:, 2] += y_int[:, 0]
+        rhs[:, 3] += y_int[:, 1]
+        rhs[:, 4] += y_int[:, 2] / mu1
+        rhs[:, 5] -= y_int[:, 3] / mu1
+        if z_bottom is not None:
+            rhs[:, 6], rhs[:, 7] = -y_base[:, 0], -y_base[:, 1]
     c = np.linalg.solve(A, rhs[..., None])[..., 0]
     y = np.einsum("kij,kj->ki", top, c[:, :4]) + y_top
     return y[:, 0], 1j * y[:, 1]
@@ -380,8 +440,10 @@ def dip_slip_spectrum(k, depth, thickness, dip, plate, substrate,
     dipping toward +x at ``dip`` degrees: the transform over x of what
     ``dip_slip_profile`` returns."""
     k = np.asarray(k, float)
-    return _dip_slip_solve(k, _dip_slip_source(k, depth, thickness, dip, plate),
-                           thickness, plate, substrate, weights, z_bottom)
+    return _dip_slip_solve(
+        k, _dip_slip_source(k, depth, thickness, dip, plate), thickness,
+        plate, substrate, weights, z_bottom,
+        _dip_slip_deep(k, depth, thickness, dip, substrate, z_bottom))
 
 
 def half_space_dip_slip(x, depth, dip):
@@ -418,7 +480,8 @@ def dip_slip_profile(x, depth, thickness, dip, plate, substrate,
     THRUST slip on an infinitely long fault that cuts an elastic plate from
     the surface at x = 0 down to ``depth``, dipping toward +x at ``dip``
     degrees, over a substrate: a half-space, or a layer clamped at
-    ``z_bottom``.
+    ``z_bottom``. Deeper than the plate is thick, the fault goes on through
+    the interface with the same slip, in the substrate.
 
     ``plate`` and ``substrate`` are ``(mu, lam)``, ``weights`` their
     ``rho g`` (GPa/km): buoyancy on the free surface and on the interface, as
@@ -435,11 +498,16 @@ def dip_slip_profile(x, depth, thickness, dip, plate, substrate,
     k, wk = _wavenumbers(max(float(np.abs(x).max()), thickness), k_max)
     phase = np.exp(1j * np.outer(x, k)) * wk
     source = _dip_slip_source(k, depth, thickness, dip, plate)
-    free = _dip_slip_solve(k, source, thickness, plate, plate, (0.0, 0.0), None)
+    # the half-space of the closed form has no interface for the fault to go
+    # through: all of it in a plate thick enough to hold it
+    whole = max(depth, thickness)
+    free = _dip_slip_solve(k, _dip_slip_source(k, depth, whole, dip, plate),
+                           whole, plate, plate, (0.0, 0.0), None)
 
     def half(sub):
-        got = _dip_slip_solve(k, source, thickness, plate, sub, weights,
-                              z_bottom)
+        got = _dip_slip_solve(
+            k, source, thickness, plate, sub, weights, z_bottom,
+            _dip_slip_deep(k, depth, thickness, dip, sub, z_bottom))
         return [phase @ (a - b) for a, b in zip(got, free)]
 
     def one(sub):

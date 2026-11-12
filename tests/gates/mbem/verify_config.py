@@ -148,6 +148,16 @@ def a_same_model() -> None:
     _same_model("layered_box, a thrust", direct,
                 layered_box_model(layered_box_meshes(**kw), sides="clamped",
                                   rake=90.0))
+    kw["fault_depth"] = 45.0                 # through the interface at 30 km
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped", rake=90.0)
+    _same_model("layered_box, a thrust through the interface", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped",
+                                  rake=90.0))
+    lower = [f.name for r in direct.regions for f in r.faults]
+    check("... its lower reach a second fault, in the substrate",
+          lower == ["fault", "fault_lower"]
+          and [len(r.faults) for r in direct.regions] == [1, 1])
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -532,6 +542,11 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
           and run.outputs.figures == ("plate_substrate",)
           and thrust.model.geometry.params["dip"] == 30.0
           and thrust.model.params["rake"] == 90.0)
+    mega = cfg.load(path, **small, dip=30.0, rake=90.0, depth=45.0)
+    check("a fault deeper than the plate names the eps of its lower reach",
+          mega.model.eps.get("fault_lower") == "auto"
+          and "fault_lower" not in thrust.model.eps
+          and mega.model.geometry.params["fault_depth"] == 45.0)
     # ``refine`` is one ray: the plate's two faces and the interface's eps,
     # the three a plate that bends is first order in, and nothing else
     fine = cfg.load(path, **small, dip=30.0, rake=90.0, refine=2.0)

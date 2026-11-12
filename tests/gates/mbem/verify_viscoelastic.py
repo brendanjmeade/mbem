@@ -111,7 +111,12 @@ the real-axis fit under test.
      15 km across, an error first order in those elements and in the
      interface's eps, which the strike-slip plate never showed -- first
      order to the point that the limit of two meshes with those three in one
-     ratio (layered_box.two_mesh_limit) lands on the reference.
+     ratio (layered_box.two_mesh_limit) lands on the reference. Last, the
+     fault taken THROUGH the interface, its lower reach a second fault in
+     the substrate: the reference's lower source by an interface between
+     like materials, which is none, and by a plate 10 m thick, under which
+     the half-space closed form holds whatever the moduli; then the solved
+     model against it, at the earthquake and relaxed under gravity.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -227,6 +232,9 @@ TOL_DIP_BASE = 2.0e-6            # a base 3e5 km down vs the half-space; 3e-7
 TOL_DIP_TIME = 1.0e-3            # fitted vs contour to 100 tau; 3.1e-4
 TOL_DIP_KINK = 5.0e-4            # a dislocated free plate's rotation and closure; 7e-5
 TOL_DIP_CYCLE = 2.0e-3           # a locked thrust: fitted vs its Fourier series; 3.7e-4
+TOL_DIP_THROUGH = 1.0e-12        # an interface between like materials is none; 3e-15
+TOL_DIP_THIN = 1.0e-3            # under a plate 10 m thick the closed form, which knows
+#                                  no moduli; 4.8e-4
 # The solved thrust: 30 degrees, a 300 km fault, the substrate relaxed to
 # 0.03 mu, clamped base and plate sides, under TEN times the Earth's gravity
 # so that it is first order in a box this small.
@@ -247,6 +255,12 @@ TOL_THRUST_BEND = 0.15           # ... its trough short of the reference's; 0.11
 THRUST_COARSER = 1.5             # ... so a second mesh, those faces and the eps this
 TOL_THRUST_LIMIT = 0.03          # much larger (0.176 short), and the limit of the two:
 #                                  4e-4 here, 1.4 % at nu = 1/4
+# ... and the same box with the fault taken THROUGH the interface: steeper,
+# so that it still fits, and 10 km of it in the substrate
+THROUGH = dict(dip=45.0, fault_depth=40.0)
+TOL_THROUGH_ELASTIC = (0.04, 0.03)   # u_x, u_z at the earthquake; 0.023, 0.011
+TOL_THROUGH = (0.09, 0.15)           # ... relaxed, under gravity; 0.054, 0.094
+THROUGH_BLIND = 0.06                 # ... the reference with the fault STOPPED there; 0.102
 
 
 def check(name, ok, extra="") -> bool:
@@ -1096,6 +1110,29 @@ def n_dip_slip() -> None:
     close("a dislocated free plate: the rotation and the closure of its halves",
           float(worst), TOL_DIP_KINK)
 
+    # a fault THROUGH the interface is two sources, the lower in the
+    # substrate's moduli. Between like materials the interface is none ...
+    kk = np.geomspace(1.0e-4, 3.0, 40)
+    even = (weight[0], weight[0])
+    worst = 0.0
+    for dip, d, h, base in ((20.0, 45.0, 30.0, None), (60.0, 80.0, 10.0, -200.0)):
+        through, whole = (lb.dip_slip_spectrum(kk, d, hh, dip, plate, plate,
+                                               even, base) for hh in (h, d + 5.0))
+        worst = max(worst, *(float(np.abs(a - b).max() / np.abs(b).max())
+                             for a, b in zip(through, whole)))
+    close("a fault through an interface between like materials == the fault "
+          "in one", worst, TOL_DIP_THROUGH)
+    # ... and under a plate 10 m thick it lies in a half-space of the
+    # SUBSTRATE, whose closed form knows no moduli: soft, stiff, and complex
+    worst = 0.0
+    for other in ((0.1 * MU, 2.0 * LAM), (3.0 * MU, 0.4 * LAM),
+                  ((0.05 + 0.02j) * MU, (1.3 - 0.02j) * LAM)):
+        worst = max(worst, *(float(np.abs(a - b).max()) for a, b in zip(
+            lb.dip_slip_profile(x, 45.0, 0.01, 20.0, plate, other),
+            lb.half_space_dip_slip(x, 45.0, 20.0))))
+    close("... and under a 10 m plate of another material == the half-space "
+          "closed form", worst, TOL_DIP_THIN)
+
     # in time: the study's reference is this profile at mu(s_k) through the
     # SAME fit as the solution. Held to a contour inversion, to 100 tau.
     xs = np.array([-60.0, -12.0, 9.0, 27.0, 80.0])
@@ -1139,16 +1176,19 @@ def n_dip_slip() -> None:
                   axis=1) / sv[:, None], tt[-1])[xs.size:]).max()), 0.3)
 
     # the solved thrust
-    def solved(relaxed, g_acc, coarser=1.0):
+    def solved(relaxed, g_acc, coarser=1.0, fault=THRUST):
         """Mid-strike ``(u_x, u_z)`` over the slip, the reference under the
-        model's gravity, and the reference under none. ``coarser`` scales
-        the plate's two faces and the interface's eps together."""
+        model's gravity, the reference under none, and where. ``coarser``
+        scales the plate's two faces and the interface's eps together."""
+        geo = dict(THRUST, **fault)
         meshes = lb.build_layered_box(**dict(
-            THRUST, edge_near=coarser * THRUST["edge_near"],
-            edge_interface=coarser * THRUST["edge_interface"]))
+            geo, edge_near=coarser * geo["edge_near"],
+            edge_interface=coarser * geo["edge_interface"]))
         e = coarser * THRUST_EPS
         eps = dict(top="auto", sides_upper="auto", fault="auto",
                    interface=e, sides_lower=e, base=e)
+        if "fault_lower" in meshes:
+            eps["fault_lower"] = "auto"
         c = meshes["top"].centroids()
         strip = ((np.abs(c[:, 1]) < 0.08 * THRUST["fault_half_len"])
                  & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 60.0))
@@ -1159,16 +1199,16 @@ def n_dip_slip() -> None:
                                rake=90.0, density=THRUST_DENSITY, g=g_acc)
         u = AssembledDense(generate_system(model), eps, "direct").solve()["u:top"]
         refs = [np.column_stack(lb.dip_slip_profile(
-            c[strip, 0], depth, thick, THRUST["dip"], plate, soft, w,
-            THRUST["z_bottom"]))
+            c[strip, 0], geo["fault_depth"], thick, geo["dip"], plate, soft, w,
+            geo["z_bottom"]))
             for w in (tuple(model.gravity.weight(n)
                             for n in (lb.PLATE, lb.SUBSTRATE)), (0.0, 0.0))]
-        return u[strip][:, [0, 2]] / 1.0e-3, *refs
+        return u[strip][:, [0, 2]] / 1.0e-3, *refs, c[strip, 0]
 
     def miss(got, ref):
         return np.sqrt(((got - ref) ** 2).mean(axis=0) / (ref ** 2).mean(axis=0))
 
-    got, ref, blind = solved(THRUST_RELAXED, THRUST_G)
+    got, ref, blind, _ = solved(THRUST_RELAXED, THRUST_G)
     for name, m, tol in zip(("u_x", "u_z"), miss(got, ref), TOL_THRUST):
         close(f"a 30-degree thrust over a relaxed substrate, under gravity: "
               f"{name} vs the reference", float(m), tol)
@@ -1176,7 +1216,7 @@ def n_dip_slip() -> None:
           float(miss(got, blind)[1]), THRUST_BLIND)
     # afloat at real gravity the plate carries everything in bending, and P0
     # faces 10 and 15 km across on a 30 km plate bend too little
-    got, ref, _ = solved(THRUST_FLUID, defaults.GRAVITY)
+    got, ref, _, _ = solved(THRUST_FLUID, defaults.GRAVITY)
     short = float(1.0 - got[:, 1].min() / ref[:, 1].min())
     check("... and afloat at real gravity: its trough short of the "
           "reference's by", 0.0 <= short <= TOL_THRUST_BEND,
@@ -1187,6 +1227,20 @@ def n_dip_slip() -> None:
           "is off by", abs(1.0 - limit / ref[:, 1].min()) <= TOL_THRUST_LIMIT,
           f"{1.0 - limit / ref[:, 1].min():+.4f}, {1.0 - wide[:, 1].min() / ref[:, 1].min():.3f} "
           f"coarser; <= {TOL_THRUST_LIMIT}")
+
+    # THROUGH the interface: a second fault, in the substrate
+    got, ref, _, at = solved(1.0, 0.0, fault=THROUGH)
+    for name, m, tol in zip(("u_x", "u_z"), miss(got, ref), TOL_THROUGH_ELASTIC):
+        close(f"a 45-degree thrust through the interface, 10 km into the "
+              f"substrate, at the earthquake: {name}", float(m), tol)
+    stopped = np.column_stack(lb.dip_slip_profile(
+        at, thick, thick, THROUGH["dip"], plate, plate, z_bottom=THRUST["z_bottom"]))
+    above("... which the reference with the fault STOPPED at the interface "
+          "misses", float(miss(got, stopped).min()), THROUGH_BLIND)
+    got, ref, _, _ = solved(THRUST_RELAXED, THRUST_G, fault=THROUGH)
+    for name, m, tol in zip(("u_x", "u_z"), miss(got, ref), TOL_THROUGH):
+        close(f"... and over the relaxed substrate, under gravity: {name}",
+              float(m), tol)
 
 def main() -> bool:
     t0 = time.time()

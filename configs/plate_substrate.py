@@ -14,6 +14,10 @@ A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
         --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
         --set edge_near=10 --set t_max=100 \
         --sweep refine=1,2 --sweep gravity=0,1                    # a thrust
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+        --set rho_substrate=3300 --set edge_near=10 --set near_field_radius=200 \
+        --set half_x=800 --set t_max=250 --sweep refine=1,2       # a megathrust
 
 Lengths are km. TIME IS IN UNITS OF THE SUBSTRATE'S MAXWELL TIME (``tau = 1``),
 which is all a linear problem needs: the rheology is stated in relaxation
@@ -61,6 +65,11 @@ at 10 km, 15 km and 1.5 km on a 30 km plate, 6 % at half of each.
 ``refine`` divides exactly those three, so ``--sweep refine=1,2`` is a pair
 on one ray and the error cancels between them: the thrust figure draws the
 two-mesh limit (``layered_box.two_mesh_limit``) and the misfit of each.
+
+``depth`` greater than ``thickness`` takes the fault THROUGH the interface: a
+megathrust whose lower reach slips in the substrate, as a second fault there
+(``fault_lower``). Give it room: ``near_field_radius`` is measured from the
+trace, and should clear the fault's lower edge at ``depth / tan(dip)``.
 """
 from mbem import defaults, laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
@@ -88,6 +97,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     eps = dict(top="auto", sides_upper="auto", fault="auto",
                interface=eps_substrate, sides_lower=eps_substrate,
                base=eps_substrate)
+    if depth > thickness:                   # the fault goes on in the substrate
+        eps["fault_lower"] = "auto"
     return Run(
         name=f"plate_substrate_{sides}_{backend}",
         model=Model(

@@ -27,18 +27,13 @@ from mbem.figures import save_figure
 from mbem.figures.style import set_paper_style
 
 TIMES = (0.0, 1.0, 10.0)            # in Maxwell times; 0 is the elastic state
-# a dip-slip fault is not symmetric about its trace: SIGNED distance, finer
-# where the hanging wall sits over the fault
-X_SIGNED = np.concatenate([np.arange(-120.0, -60.0, 15.0),
-                           np.arange(-60.0, 60.5, 6.0),
-                           np.arange(75.0, 121.0, 15.0)])
-X_MAX = 120.0                       # km: the profile shown
+X_MAX = 120.0                       # km: the profile shown, at least
 X_BINS = np.geomspace(2.0, X_MAX, 13)
 STRIP = 0.06                        # half-width of the mid-strike strip / fault half-length
 PROBE = (16.0, 32.0)                # km: where panel c reads the postseismic part
 CYCLES = 5.0                        # the cycle drawn repeats this often in the fit's window
 PHASES = (0.05, 0.95)               # early and late in it, as fractions of the period
-X_FAR = 100.0                       # km into the hanging wall: where the cycle is followed
+X_FAR = 75.0                        # km past the fault's lower edge: where the cycle is followed
 BLUE, ORANGE = "#1f5fa6", "#d9731a"
 
 
@@ -243,6 +238,24 @@ def in_plane(run, coarse=None):
     return s, x, lb.two_mesh_limit(at, u, face_ratio(coarse, run))
 
 
+def signed_bins(run) -> np.ndarray:
+    """The bin edges of a dip-slip profile, in SIGNED distance from the
+    trace, because such a fault is not symmetric about it: 6 km from 60 km
+    behind the trace to 24 km past the fault's lower edge (60 km at least),
+    where the hanging wall sits over the fault, and about 15 km beyond, out
+    to the edge of the near field (``X_MAX`` at least)."""
+    gp = run.resolved["spec"]["model"]["geometry"]["params"]
+    tip = gp["fault_depth"] / np.tan(np.deg2rad(gp["dip"]))
+    fine = max(60.0, 6.0 * np.ceil((tip + 24.0) / 6.0))
+    reach = max(X_MAX, gp.get("near_field_radius", X_MAX), fine + 15.0)
+
+    def beyond(start):
+        return np.linspace(start, reach, 1 + max(1, round((reach - start) / 15.0)))[1:]
+
+    return np.concatenate([-beyond(60.0)[::-1],
+                           np.arange(-60.0, fine + 0.5, 6.0), beyond(fine)])
+
+
 def _in_plane(run):
     from mbem import laplace
 
@@ -253,7 +266,8 @@ def _in_plane(run):
     strip = np.abs(cen[:, 1]) < STRIP * gp["fault_half_len"]
     moved = stack["u:top"][:, :, [0, 2]] / slip
     x, u = [], []
-    for a, b in zip(X_SIGNED[:-1], X_SIGNED[1:]):
+    edges = signed_bins(run)
+    for a, b in zip(edges[:-1], edges[1:]):
         sel = strip & (cen[:, 0] >= a) & (cen[:, 0] < b)
         if sel.any() and a * b > 0.0:               # not the bin on the trace
             x.append(cen[sel, 0].mean())
@@ -361,7 +375,7 @@ def plate_thrust(study):
         return ("gravity" if float(g) > 0.0 else "no gravity") + tail
 
     late = float(f"{laplace.window(in_plane(run_of(boxes[-1], grav[0]))[0])[1]:.3g}")
-    span = X_SIGNED[-1]
+    span = signed_bins(run_of(boxes[-1], grav[0]))[-1]
     xf = np.linspace(-span, span, 241)
     xf = xf[np.abs(xf) > 0.5]
 
@@ -502,7 +516,7 @@ def plate_cycle(study):
 
     run, coarse = pair(grav[0])
     period = float(f"{laplace.window(in_plane(run)[0])[1] / CYCLES:.3g}")
-    span = X_SIGNED[-1]
+    span = signed_bins(run)[-1]
     xf = np.linspace(-span, span, 241)
     xf = xf[np.abs(xf) > 0.5]
 
@@ -541,7 +555,7 @@ def plate_cycle(study):
     # the surface over the fault's lower edge (vertical)
     gp = run.resolved["spec"]["model"]["geometry"]["params"]
     edge = gp["fault_depth"] / np.tan(np.deg2rad(gp["dip"]))
-    sites = ((int(np.argmin(np.abs(x - X_FAR))), 0, "k", r"$v_x$"),
+    sites = ((int(np.argmin(np.abs(x - edge - X_FAR))), 0, "k", r"$v_x$"),
              (int(np.argmin(np.abs(x - edge))), 1, "0.55", r"$v_z$"))
     phase = np.linspace(0.02, 0.98, 49)
     dots = phase[::4]

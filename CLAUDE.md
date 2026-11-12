@@ -191,6 +191,11 @@ gates FAIL rather than skip without them.
     measured from steady slip, per unit slip rate. Its mean over the cycle
     is elastic back slip whatever relaxes, and it needs a window of a few
     periods, not a settled body.
+    **A fault that cuts the plate hands its relaxation to the box.** A
+    megathrust through the interface is right at the earthquake (1 %) and in
+    time is the walls': its halves converge as rigid blocks, clamped sides
+    hold them and free sides release them early, the two bracketing the
+    reference, and no mesh changes that (the two-mesh limit moves nothing).
     **A state is the base model with its own materials**, never cumulative,
     and is read back through `RegionModel.with_materials`.
 17. **Gravity is a condition on the boundary** (`model.Gravity`, held as

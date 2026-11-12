@@ -298,6 +298,44 @@ imaginary `s`), and the model is within 2.3 % of it early in the cycle and
 2.1 % late.  Any dip-slip run of `configs/plate_substrate.py` draws it
 (`plate_cycle`).
 
+**A megathrust.**  A fault deeper than the plate is thick goes through the
+interface, and its lower reach is a second fault, in the substrate: slip
+inside the region that relaxes.
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+    --set rho_substrate=3300 --set edge_near=10 --set near_field_radius=200 \
+    --set half_x=800 --set t_max=250 --sweep refine=1,2
+```
+
+The reference takes the same fault (two sources, each in the moduli of its
+own layer), and its lower source is held by three limits that are exact: an
+interface between like materials is none (7e-15), under a plate 10 m thick
+the half-space closed form holds whatever the substrate (5e-4), and slip in
+a fluid moves nothing at the surface (1e-6).  That last is the physics too.
+For a megathrust dipping 20 degrees to 45 km through a 30 km plate, the part
+below the plate is two thirds of the vertical motion at the earthquake and
+under 1 % by a hundred Maxwell times: slip in a body that relaxes is
+forgotten, and what is left is a plate cut through, whose two halves
+converge as the substrate lets go.  So the far field catches up with the
+trench (400 km into the hanging wall, 0.09 of the slip at the earthquake and
+0.45 at a hundred Maxwell times), and the cycle is the one subduction zones
+show: repeating every fifty Maxwell times, a point 200 km inland moves
+toward the trench at 0.56 of the slip rate just after an earthquake and away
+from it at 0.45 just before the next.
+
+The model is within 0.4 % (horizontal) and 1.4 % (vertical) of that
+reference at the earthquake, with a rigid base where the model's is.  In
+relaxation it is within 11 % at one Maxwell time and 22 % at 250, and here
+that is the box and not the mesh, the two-mesh limit moving nothing: clamped
+walls 800 km away hold the two halves at 0.69 of the reference's
+convergence.  Free sides (`--set sides=free`) let them go, to 0.95, and
+release them too early (1.11 at one Maxwell time), so the two bracket the
+reference at every time.  What a plate that continues beyond a wall does is
+stiff early and slack late, and a wall that knows it is the open problem
+this model points at (`BACKLOG.md`).
+
 ## Layout
 
 ```
@@ -607,7 +645,8 @@ admissibility can accept inaccurate low-rank factors for a near-field block.)
 
 Viscoelasticity by correspondence on the boundary goes back to Rizzo & Shippy
 (1971); the layered-earth problems it is compared with are Nur & Mavko (1974),
-Savage & Prescott (1978) and Rybicki (1971). `docs/viscoelastic.md` has the
+Savage & Prescott (1978) and Rybicki (1971), and the cycle of a locked fault
+is Savage (1983) and Thatcher & Rundle (1984). `docs/viscoelastic.md` has the
 full list.
 
 The mollification follows the method of regularized Stokeslets and its surface

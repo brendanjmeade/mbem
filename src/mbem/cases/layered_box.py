@@ -19,6 +19,12 @@ is small rather than zero, is divided by a shear modulus going to zero.
 ``"clamped"`` removes that mode at the price of holding the plate edges. The
 two bracket the truth; neither is a half-space.
 
+``"window"`` is one: every wall of the box -- the plate's sides, the
+substrate's, the base -- carries the displacement the prescribed slip produces
+in a plate over a HALF-SPACE (``model.FarField``, from
+``cases.layered_space``), state by state. The box then solves the near field
+and its size stops being the model.
+
 Under gravity (``density``) the plate's free top is the free surface.
 
 Also here, because the gate and the study both need them: the references for
@@ -33,7 +39,9 @@ from __future__ import annotations
 import numpy as np
 
 PLATE, SUBSTRATE = "plate", "substrate"
-SIDES = ("free", "clamped")
+SIDES = ("free", "clamped", "window")
+LOWER = ("slip", "creep")
+WALLS = ("sides_upper", "sides_lower", "base")
 
 
 def _panels(half_x, z_range, edge):
@@ -62,11 +70,77 @@ def _tilt(fault, dip):
             R[:, 0].copy())
 
 
+def _frame(outer, hole, z, edge):
+    """The flat rectangle ``outer`` less the rectangle ``hole`` inside it, as
+    up to four rectangles at height ``z``, normals up. They need not share
+    nodes: elements are discontinuous, and a surface closes by geometry."""
+    from local_box_mesh_eq import make_rectangular_patch_eq
+
+    (ox, oy), (hx, hy) = outer, hole
+    pieces = [((ox[0], hx[0]), oy), ((hx[1], ox[1]), oy),
+              (hx, (hy[1], oy[1])), (hx, (oy[0], hy[0]))]
+    return [make_rectangular_patch_eq(xr, yr, z, edge, normal_up=True)
+            for xr, yr in pieces
+            if xr[1] - xr[0] > 1e-9 and yr[1] - yr[0] > 1e-9]
+
+
+def _slab_interface(half_x, z_interface, dip, slab_depth, slab_half_len,
+                    edge_interface, edge_far, near_field_radius):
+    """The interface of a plate that SUBDUCTS: flat at ``z_interface``, less
+    the footprint under the megathrust, plus the faces of the slab that hangs
+    there -- the plate itself, continued down dip to the depth ``slab_depth``.
+
+    In section the slab is a parallelogram: its top is the megathrust's plane
+    below the plate, its bottom the parallel plane through the point under
+    the trench at the plate's base, its tip horizontal. It reaches
+    ``slab_half_len`` along strike either way and ends in vertical caps.
+    Every normal points INTO the plate, as the flat interface's does."""
+    from local_box_mesh_eq import (_concatenate_meshes,
+                                   make_rectangular_patch_eq,
+                                   make_vertical_panel_eq)
+    from mollified_bem import TriMesh
+
+    d = np.deg2rad(dip)
+    H, L, Z = -z_interface, slab_half_len, slab_depth
+    x_cut, x_b, x_t = H / np.tan(d), (Z - H) / np.tan(d), Z / np.tan(d)
+    R = np.array([[np.cos(d), 0.0, np.sin(d)],
+                  [0.0, 1.0, 0.0],
+                  [-np.sin(d), 0.0, np.cos(d)]])   # down dip <- the x axis
+
+    def dipping(down_dip, lift, up):
+        flat = make_rectangular_patch_eq(down_dip, (-L, L), 0.0,
+                                         edge_interface, normal_up=up)
+        return TriMesh(vertices=flat.vertices @ R.T + np.array([0, 0, lift]),
+                       triangles=flat.triangles)
+
+    def cap(y, sign):
+        panel = make_vertical_panel_eq("y", y, (0.0, x_cut), (-Z, -H),
+                                       edge_interface, sign)
+        v = panel.vertices.copy()
+        v[:, 0] += (-H - v[:, 2]) / np.tan(d)       # sheared down the dip
+        return TriMesh(vertices=v, triangles=panel.triangles)
+
+    box = (-half_x, half_x)
+    near = ((max(-half_x, -near_field_radius),
+             min(half_x, x_t + near_field_radius)),
+            (max(-half_x, -L - near_field_radius),
+             min(half_x, L + near_field_radius)))
+    return _concatenate_meshes(
+        _frame((box, box), near, z_interface, edge_far)
+        + _frame(near, ((0.0, x_cut), (-L, L)), z_interface, edge_interface)
+        + [dipping((x_cut / np.cos(d), x_t / np.cos(d)), 0.0, False),   # top
+           dipping((0.0, x_b / np.cos(d)), z_interface, True),          # bottom
+           make_rectangular_patch_eq((x_b, x_t), (-L, L), -Z, edge_interface,
+                                     normal_up=True),                   # tip
+           cap(+L, -1), cap(-L, +1)])
+
+
 def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
                       fault_half_len=150.0, fault_depth=15.0,
                       edge_fault=5.0, edge_near=20.0, edge_far=80.0,
                       edge_side=80.0, edge_interface=15.0,
-                      near_field_radius=90.0, dip=90.0):
+                      near_field_radius=90.0, dip=90.0, slab_depth=0.0,
+                      slab_half_len=0.0):
     """Meshes of the box. The top is fault-aligned and graded as in
     ``fault_box``. The interface is graded the same way about the fault's
     projection (``edge_interface`` beneath it, ``edge_far`` away): the field
@@ -82,7 +156,14 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
     below is a second mesh, ``fault_lower``, on the same plane, which belongs
     to the substrate; and the interface is then aligned on the line where the
     fault cuts it, as the top is on the trace, because the displacement of
-    the interface jumps there by the slip."""
+    the interface jumps there by the slip.
+
+    ``slab_depth`` greater than the plate is thick makes the plate SUBDUCT:
+    the footwall plate goes on down the dip as a slab to that depth, within
+    ``slab_half_len`` of mid-strike (the fault's half-length by default), and
+    the interface wraps it (``_slab_interface``). The megathrust is then the
+    plate's own: it may reach the plate's base and no deeper, since below
+    that the plane is the slab's face, an interface and not a fault."""
     from local_box_mesh_eq import (make_rectangular_patch_eq,
                                    make_top_patch_with_fault,
                                    make_vertical_fault_eq)
@@ -98,6 +179,17 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
         raise ValueError(f"the fault ends {below:g} km below the interface, "
                          f"less than half a fault element: end it at the "
                          f"interface or take it deeper")
+    slab = slab_depth > 0.0
+    if slab:
+        slab_half_len = slab_half_len or fault_half_len
+        if dip >= 90.0 or below > 0.0 or not (
+                -z_interface < slab_depth < -z_bottom):
+            raise ValueError("a slab needs a dipping fault that ends in the "
+                             "plate, and a depth between the plate's base "
+                             "and the box's")
+        if not (slab_depth / np.tan(np.deg2rad(dip)) < half_x
+                and slab_half_len < half_x):
+            raise ValueError("the slab does not fit in the box")
     r = (-half_x, half_x)
     trace = np.column_stack([np.zeros(2),
                              np.array([-fault_half_len, fault_half_len])])
@@ -108,7 +200,9 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
     # where the fault meets the interface, or under the trace if it does not
     cut = trace if below < 0.0 else trace + np.array(
         [-z_interface / np.tan(np.deg2rad(dip)) if dip != 90.0 else 0.0, 0.0])
-    interface = make_top_patch_with_fault(
+    interface = _slab_interface(
+        half_x, z_interface, dip, slab_depth, slab_half_len, edge_interface,
+        edge_far, near_field_radius) if slab else make_top_patch_with_fault(
         r, r, z_interface, cut, edge_fault=edge_interface, edge_far=edge_far,
         near_field_radius=near_field_radius,
         edge_near=max(edge_near, edge_interface), normal_up=True)
@@ -131,7 +225,8 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
                 fault=fault, n_hat=n_hat, s_hat=s_hat, half_x=half_x,
                 z_interface=z_interface, z_bottom=z_bottom,
                 fault_depth=fault_depth, fault_half_len=fault_half_len,
-                dip=dip, **lower)
+                dip=dip, slab_depth=float(slab_depth),
+                slab_half_len=float(slab_half_len), **lower)
 
 
 def burgers(slip_mag, rake, n_hat, s_hat):
@@ -145,15 +240,53 @@ def burgers(slip_mag, rake, n_hat, s_hat):
     return slip_mag * (c * s_hat + s * np.cross(np.asarray(n_hat, float), s_hat))
 
 
+class SlipFarField:
+    """``FarField.displacement`` of the layered box: what the PRESCRIBED slip
+    does in a plate over a half-space, at the materials it is handed. One
+    call serves every state of a run (``stack``): the plate's part of the
+    reference does not depend on the substrate."""
+
+    def __init__(self, slip_mag, rake, half_len, depth, thickness, dip,
+                 weights):
+        self.slip_mag, self.rake, self.half_len = slip_mag, rake, half_len
+        self.depth, self.thickness, self.dip = depth, thickness, dip
+        self.weights = weights
+
+    def stack(self, points, states):
+        from mbem.cases import layered_space
+
+        plates = {(float(m[PLATE].mu), float(m[PLATE].lam)) for m in states}
+        if len(plates) != 1:
+            raise ValueError("the far field of the layered box takes an "
+                             "elastic plate: one plate for every state")
+        return self.slip_mag * np.asarray(layered_space.displacement(
+            points, self.half_len, self.depth, self.thickness, self.dip,
+            self.rake, plates.pop(),
+            [(float(m[SUBSTRATE].mu), float(m[SUBSTRATE].lam))
+             for m in states], weights=self.weights))
+
+    def __call__(self, points, materials):
+        return self.stack(points, [materials])[0]
+
+
 def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
-                order_top=0, density=None, g=None, rake=180.0):
+                order_top=0, density=None, g=None, rake=180.0, lower="slip"):
     """Slip ``slip_mag`` on the fault at ``rake`` degrees (``burgers``):
     RIGHT-lateral unless told otherwise. It is in the plate, and where the
     meshes carry ``fault_lower`` the same slip continues on it in the
-    substrate. The
+    substrate -- or, with ``lower="creep"``, that lower reach is a SOLVED
+    fault with no load of its own (``BCType.FAULT_TRACTION``), which slips as
+    the slip above it and the relaxing substrate load it: give it a law
+    (``Laplace.faults``, ``rheology.ViscousFault``) and it is deep afterslip.
+    The
     substrate's closed boundary is ``interface``, ``sides_lower``, ``base``: a
     Laplace run needs one scalar eps on those three (docs/viscoelastic.md,
     section 3), and the runner refuses otherwise.
+
+    ``sides="window"`` makes all three walls (``WALLS``) a window on the plate
+    over a half-space (module docstring). Its data are those of the
+    prescribed slip; a creeping reach radiates too, and the walls miss that
+    part's far field.
 
     ``density = (plate, substrate)`` in kg/m^3 turns gravity on
     (``model.Gravity``): buoyancy on ``top``, the free surface, and on the
@@ -161,10 +294,17 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
     material that continues and carry none -- which also leaves the
     substrate's free sides a reservoir, so that relaxed it holds no pressure,
     as a half-space would not."""
-    from mbem.model import BCType, Gravity, Patch, Region, RegionModel
+    from mbem.model import (BCType, FarField, Gravity, Patch, Region,
+                            RegionModel)
 
     if sides not in SIDES:
         raise ValueError(f"sides {sides!r} must be one of {SIDES}")
+    if lower not in LOWER:
+        raise ValueError(f"lower {lower!r} must be one of {LOWER}")
+    if lower == "creep" and "fault_lower" not in meshes:
+        raise ValueError('lower="creep" needs a fault that goes through the '
+                         "interface (fault_depth greater than the plate)")
+    window = sides == "window"
     side_bc = (BCType.FREE_TRACTION if sides == "free"
                else BCType.PRESCRIBED_DISPLACEMENT)
     interface = Patch("interface", meshes["interface"], BCType.INTERFACE)
@@ -176,6 +316,12 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
         return Patch(name, meshes[name], BCType.FAULT, value=np.broadcast_to(
             b, (meshes[name].n_triangles, 3)))
 
+    below = []
+    if "fault_lower" in meshes:
+        below = [slipping("fault_lower") if lower == "slip" else
+                 Patch("fault_lower", meshes["fault_lower"],
+                       BCType.FAULT_TRACTION)]
+
     hx, zi, zb = meshes["half_x"], meshes["z_interface"], meshes["z_bottom"]
     plate = Region(
         PLATE, mat_plate,
@@ -186,16 +332,35 @@ def build_model(meshes, slip_mag, mat_plate, mat_substrate, sides="free",
     substrate = Region(
         SUBSTRATE, mat_substrate,
         [interface,
-         Patch("sides_lower", meshes["sides_lower"], BCType.FREE_TRACTION),
+         Patch("sides_lower", meshes["sides_lower"],
+               BCType.PRESCRIBED_DISPLACEMENT if window
+               else BCType.FREE_TRACTION),
          Patch("base", meshes["base"], BCType.PRESCRIBED_DISPLACEMENT)],
-        probe_point=np.array([0.45 * hx, 0.45 * hx, 0.5 * (zi + zb)]),
-        faults=[slipping("fault_lower")] if "fault_lower" in meshes else [])
+        # on the footwall side: a slab, if there is one, hangs under +x
+        probe_point=np.array([-0.45 * hx, 0.45 * hx, 0.5 * (zi + zb)]),
+        faults=below)
     gravity = None
     if density is not None:
         gravity = Gravity(density={PLATE: density[0], SUBSTRATE: density[1]},
                           surface=("top",),
                           **({} if g is None else {"g": g}))
-    return RegionModel([plate, substrate], gravity=gravity)
+    far_field = None
+    if window:
+        # the slip that is PRESCRIBED: all of the fault, or the plate's part
+        depth = meshes["fault_depth"] if lower == "slip" \
+            else min(meshes["fault_depth"], -zi)
+        weights = (0.0, 0.0) if gravity is None else tuple(
+            gravity.weight(n) for n in (PLATE, SUBSTRATE))
+        spec = dict(reference="plate over a half-space",
+                    slip_mag=float(slip_mag), rake=float(rake),
+                    half_len=float(meshes["fault_half_len"]),
+                    depth=float(depth), thickness=float(-zi),
+                    dip=float(meshes["dip"]), weights=list(weights))
+        far_field = FarField(WALLS, SlipFarField(
+            slip_mag, rake, meshes["fault_half_len"], depth, -zi,
+            meshes["dip"], weights), spec=spec)
+    return RegionModel([plate, substrate], gravity=gravity,
+                       far_field=far_field)
 
 
 def two_mesh_limit(coarse, fine, ratio):

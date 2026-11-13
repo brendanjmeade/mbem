@@ -34,6 +34,7 @@ PROBE = (16.0, 32.0)                # km: where panel c reads the postseismic pa
 CYCLES = 5.0                        # the cycle drawn repeats this often in the fit's window
 PHASES = (0.05, 0.95)               # early and late in it, as fractions of the period
 X_FAR = 75.0                        # km past the fault's lower edge: where the cycle is followed
+HELD = 100.0                        # a creep time this many windows long is no creep
 BLUE, ORANGE = "#1f5fa6", "#d9731a"
 
 
@@ -288,22 +289,92 @@ def weights(run) -> tuple:
                  for name in (lb.PLATE, lb.SUBSTRATE))
 
 
+_REFERENCE: dict = {}       # a figure asks for the same stack many times
+_SPACE = False              # every run of the study against the 3-D reference
+
+
+def _in_space(study) -> bool:
+    """A study with a window among its runs is about ruptures as they are:
+    all of its runs are then compared with the reference in three
+    dimensions, the clamped and the free ones too."""
+    global _SPACE
+    _SPACE = any(r.resolved["spec"]["model"]["params"].get("sides") == "window"
+                 for _p, r in study.rows)
+    return _SPACE
+
+
 def _reference_stack(run, s, x, z_bottom=None):
-    """``(1 + len(s), n_x, 2)``: the plane-strain reference of every state,
-    the elastic one first. A half-space below unless ``z_bottom`` clamps it."""
+    """``(1 + len(s), n_x, 2)``: the reference of every state, the elastic
+    one first, for the slip the run PRESCRIBES in a plate over a half-space
+    (or over a layer clamped at ``z_bottom``).
+
+    A run whose walls are a window is the rupture it is, and its reference
+    is that rupture's, in three dimensions, along the mid-strike line
+    (``cases.layered_space``). Any other is a long fault in a box standing in
+    for an infinitely long one, and its reference is plane strain."""
     from mbem import rheology
     from mbem.cases import layered_box as lb
 
+    key = (str(run.run_dir), np.asarray(x, float).tobytes(), z_bottom, _SPACE)
+    if key in _REFERENCE:
+        return _REFERENCE[key]
     gp = run.resolved["spec"]["model"]["geometry"]["params"]
+    mp = run.resolved["spec"]["model"]["params"]
     mats = _regions(run)
     plate, sub = ((mats[n]["mu"], mats[n]["lam"])
                   for n in (lb.PLATE, lb.SUBSTRATE))
     rheo = rheology.from_spec(
         run.resolved["spec"]["laplace"]["rheology"][lb.SUBSTRATE])
-    return np.stack(lb.dip_slip_profile(
-        x, gp["fault_depth"], -gp["z_interface"], gp["dip"], plate,
-        [rheology.moduli(rheo, *sub, sv) for sv in [np.inf, *s]],
-        weights(run), z_bottom), axis=-1)
+    subs = [rheology.moduli(rheo, *sub, sv) for sv in [np.inf, *s]]
+    thick = -gp["z_interface"]
+    # a lower reach that creeps is solved, not prescribed
+    depth = gp["fault_depth"] if mp.get("lower", "slip") == "slip" \
+        else min(gp["fault_depth"], thick)
+    if _SPACE or mp.get("sides") == "window":
+        from mbem.cases import layered_space
+
+        out = np.asarray(layered_space.surface_displacement(
+            np.column_stack([x, np.zeros_like(x)]), gp["fault_half_len"],
+            depth, thick, gp["dip"], mp.get("rake", 180.0), plate, subs,
+            weights=weights(run), z_bottom=z_bottom))[:, :, [0, 2]]
+    else:
+        out = np.stack(lb.dip_slip_profile(
+            x, depth, thick, gp["dip"], plate, subs, weights(run), z_bottom),
+            axis=-1)
+    _REFERENCE[key] = out
+    return out
+
+
+CONTRASTS = ("gravity", "sides", "lower", "slab_depth")
+
+
+def _contrast(study) -> tuple:
+    """``(key, values)``: the two-valued axis a study figure draws in two
+    colours, the value drawn first and filled leading -- gravity on, the
+    walls a window, the lower reach creeping, the slab there."""
+    for key in CONTRASTS:
+        if key in study.swept:
+            vals = list(study.axis(key))
+            if key in ("sides", "lower"):
+                vals.sort(key=lambda v: v not in ("window", "creep"))
+            else:
+                vals.sort(key=float, reverse=True)
+            return key, vals
+    return None, [None]
+
+
+def _named(key, v, tail="") -> str:
+    if v is None:
+        return ""
+    if key == "gravity":
+        text = "gravity" if float(v) > 0.0 else "no gravity"
+    elif key == "sides":
+        text = f"{v} walls"
+    elif key == "lower":
+        text = "creep below" if v == "creep" else "slip below"
+    else:
+        text = f"slab to {float(v):g} km" if float(v) > 0.0 else "no slab"
+    return text + tail
 
 
 def in_plane_in_time(run, t, x_ref=None, z_bottom=None, coarse=None):
@@ -352,17 +423,17 @@ def plate_thrust(study):
     import matplotlib.pyplot as plt
     from mbem import laplace
     set_paper_style()
+    _in_space(study)
 
     boxes = sorted(study.axis("half_x"), key=float) \
         if "half_x" in study.swept else [None]
-    grav = sorted(study.axis("gravity"), key=float, reverse=True) \
-        if "gravity" in study.swept else [None]
+    contrast, grav = _contrast(study)
 
     faces = sorted(study.axis("refine"), key=float) \
         if "refine" in study.swept else [None]
 
     def run_of(half_x, g, refine=faces[-1]):
-        sel = {k: v for k, v in (("half_x", half_x), ("gravity", g),
+        sel = {k: v for k, v in (("half_x", half_x), (contrast, g),
                                  ("refine", refine)) if v is not None}
         return study.one(**sel) if sel else study.rows[0][1]
 
@@ -370,9 +441,7 @@ def plate_thrust(study):
         return run_of(half_x, g, faces[0]) if len(faces) > 1 else None
 
     def named(g, tail=""):
-        if g is None:
-            return ""
-        return ("gravity" if float(g) > 0.0 else "no gravity") + tail
+        return _named(contrast, g, tail)
 
     late = float(f"{laplace.window(in_plane(run_of(boxes[-1], grav[0]))[0])[1]:.3g}")
     span = signed_bins(run_of(boxes[-1], grav[0]))[-1]
@@ -449,7 +518,9 @@ def plate_thrust(study):
     a2.set_yticks([0.0, top / 2.0, top])
     a2.set_xlabel("size of the plate's faces (coarsest = 1)" if len(faces) > 1
                   else "box half-width (km)")
-    a2.set_ylabel("misfit to the reference")
+    a2.set_ylabel("departure from the layered reference"
+                  if contrast in ("lower", "slab_depth")
+                  else "misfit to the reference")
     a2.set_box_aspect(1)
     a2.legend(frameon=False, loc="upper right", fontsize=8)
     what = (r"$u(t) - u(0^+)$, both components", f"$|x| <$ {span:g} km")
@@ -503,15 +574,17 @@ def plate_cycle(study):
     import matplotlib.pyplot as plt
     from mbem import laplace
     set_paper_style()
+    _in_space(study)
 
     def axis(key, **kw):
         return sorted(study.axis(key), key=float, **kw) \
             if key in study.swept else [None]
 
-    boxes, grav, faces = axis("half_x"), axis("gravity", reverse=True), axis("refine")
+    boxes, faces = axis("half_x"), axis("refine")
+    contrast, grav = _contrast(study)
 
     def pair(g):
-        sel = {k: v for k, v in (("half_x", boxes[-1]), ("gravity", g))
+        sel = {k: v for k, v in (("half_x", boxes[-1]), (contrast, g))
                if v is not None}
         if faces[-1] is None:
             return (study.one(**sel) if sel else study.rows[0][1]), None
@@ -588,11 +661,149 @@ def plate_cycle(study):
     a2.axhline(0.0, color="0.5", lw=0.6)
     a2.legend(frameon=False, loc="lower right", handletextpad=0.2, fontsize=8)
     if len(grav) > 1:
-        a2.text(0.05, 0.95, "open, dashed: no gravity", transform=a2.transAxes,
-                ha="left", va="top", fontsize=8)
+        a2.text(0.05, 0.95, "open, dashed: " + _named(contrast, grav[1]),
+                transform=a2.transAxes, ha="left", va="top", fontsize=8)
     a2.text(0.95, 0.95, "c", transform=a2.transAxes, ha="right", va="top")
 
     fig.tight_layout(w_pad=1.6)
     out = save_figure(fig, study.study_dir, "plate_cycle")
+    plt.close(fig)
+    return out
+
+
+# ---------------------------------------------------------------------
+# a lower reach that creeps: afterslip
+# ---------------------------------------------------------------------
+
+def creep_on(run):
+    """``(s, centroids, areas, slip)``: the SOLVED lower reach of a run with
+    ``lower="creep"``, its slip per state ``(n_states, n_elements)`` in the
+    sense of the rupture above it and over that rupture's slip."""
+    from mbem import laplace
+    from mbem.cases import layered_box as lb
+
+    s, stack = laplace.run_stack(run.run_dir)
+    mp = run.resolved["spec"]["model"]["params"]
+    tri = run.meshes["fault_lower__v"][run.meshes["fault_lower__t"]]
+    area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0],
+                                         tri[:, 2] - tri[:, 0]), axis=1)
+    sense = lb.burgers(1.0, mp.get("rake", 180.0), run.meshes["arr__n_hat"],
+                       run.meshes["arr__s_hat"])
+    return (s, tri.mean(axis=1), area,
+            stack["b:fault_lower"] @ sense / mp.get("slip_mag", 1.0e-3))
+
+
+def plate_creep(study):
+    """Afterslip: a megathrust whose lower reach, in the substrate, creeps
+    (``lower="creep"``, ``rheology.ViscousFault``), for each ``creep_tau`` the
+    study swept.
+
+    Three panels. The slip of the creeping reach against depth at mid-strike,
+    at three times, for the fastest law: it is largest against the rupture's
+    lower edge, where uniform slip stops, and the mollification width is what
+    bounds it there. Its mean against time, one curve a law. And two points
+    of the surface through time, each law against the layered reference,
+    which knows the rupture and the relaxation and no afterslip: the gap
+    between them is what the creep adds.
+    """
+    import matplotlib.pyplot as plt
+    from mbem import laplace
+    set_paper_style()
+    _in_space(study)
+
+    taus = sorted(study.axis("creep_tau"), key=float) \
+        if "creep_tau" in study.swept else [None]
+
+    def run_of(tau):
+        return study.one(creep_tau=tau) if tau is not None else study.rows[0][1]
+
+    first = run_of(taus[0])
+    gp = first.resolved["spec"]["model"]["geometry"]["params"]
+    lo_t, hi_t = laplace.window(creep_on(first)[0])
+    late = float(f"{hi_t:.3g}")
+    when = [t for t in (1.0, 10.0) if lo_t <= t < late] + [late]
+    colors = (BLUE, ORANGE, "0.45", "k")
+
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(10.6, 3.5))
+    s, cen, area, slip = creep_on(first)
+    mid = np.abs(cen[:, 1]) < 0.25 * gp["fault_half_len"]
+    depth = -cen[:, 2]
+    edges = np.linspace(depth.min() - 1e-9, depth.max() + 1e-9, 9)
+    w = laplace.Prony(s).weights(np.array(when))
+    top = 0.0
+    for k, (t, shade) in enumerate(zip(when, ("0.75", "0.45", "k"))):
+        z, b = [], []
+        for a, c in zip(edges[:-1], edges[1:]):
+            sel = mid & (depth >= a) & (depth < c)
+            if sel.any():
+                z.append(depth[sel].mean())
+                b.append(float(w[k] @ slip[:, sel].mean(axis=1)))
+        a0.plot(z, b, "-o", color=shade, ms=3.4, mec="k", mew=0.3, lw=0.8,
+                label=rf"$t = {t:g}\,\tau$")
+        top = max(top, max(b))
+    top = np.ceil(top * 10.0) / 10.0
+    a0.set_xlim(edges[0], edges[-1])
+    a0.set_xticks([round(edges[0]), round(edges[-1])])
+    a0.set_ylim(0.0, top)
+    a0.set_yticks([0.0, top])
+    a0.set_xlabel("depth (km)")
+    a0.set_ylabel("afterslip / slip")
+    a0.legend(frameon=False, loc="lower left", fontsize=8)
+
+    def law(tau):
+        # a time no window reaches is a reach that is held
+        return "held" if float(tau) >= HELD * late \
+            else rf"$\tau_c = {float(tau):g}\,\tau$"
+
+    t = np.geomspace(lo_t, late, 41)
+    top = 0.0
+    edge = gp["fault_depth"] / np.tan(np.deg2rad(gp["dip"]))
+    lo = hi = 0.0
+    for tau, color in zip(taus, colors):
+        run = run_of(tau)
+        s, cen, area, slip = creep_on(run)
+        mean = laplace.Prony(s).weights(t) @ (slip @ area / area.sum())
+        a1.plot(t, mean, "-", color=color, lw=1.0,
+                label=None if tau is None else law(tau))
+        top = max(top, float(mean.max()))
+        x = in_plane(run)[1]
+        for site, comp, ls in ((int(np.argmin(np.abs(x - edge - X_FAR))), 0, "-"),
+                               (int(np.argmin(np.abs(x - edge))), 1, "--")):
+            _x, u, _xr, ref = in_plane_in_time(run, np.concatenate([[0.0], t]),
+                                               x[site:site + 1])
+            post, want = u[1:, site, comp] - u[0, site, comp], \
+                ref[1:, 0, comp] - ref[0, 0, comp]
+            if tau == taus[0]:
+                a2.plot(t, want, ls, color="k", lw=0.8,
+                        label=rf"$u_{'xz'[comp]}$, $x = {x[site]:.0f}$ km")
+            a2.plot(t, post, ls, color=color, lw=1.0)
+            lo, hi = min(lo, post.min(), want.min()), max(hi, post.max(), want.max())
+    top = np.ceil(top * 10.0) / 10.0
+    a1.set_ylim(0.0, top)
+    a1.set_yticks([0.0, top])
+    a1.set_ylabel("mean afterslip / slip")
+    if taus[0] is not None:
+        a1.legend(frameon=False, loc="upper left", fontsize=8)
+    bottom, top = np.floor(lo * 10.0) / 10.0, np.ceil(hi * 10.0) / 10.0
+    a2.set_ylim(bottom, top)
+    a2.set_yticks([bottom, 0.0, top])
+    a2.axhline(0.0, color="0.5", lw=0.6)
+    a2.set_ylabel(r"$[u(t) - u(0^+)]\,/\,s$")
+    a2.legend(frameon=False, loc="upper left", fontsize=8)
+    a2.text(0.05, 0.05, "black: the reference, no afterslip",
+            transform=a2.transAxes, ha="left", va="bottom", fontsize=8)
+    for ax in (a1, a2):
+        ax.set_xscale("log")
+        ax.set_xlim(lo_t, late)
+        ax.set_xticks([lo_t, late])
+        ax.set_xticklabels([f"{lo_t:g}", f"{late:g}"])
+        ax.minorticks_off()
+        ax.set_xlabel(r"$t\,/\,\tau$")
+    for ax, letter in ((a0, "a"), (a1, "b"), (a2, "c")):
+        ax.set_box_aspect(1)
+        ax.text(0.95, 0.95, letter, transform=ax.transAxes, ha="right", va="top")
+
+    fig.tight_layout(w_pad=1.6)
+    out = save_figure(fig, study.study_dir, "plate_creep")
     plt.close(fig)
     return out

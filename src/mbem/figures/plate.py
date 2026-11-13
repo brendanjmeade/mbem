@@ -34,7 +34,6 @@ PROBE = (16.0, 32.0)                # km: where panel c reads the postseismic pa
 CYCLES = 5.0                        # the cycle drawn repeats this often in the fit's window
 PHASES = (0.05, 0.95)               # early and late in it, as fractions of the period
 X_FAR = 75.0                        # km past the fault's lower edge: where the cycle is followed
-HELD = 100.0                        # a creep time this many windows long is no creep
 BLUE, ORANGE = "#1f5fa6", "#d9731a"
 
 
@@ -345,20 +344,22 @@ def _reference_stack(run, s, x, z_bottom=None):
     return out
 
 
-CONTRASTS = ("gravity", "sides", "lower", "slab_depth")
+CONTRASTS = ("gravity", "sides", "lower", "slab_depth", "creep_tau")
+NO_CREEP = 1.0e5            # a creep time no run's window reaches: a held reach
 
 
 def _contrast(study) -> tuple:
     """``(key, values)``: the two-valued axis a study figure draws in two
     colours, the value drawn first and filled leading -- gravity on, the
-    walls a window, the lower reach creeping, the slab there."""
+    walls a window, the lower reach creeping (the fastest law first), the
+    slab there."""
     for key in CONTRASTS:
         if key in study.swept:
             vals = list(study.axis(key))
             if key in ("sides", "lower"):
                 vals.sort(key=lambda v: v not in ("window", "creep"))
             else:
-                vals.sort(key=float, reverse=True)
+                vals.sort(key=float, reverse=key != "creep_tau")
             return key, vals
     return None, [None]
 
@@ -372,6 +373,9 @@ def _named(key, v, tail="") -> str:
         text = f"{v} walls"
     elif key == "lower":
         text = "creep below" if v == "creep" else "slip below"
+    elif key == "creep_tau":
+        text = "no creep below" if float(v) >= NO_CREEP \
+            else rf"creep below, $\tau_c = {float(v):g}\,\tau$"
     else:
         text = f"slab to {float(v):g} km" if float(v) > 0.0 else "no slab"
     return text + tail
@@ -713,9 +717,16 @@ def plate_creep(study):
 
     taus = sorted(study.axis("creep_tau"), key=float) \
         if "creep_tau" in study.swept else [None]
+    faces = sorted(study.axis("refine"), key=float) \
+        if "refine" in study.swept else [None]
 
-    def run_of(tau):
-        return study.one(creep_tau=tau) if tau is not None else study.rows[0][1]
+    def run_of(tau, refine=faces[-1]):
+        sel = {k: v for k, v in (("creep_tau", tau), ("refine", refine))
+               if v is not None}
+        return study.one(**sel) if sel else study.rows[0][1]
+
+    def coarse_of(tau):                 # the surface as a two-mesh limit
+        return run_of(tau, faces[0]) if len(faces) > 1 else None
 
     first = run_of(taus[0])
     gp = first.resolved["spec"]["model"]["geometry"]["params"]
@@ -751,8 +762,7 @@ def plate_creep(study):
     a0.legend(frameon=False, loc="lower left", fontsize=8)
 
     def law(tau):
-        # a time no window reaches is a reach that is held
-        return "held" if float(tau) >= HELD * late \
+        return "held" if float(tau) >= NO_CREEP \
             else rf"$\tau_c = {float(tau):g}\,\tau$"
 
     t = np.geomspace(lo_t, late, 41)
@@ -770,7 +780,8 @@ def plate_creep(study):
         for site, comp, ls in ((int(np.argmin(np.abs(x - edge - X_FAR))), 0, "-"),
                                (int(np.argmin(np.abs(x - edge))), 1, "--")):
             _x, u, _xr, ref = in_plane_in_time(run, np.concatenate([[0.0], t]),
-                                               x[site:site + 1])
+                                               x[site:site + 1],
+                                               coarse=coarse_of(tau))
             post, want = u[1:, site, comp] - u[0, site, comp], \
                 ref[1:, 0, comp] - ref[0, 0, comp]
             if tau == taus[0]:

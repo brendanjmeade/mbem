@@ -55,14 +55,18 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      a volume is read with the buoyancy it was solved with; it changes the
      solution, the vertical motion most; and a Laplace run is REFUSED when
      the stratification is heavy side up.
+  l  ``--dry-run`` is dry on a SWEEP too: every child is validated and named,
+     and no study directory is made.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
+import io
 import json
 import pathlib
 import re
@@ -571,6 +575,25 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
     check("REFUSED: a Laplace run with the heavier region on top", refused)
 
 
+def l_sweep_dry_run(tmp: pathlib.Path) -> None:
+    from mbem import cli
+    runs = tmp / "dry"
+    runs.mkdir()
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = cli.main(["run", str(CONFIGS / "plate_substrate.py"),
+                         "--sweep", "half_x=400,800",
+                         "--sweep", "sides=free,clamped", "--dry-run",
+                         "--runs-dir", str(runs)])
+    try:
+        named = [r["name"] for r in json.loads(out.getvalue())["runs"]]
+    except (ValueError, KeyError):
+        named = []
+    check("[l] a sweep with --dry-run names its children and makes no study",
+          code == 0 and len(named) == 4 and not any(runs.iterdir()),
+          f"exit {code}, {len(named)} named, "
+          f"{len(list(runs.iterdir()))} directories made")
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -592,6 +615,7 @@ def main() -> bool:
         i_states(pathlib.Path(tmp))
         j_laplace_run(pathlib.Path(tmp))
         k_gravity_run(pathlib.Path(tmp))
+        l_sweep_dry_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

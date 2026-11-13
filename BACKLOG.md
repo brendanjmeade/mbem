@@ -70,7 +70,7 @@ the tree again:
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 
-## Viscoelasticity (branch `ve1`)
+## Viscoelasticity
 
 Quasistatic linear viscoelasticity with no volume mesh; `docs/viscoelastic.md`
 is the derivation and rule 16 of `CLAUDE.md` the short form.
@@ -162,7 +162,6 @@ OPEN, in the order they bite:
   not name (dense keeps the current material, compressed resets to the base).
   The runner passes the complete map, so no run depends on it; a direct caller
   chaining rebuilds over different regions would.
-* `mbem run --sweep ... --dry-run` ignores `--dry-run` and runs the study.
 * Complex s (a contour inversion in place of the real-axis fit) needs only
   complex linear algebra, the kernels staying real; not needed so far.
 

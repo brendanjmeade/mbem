@@ -67,11 +67,13 @@ def fault_box_meshes(*, scale: float = 1.0, half_x: float = 100.0,
 
 
 def fault_box_model(bundle: MeshBundle, *, slip_mag: float = 0.01,
-                    mu: float = 30.0, lam: float = 30.0, order_top: int = 0):
+                    mu: float = 30.0, lam: float = 30.0, order_top: int = 0,
+                    walls: str = "box"):
     from mbem import ElasticMaterial
     from mbem.cases.fault_box import build_model
     return build_model(bundle.flat(), slip_mag,
-                       ElasticMaterial(mu=mu, lam=lam), order_top=order_top)
+                       ElasticMaterial(mu=mu, lam=lam), order_top=order_top,
+                       walls=walls)
 
 
 # ---------------------------------------------------------------------

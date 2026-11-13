@@ -179,6 +179,8 @@ WINDOW_NU = (0.30, 0.45)
 WINDOW_RIM = 128.0             # km: beyond it the shipping box is all wall
 WINDOW_FREE = 0.15             # tripwire: free sides + clamped base ABOVE this
 #                                (measured 0.300)
+TOL_WINDOW_OWN = 2.0e-3        # the library's half-space on the walls vs
+#                                cutde's, in the solution; 8e-4
 TOL_WINDOW = 0.03              # measured 0.015 beyond the rim, 0.011 over the
 #                                top, 0.003 inside at the other state
 
@@ -573,6 +575,12 @@ def a_window(meshes):
     check("A6 compressed, rebuilt == dense, rebuilt",
           max(relerr(v, sol2[k]) for k, v in hsol.rebuild_for_materials(
               {"crust": mats[1]}).solve().items()), 1.0e-3)
+    # the case's own window (``build_model(walls="window")``), whose half-
+    # space is the layered reference with nothing layered, not cutde
+    own = AssembledDense(generate_system(build_model(
+        meshes, SLIP, mats[0], walls="window")), eps, "direct").solve()
+    check("A6 fault_box's own window (cases.layered_space) == cutde's",
+          max(relerr(own[k], sol[k]) for k in sol), TOL_WINDOW_OWN)
 
 
 def a_slip_sense(meshes):

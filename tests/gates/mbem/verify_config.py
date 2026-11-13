@@ -55,14 +55,29 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      a volume is read with the buoyancy it was solved with; it changes the
      solution, the vertical motion most; and a Laplace run is REFUSED when
      the stratification is heavy side up.
+  l  ``--dry-run`` is dry on a SWEEP too: every child is validated and named,
+     and no study directory is made.
+  n  a WINDOW reaches a run through the builder (``sides="window"``) and
+     nowhere else: the dump records the far field the model carried; the
+     runner asks for every state's walls at once, and a state is then the
+     dense solve of the model AT THAT STATE'S MATERIALS, walls included; and
+     those are not the elastic state's walls.
+  m  a fault that CREEPS reaches a run through ``Laplace.faults``
+     (``rheology.ViscousFault``): each state records the fault's drag at its
+     s, infinite in the elastic one, where the fault is locked; a state is
+     the dense solve with that drag; the dump round-trips; and it is REFUSED
+     on a prescribed slip, on a fault the model lacks and on the compressed
+     backend, which solves no slip.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
+import io
 import json
 import pathlib
 import re
@@ -158,6 +173,22 @@ def a_same_model() -> None:
     check("... its lower reach a second fault, in the substrate",
           lower == ["fault", "fault_lower"]
           and [len(r.faults) for r in direct.regions] == [1, 1])
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="window", rake=90.0,
+                                     lower="creep")
+    via = layered_box_model(layered_box_meshes(**kw), sides="window",
+                            rake=90.0, lower="creep")
+    _same_model("layered_box, a window, the lower reach creeping", direct, via)
+    check("... every wall a window on the same far field, of the plate's slip",
+          via.far_field.patches == layered_box.WALLS
+          and via.far_field.spec == direct.far_field.spec
+          and via.far_field.spec["depth"] == 30.0)
+    kw.update(fault_depth=30.0, slab_depth=80.0, slab_half_len=50.0)
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped", rake=90.0)
+    _same_model("layered_box, a plate that subducts", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped",
+                                  rake=90.0))
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -571,6 +602,143 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
     check("REFUSED: a Laplace run with the heavier region on top", refused)
 
 
+def m_creeping_fault(tmp: pathlib.Path) -> None:
+    """[m] a fault's law through the config path."""
+    print("\n[m] a creeping fault: a law on a solved fault, by state")
+    from mbem import laplace, rheology
+    from mbem.backends.dense import AssembledDense
+    from mbem.model import generate_system
+    path = CONFIGS / "penny.py"
+    law = rheology.ViscousFault(tau=1.0, width=1.0)
+    run = dataclasses.replace(cfg.load(path), laplace=cfg.Laplace(
+        rheology={}, s=laplace.s_grid(0.3, 3.0, per_decade=2),
+        faults={"penny": law}))
+    d = tmp / "creep"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    rows = resolved["states"]
+    check("the elastic state is recorded with an infinite drag",
+          rows[0]["drag"] == {"penny": "inf"}, f"{rows[0]['drag']}")
+    worst = max(abs(r["drag"]["penny"] - law.drag(30.0, float(r["s"])))
+                for r in rows[1:])
+    check("each state records the law's drag at its s (mu tau s / width)",
+          worst < 1e-12, f"{worst:.1e}")
+    check("... where the fault is locked: no slip",
+          not np.any(np.load(d / "fields_elastic.npz")["b:penny"]))
+    bundle = cfg.resolve("penny", cfg.MESH_BUILDERS)(
+        scale=1.0, **dict(run.model.geometry.params))
+    model = cfg.resolve("penny", cfg.MODEL_BUILDERS)(
+        bundle, **dict(run.model.params))
+    last = rows[-1]
+    direct = AssembledDense(
+        generate_system(model), run.model.eps, "direct",
+        fault_drag={"penny": last["drag"]["penny"]}).solve()["b:penny"]
+    got = np.load(d / f"fields_{cfg.slug(last['label'])}.npz")["b:penny"]
+    check("a state == the dense solve with that drag (bitwise)",
+          np.array_equal(got, direct))
+    check("... and is not the fault without it",
+          _rel(got, np.load(d / "fields_elastic.npz")["b:penny"] + AssembledDense(
+              generate_system(model), run.model.eps,
+              "direct").solve()["b:penny"]) > 0.05)
+    check("the law comes back from the dump as itself",
+          rheology.from_spec(resolved["spec"]["laplace"]["faults"]["penny"])
+          == law)
+
+    def refused_with(run_bad, exc, fragment):
+        dd = tmp / f"creep_refused_{len(list(tmp.iterdir()))}"
+        dd.mkdir()
+        try:
+            runner.execute(run_bad, dd, path, save=False)
+        except exc as e:
+            return fragment in str(e)
+        return False
+
+    ghost = dataclasses.replace(run, laplace=dataclasses.replace(
+        run.laplace, faults={"elsewhere": law}))
+    check("REFUSED: a law for a fault the model does not have",
+          refused_with(ghost, KeyError, "not FAULT_TRACTION faults"))
+    fixed = dataclasses.replace(run, model=dataclasses.replace(
+        run.model, params=dict(run.model.params, prescribed=True)))
+    check("REFUSED: a law on a PRESCRIBED slip",
+          refused_with(fixed, KeyError, "not FAULT_TRACTION faults"))
+    hmat = dataclasses.replace(run, backend=cfg.Backend(kind="hmat"))
+    check("REFUSED: the compressed backend, which solves no slip",
+          refused_with(hmat, ValueError, "dense backend only"))
+
+
+def n_window_run(tmp: pathlib.Path) -> None:
+    """[n] a window through the config path."""
+    print("\n[n] a window: every state solved with its own walls")
+    from mbem.backends.dense import AssembledDense
+    from mbem.cases import layered_box
+    from mbem.model import generate_system
+    path = CONFIGS / "plate_substrate.py"
+    run = cfg.load(path, half_x=150.0, fault_half_len=40.0, backend="dense",
+                   t_min=0.3, t_max=3.0, per_decade=2, sides="window")
+    d = tmp / "window"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    far = resolved["model"]["far_field"]
+    check("the dump records the far field and its walls",
+          far is not None and tuple(far["patches"]) == layered_box.WALLS
+          and far["spec"]["half_len"] == 40.0, f"{far and far['patches']}")
+    check("the walls of every state were asked for at once",
+          "far_field" in rep["phases"])
+    bundle = cfg.resolve(run.model.geometry.builder, cfg.MESH_BUILDERS)(
+        scale=run.model.geometry.scale, **dict(run.model.geometry.params))
+    model = cfg.resolve(run.model.builder, cfg.MODEL_BUILDERS)(
+        bundle, **dict(run.model.params))
+    last = resolved["states"][-1]
+    state = model.with_materials({k: cfg.Material(**m).build()
+                                  for k, m in last["materials"].items()})
+    wall = next(p for p in model.far_field_patches() if p.name == "sides_upper")
+    check("a state's walls are not the elastic state's",
+          _rel(state.value_of(wall), model.value_of(wall)) > 0.05,
+          f"{_rel(state.value_of(wall), model.value_of(wall)):.3f}")
+    # the same state with its walls WRITTEN IN, at its materials: nothing of
+    # the run's path -- no rebuild, no stack -- is in this solve
+    from mbem.model import BCType, Patch, Region, RegionModel
+    written = {p.name: Patch(p.name, p.mesh, p.bc, value=state.value_of(p))
+               for p in model.far_field_patches()}
+    shared: dict = {}
+    regions = []
+    for r in state.regions:
+        patches = [written.get(p.name) or shared.setdefault(p.name, p)
+                   for p in r.patches]
+        regions.append(Region(r.name, r.material, patches,
+                              probe_point=r.probe_point, faults=r.faults))
+    direct = AssembledDense(generate_system(RegionModel(regions)),
+                            run.model.eps, "direct").solve()
+    got = np.load(d / f"fields_{cfg.slug(last['label'])}.npz")
+    check("a state == the dense solve at its materials with its walls "
+          "written in",
+          max(_rel(got[k], direct[k]) for k in direct) < 1e-12,
+          f"{max(_rel(got[k], direct[k]) for k in direct):.1e}")
+
+
+def l_sweep_dry_run(tmp: pathlib.Path) -> None:
+    from mbem import cli
+    runs = tmp / "dry"
+    runs.mkdir()
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        code = cli.main(["run", str(CONFIGS / "plate_substrate.py"),
+                         "--sweep", "half_x=400,800",
+                         "--sweep", "sides=free,clamped", "--dry-run",
+                         "--runs-dir", str(runs)])
+    try:
+        named = [r["name"] for r in json.loads(out.getvalue())["runs"]]
+    except (ValueError, KeyError):
+        named = []
+    check("[l] a sweep with --dry-run names its children and makes no study",
+          code == 0 and len(named) == 4 and not any(runs.iterdir()),
+          f"exit {code}, {len(named)} named, "
+          f"{len(list(runs.iterdir()))} directories made")
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -592,6 +760,9 @@ def main() -> bool:
         i_states(pathlib.Path(tmp))
         j_laplace_run(pathlib.Path(tmp))
         k_gravity_run(pathlib.Path(tmp))
+        l_sweep_dry_run(pathlib.Path(tmp))
+        m_creeping_fault(pathlib.Path(tmp))
+        n_window_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

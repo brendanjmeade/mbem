@@ -32,7 +32,13 @@ mid-strike profile approaches the infinitely long fault of the closed form.
 ``sides`` is the condition on the plate's sides: free sides let the plate float
 as the substrate relaxes (a spurious net translation that grows as 1/mu(s)),
 clamped sides do not, and the truth lies between them. The box is as deep as it
-is half-wide.
+is half-wide unless ``depth_box`` says otherwise.
+
+``sides=window`` ends that: every wall carries the displacement the slip
+produces in a plate over a half-space, state by state
+(``cases.layered_space``), so the box is a window on the half-space and can
+be small. The reference is then the same solution in three dimensions, and
+the fault is the rupture it is, not a stand-in for an infinitely long one.
 
 The substrate's closed boundary carries ONE scalar eps, ``eps_substrate``. A
 region that relaxes needs that (docs/viscoelastic.md, section 3) and the
@@ -70,6 +76,33 @@ two-mesh limit (``layered_box.two_mesh_limit``) and the misfit of each.
 megathrust whose lower reach slips in the substrate, as a second fault there
 (``fault_lower``). Give it room: ``near_field_radius`` is measured from the
 trace, and should clear the fault's lower edge at ``depth / tan(dip)``.
+
+``lower=creep`` makes that lower reach a fault that CREEPS instead: locked at
+the earthquake, then slipping as the rupture above it and the relaxing
+substrate load it, at the rate a shear zone ``creep_width`` km thick with
+Maxwell time ``creep_tau`` allows (``rheology.ViscousFault``). Deep afterslip,
+and through the cycle the creep below a locked patch. A solved slip, so the
+dense backend, and a mesh it can hold:
+
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+        --set rho_substrate=3300 --set sides=window --set half_x=300 \
+        --set depth_box=200 --set fault_half_len=100 --set t_max=100 \
+        --set backend=dense --sweep lower=slip,creep           # afterslip
+
+``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
+footwall plate continues down the dip as an elastic slab to that depth, in
+the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
+(the rupture's half-length by default). The megathrust then ends at the
+plate's base at the deepest (``depth`` no greater than ``thickness``). A
+layered reference knows no slab, so the window's walls carry the slabless
+far field and the comparison with it is the slab's effect, not an error.
+
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=20 --set rake=90 --set depth=30 --set rho_plate=2700 \
+        --set rho_substrate=3300 --set sides=window --set half_x=500 \
+        --set depth_box=300 --set fault_half_len=100 --set t_max=100 \
+        --sweep slab_depth=0,150                                # a slab
 """
 from mbem import defaults, laplace, rheology
 from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
@@ -85,7 +118,10 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              rho_substrate: float = 0.0, gravity: float = 1.0,
              dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
              near_field_radius: float = 90.0,
-             edge_interface: float = 15.0, refine: float = 1.0) -> Run:
+             edge_interface: float = 15.0, refine: float = 1.0,
+             depth_box: float = 0.0, lower: str = "slip",
+             creep_tau: float = 1.0, creep_width: float = 10.0,
+             slab_depth: float = 0.0, slab_half_len: float = 0.0) -> Run:
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
     # the plate's two faces and the interface's eps: what a plate that bends
@@ -105,12 +141,14 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
             geometry=Geometry("layered_box", scale=scale,
                               params=dict(half_x=half_x,
                                           z_interface=-thickness,
-                                          z_bottom=-half_x,
+                                          z_bottom=-(depth_box or half_x),
                                           fault_half_len=fault_half_len,
                                           fault_depth=depth, dip=dip,
                                           edge_near=edge_near,
                                           near_field_radius=near_field_radius,
                                           edge_interface=edge_interface,
+                                          slab_depth=slab_depth,
+                                          slab_half_len=slab_half_len,
                                           # the far field coarsens WITH the
                                           # box, or a ladder in half_x is a
                                           # ladder in cost and nothing else
@@ -120,14 +158,20 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
             params=dict(sides=sides, mu_substrate=mu_substrate,
                         lam_substrate=mu_substrate, rho_plate=rho_plate,
                         rho_substrate=rho_substrate,
-                        g=gravity * defaults.GRAVITY, rake=rake),
+                        g=gravity * defaults.GRAVITY, rake=rake,
+                        lower=lower),
             eps=eps),
         backend=Backend(kind=backend),
         solve=Solve(),
         laplace=Laplace(rheology={"substrate": substrate},
-                        s=laplace.s_grid(t_min, t_max, per_decade=per_decade)),
+                        s=laplace.s_grid(t_min, t_max, per_decade=per_decade),
+                        faults=({"fault_lower": rheology.ViscousFault(
+                            tau=creep_tau, width=creep_width)}
+                            if lower == "creep" else {})),
         outputs=Output(slots=(), save_meshes=True,
                        figures=(("plate_substrate",) if rake % 180.0 == 0.0
-                                else ("plate_thrust", "plate_cycle"))),
+                                else ("plate_thrust", "plate_cycle")
+                                + (("plate_creep",) if lower == "creep"
+                                   else ()))),
         notes="plate over a relaxing substrate; times in Maxwell times",
         tags=("viscoelastic", "laplace"))

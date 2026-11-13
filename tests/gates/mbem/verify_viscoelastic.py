@@ -118,6 +118,34 @@ the real-axis fit under test.
      the half-space closed form holds whatever the moduli, and by a fluid
      substrate, in which slip moves nothing at the surface; then the solved
      model against it, at the earthquake and relaxed under gravity.
+  o  a fault that RESISTS ITS SLIP RATE (``rheology.ViscousFault``, the drag
+     of ``equations.apply_fault_rows``): a penny crack whose faces drag with
+     kappa0 / sqrt(1 - r^2/a^2) keeps Eshelby's slip, with peak
+     dtau / (k_E + kappa0), which is exact. Per s; in time in an elastic
+     body, where it is one exponential with time eta_0 / k_E; and in a
+     Maxwell body, where the fault's creep and the body's are one transform.
+     It is locked at the instant of loading.
+  p  a plate that SUBDUCTS (``layered_box`` with ``slab_depth``): the
+     interface that wraps the slab has exactly the area of its faces; a slab
+     in a substrate of its own material is no slab, to the mesh; and in a
+     soft one it is there.
+  q  the reference in THREE dimensions (``cases.layered_space``): a finite
+     rectangular fault in the plate over the substrate, at the surface and at
+     depth, which a window's walls carry and a finite rupture is compared
+     with. Okada's rectangle against cutde; the transform on the sides and
+     base of a box against cutde where nothing is layered (the megathrust
+     through an interface between like materials included); an infinitely
+     long fault against the plane-strain reference and the antiplane series,
+     far away and next to the fault; and for a finite fault in the layers,
+     its two transforms against each other, continuity at the interface, a
+     clamped base, a stack.
+  r  the layered box as a WINDOW (``sides="window"``: every wall carrying
+     that reference's displacement of the prescribed slip, state by state):
+     a megathrust through the interface in a 300 km box, against the
+     reference in three dimensions. At the earthquake the base no longer
+     lifts the surface; relaxed under gravity the plate's two halves, which
+     clamped walls hold (the tripwire), move as the reference's do. What is
+     left in the vertical is the plate's faces ([n]), which no wall mends.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -204,6 +232,42 @@ TOL_BASIS_MODE = 1.0e-12         # basis-mode operator vs direct; rounding
 # exact one 0.9944-0.9954 at every s and in time; fitted creep rate 0.995.
 PENNY_BAND = (0.990, 1.000)
 PENNY_FLAT = 3.0e-3              # spread over s; 1e-3 measured
+# [q] the reference in three dimensions (cases.layered_space)
+TOL_SPACE_CLOSED = 1.0e-8        # Okada's rectangle vs cutde; 7e-11
+TOL_SPACE_FAR = 5.0e-4           # the tapered transform on a box's walls vs
+#                                  cutde, like materials; 2e-4 (the taper's
+#                                  own 1e-4, fourth order in 1/REACH)
+TOL_SPACE_LONG = 3.0e-4          # an infinitely long fault vs the plane-strain
+#                                  reference and the antiplane series; 6e-5
+TOL_SPACE_NEAR = 3.0e-4          # ... next to the fault, of the slip; 1.2e-4
+#                                  (gravity's tail past k_max, at the trace)
+TOL_SPACE_JOIN = 1.0e-8          # continuity at the interface; 2e-10
+TOL_SPACE_EXACT = 1.0e-12        # a clamped base, a stack; 6e-18, 2e-16
+SPACE_BOX = 800.0                # km: the box whose walls are asked for
+# [r] the megathrust of [n] (THROUGH) with every wall a window, against the
+# reference in three dimensions within WINDOW_NEAR of the trace
+WINDOW_NEAR = 150.0
+TOL_WINDOW_ELASTIC = (0.04, 0.03)    # u_x, u_z at the earthquake; 0.020, 0.011
+#                                      (clamped: 0.021, 0.041 -- the base)
+WINDOW_HELD = 0.05                   # u_x relaxed with CLAMPED walls; 0.071
+TOL_WINDOW_RELAXED = (0.03, 0.06)    # ... with a window; 0.010, 0.033 (u_z is
+#                                      the plate's faces)
+# [p] a 30-degree megathrust to the base of a 30 km plate that goes on down
+# as a slab to 100 km, 80 km either side of mid-strike
+SLAB = dict(half_x=300.0, z_interface=-30.0, z_bottom=-300.0,
+            fault_half_len=60.0, fault_depth=30.0, dip=30.0, edge_fault=6.0,
+            edge_near=20.0, edge_far=75.0, edge_side=75.0,
+            edge_interface=30.0, near_field_radius=60.0, slab_depth=100.0,
+            slab_half_len=80.0)
+SLAB_EPS = 3.0
+SLAB_SOFT = 0.03                 # mu(s)/mu of the substrate around it
+TOL_SLAB_NULL = 0.03             # u at the surface, slab vs none; 0.011
+SLAB_THERE = 0.10                # ... over the soft substrate; 0.21
+# [o] the same crack with faces that drag: eta_0 = mu tau / a puts its one
+# relaxation time, eta_0 / k_E = 1.05, in the middle of WINDOW
+CREEP_TAU = 1.0
+CREEP_FOLLOWS = 0.1              # mean slip of a megathrust's freed lower reach
+#                                  over the slip above it; 0.46
 TOL_PLATE_FORMS = 1.0e-10        # series vs contour inversion; 2e-13 measured
 # [m] the B10 shell, relaxing, one scalar eps. The P0 bias is -2.6 % on the
 # elastic state and VANISHES as the shell relaxes, the isostatic answer
@@ -850,6 +914,325 @@ def k_penny() -> None:
               float(ref[-1] / ref[0]), 2.0)
 
 
+def o_creeping_fault() -> None:
+    print("\n[o] a fault that resists its slip rate: creep on the fault itself")
+    mu, lam = MU, lam_of(MU, 0.30)
+    base = mb.ElasticMaterial(mu=mu, lam=lam)
+    a, delta0 = 1.0, 1.0e-3
+    drop = penny.stress_drop(mu, lam, delta0, a)
+    model = penny.build_model(penny.penny_mesh(a=a, h=a / 8), base,
+                              drop=drop, order=2)
+    fault = model.regions[0].faults[0]
+    x = fault.collocation_points()
+    # the drag that keeps the slip Eshelby's; the front is locked and never
+    # reads its own (infinite) value
+    shape = np.sqrt(np.clip(1.0 - (x[:, 0] ** 2 + x[:, 1] ** 2) / a ** 2,
+                            1.0e-12, None))
+    law = rheology.ViscousFault(tau=CREEP_TAU, width=a)
+    eta0 = mu * law.tau / law.width
+
+    def closed(m, kappa0):
+        """Eshelby's moment for this drop at moduli m, the faces dragging:
+        plain arithmetic, so it is also the transform on the contour."""
+        k_e = np.pi * m.mu * (1.0 + rheology.g_of(m.mu, m.lam)) / (8.0 * a)
+        return penny.eshelby_moment(drop / (k_e + kappa0), a)
+
+    asm = AssembledDense(generate_system(model), "auto", "direct",
+                         jump="calibrated")
+    t = times()
+    for label, rheo in (("elastic body", None), ("maxwell body", MAXWELL)):
+        s_grid = laplace.s_grid(*WINDOW)
+        mats = [base if rheo is None else relaxed(rheo, base, sv)
+                for sv in (np.inf,) + s_grid]
+        got = []
+        for sv, m in zip((np.inf,) + s_grid, mats):
+            k0 = law.drag(mu, sv)
+            sol = asm.rebuild_for_materials(
+                {"space": elastic(m)},
+                fault_drag={"penny": k0 / shape if np.isfinite(k0) else k0}
+            ).solve()
+            got.append(fault.integrate(sol["b:penny"])[0])
+        got = np.array(got)
+        close(f"{label}: locked at the instant of loading",
+              abs(got[0]) / penny.eshelby_moment(delta0, a), 1.0e-14)
+        ratio = got[1:] / np.array([float(closed(m, law.drag(mu, sv)))
+                                    for sv, m in zip(s_grid, mats[1:])])
+        check(f"{label}: moment over the closed form, per s",
+              PENNY_BAND[0] < ratio.min() and ratio.max() < PENNY_BAND[1],
+              f"{ratio.min():.4f} .. {ratio.max():.4f}")
+        close(f"{label}: ... flat in s", float(np.ptp(ratio)), PENNY_FLAT)
+        if rheo is None:
+            # one exponential, with the time the drag takes to unload the crack
+            t_c = eta0 / (drop / delta0)
+            ref = penny.eshelby_moment(delta0, a) * (1.0 - np.exp(-t / t_c))
+            rt = laplace.Prony(s_grid).weights(t) @ got / ref
+            above(f"{label}: the slip really grows over the window",
+                  float(ref[-1] / ref[0]), 5.0)
+        else:
+            ref = step_response(lambda sv: closed(
+                relaxed(rheo, base, sv), eta0 * sv), t)
+            rt = laplace.Prony(s_grid, secular=True).weights(t) @ got / ref
+            free = step_response(lambda sv: closed(
+                relaxed(rheo, base, sv), 0.0), t)
+            above(f"{label}: the drag holds back the first of it (tripwire)",
+                  float(free[0] / ref[0]), 5.0)
+        check(f"{label}: moment in time, the same band",
+              PENNY_BAND[0] < rt.min() and rt.max() < PENNY_BAND[1],
+              f"{rt.min():.4f} .. {rt.max():.4f}")
+    try:
+        asm.rebuild_for_materials({}, fault_drag={"nowhere": 1.0})
+        refused = False
+    except KeyError:
+        refused = True
+    check("a drag on a fault the model does not solve is refused", refused)
+
+    # the same law on a megathrust's lower reach, in the substrate
+    # (``layered_box`` with ``lower="creep"``)
+    geo = dict(THRUST, **THROUGH)
+    plate = mb.ElasticMaterial(MU, LAM)
+    soft = mb.ElasticMaterial(THRUST_RELAXED * MU,
+                              LAM + 2.0 * (1.0 - THRUST_RELAXED) * MU / 3.0)
+    walls = dict(interface=THRUST_EPS, sides_lower=THRUST_EPS, base=THRUST_EPS)
+    eps = dict(top="auto", sides_upper="auto", fault="auto", **walls)
+
+    def megathrust(depth, **kw):
+        meshes = layered_box.build_layered_box(**dict(geo, fault_depth=depth))
+        return meshes, layered_box.build_model(
+            meshes, 1.0e-3, plate, soft, sides="clamped", rake=90.0,
+            density=THRUST_DENSITY, g=THRUST_G, **kw)
+
+    meshes, model = megathrust(geo["fault_depth"], lower="creep")
+    asm = AssembledDense(generate_system(model),
+                         dict(eps, fault_lower="auto"), "direct",
+                         fault_drag={"fault_lower": np.inf})
+    locked = asm.solve()
+    _m, upper = megathrust(-geo["z_interface"])
+    alone = AssembledDense(generate_system(upper), eps, "direct").solve()
+    close("megathrust: a lower reach held by an infinite drag is no reach",
+          float(np.abs(locked["u:top"] - alone["u:top"]).max()
+                / np.abs(alone["u:top"]).max()), 1.0e-10)
+    free = asm.rebuild_for_materials({}, fault_drag={"fault_lower": 0.0}).solve()
+    dd = np.deg2rad(geo["dip"])
+    up_dip = free["b:fault_lower"] @ np.array([-np.cos(dd), 0.0, np.sin(dd)])
+    above("... let go, it slips the way the rupture above it did",
+          float(up_dip.mean() / 1.0e-3), CREEP_FOLLOWS)
+    close("... in its plane", float(np.abs(free["b:fault_lower"] @ np.array(
+        [np.sin(dd), 0.0, np.cos(dd)])).max() / up_dip.mean()), 1.0e-10)
+
+
+def p_slab() -> None:
+    print("\n[p] a plate that subducts: the slab under the megathrust")
+    d = np.deg2rad(SLAB["dip"])
+    H, Z, L, X = (-SLAB["z_interface"], SLAB["slab_depth"],
+                  SLAB["slab_half_len"], SLAB["half_x"])
+    x_cut, x_b, x_t = H / np.tan(d), (Z - H) / np.tan(d), Z / np.tan(d)
+    flat = {k: v for k, v in SLAB.items() if not k.startswith("slab")}
+    eps = dict(top="auto", sides_upper="auto", fault="auto",
+               interface=SLAB_EPS, sides_lower=SLAB_EPS, base=SLAB_EPS)
+    plate = mb.ElasticMaterial(MU, LAM)
+    soft = mb.ElasticMaterial(SLAB_SOFT * MU,
+                              LAM + 2.0 * (1.0 - SLAB_SOFT) * MU / 3.0)
+    u = {}
+    for tag, geo in (("flat", flat), ("slab", SLAB)):
+        meshes = layered_box.build_layered_box(**geo)
+        if tag == "slab":
+            # the flat interface less the footprint, the slab's top, bottom
+            # and tip, and its two caps
+            exact = ((2.0 * X) ** 2 - 2.0 * L * x_cut
+                     + 2.0 * L * (x_t - x_cut + x_b) / np.cos(d)
+                     + 2.0 * L * x_cut + 2.0 * x_cut * (Z - H))
+            close("the interface wraps the slab: its area, to rounding",
+                  abs(meshes["interface"].normals_and_areas()[1].sum()
+                      / exact - 1.0), 1.0e-12)
+        c = meshes["top"].centroids()
+        strip = ((np.abs(c[:, 1]) < 0.5 * SLAB["fault_half_len"])
+                 & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < 150.0))
+        for name, sub in (("same", plate), ("soft", soft)):
+            model = layered_box.build_model(meshes, 1.0e-3, plate, sub,
+                                   sides="clamped", rake=90.0)
+            u[tag, name] = AssembledDense(
+                generate_system(model), eps, "direct").solve()["u:top"][strip]
+
+    def apart(name):
+        return float(np.linalg.norm(u["slab", name] - u["flat", name])
+                     / np.linalg.norm(u["flat", name]))
+
+    close("a slab of the substrate's own material is no slab",
+          apart("same"), TOL_SLAB_NULL)
+    above("... and over a soft substrate it is there (tripwire)",
+          apart("soft"), SLAB_THERE)
+    for what, bad in (("goes through the interface", dict(fault_depth=40.0)),
+                      ("does not fit in the box", dict(slab_depth=250.0))):
+        try:
+            layered_box.build_layered_box(**dict(SLAB, **bad))
+            refused = False
+        except ValueError:
+            refused = True
+        check(f"REFUSED: a slab whose fault or tip {what}", refused)
+
+
+def _box_walls(half_x):
+    """Points on the four sides and the base of a box, at a few depths: where
+    a far field is asked for."""
+    a = np.linspace(-0.9, 0.9, 7) * half_x
+    z = -np.array([10.0, 20.0, 60.0, 0.2 * half_x, 0.5 * half_x, 0.9 * half_x])
+    aa, zz = (g.ravel() for g in np.meshgrid(a, z))
+    hx = np.full_like(aa, half_x)
+    bx, by = (g.ravel() for g in np.meshgrid(a[::2], a[::2]))
+    return np.concatenate([
+        np.column_stack(c) for c in ((hx, aa, zz), (-hx, aa, zz), (aa, hx, zz),
+                                     (aa, -hx, zz),
+                                     (bx, by, np.full_like(bx, -half_x)))])
+
+
+def q_layered_space() -> None:
+    print("\n[q] the reference in three dimensions: a finite fault, and its "
+          "field at depth")
+    from mbem.cases import layered_space as ls
+    lb = layered_box
+    plate, nu = (MU, LAM), 0.5 * LAM / (LAM + MU)
+    weight = tuple(rho * defaults.GRAVITY * defaults.WEIGHT_GPA_PER_KM
+                   for rho in (2700.0, 3300.0))
+    bulk = LAM + 2.0 * MU / 3.0
+    soft = lambda r: (r * MU, bulk - 2.0 * r * MU / 3.0)      # noqa: E731
+    rel = lambda a, b: float(np.linalg.norm(np.asarray(a) - np.asarray(b))  # noqa: E731
+                             / np.linalg.norm(b))
+
+    def cutde(obs, half_len, depth, dip, rake):
+        d = np.deg2rad(dip)
+        w = depth / np.sin(d)
+        corner = lambda xi, y: [xi * np.cos(d), y, -xi * np.sin(d)]   # noqa: E731
+        fault = mb.TriMesh(
+            vertices=np.array([corner(0.0, -half_len), corner(w, half_len),
+                               corner(0.0, half_len), corner(w, -half_len)]),
+            triangles=np.array([[0, 1, 2], [0, 3, 1]]))
+        return VB._cutde_halfspace_disp(obs, fault, lb.burgers(
+            1.0, rake, [np.sin(d), 0.0, np.cos(d)], [0.0, 1.0, 0.0]), nu)
+
+    # the closed form, against an independent code: every dip and rake
+    xy = np.random.default_rng(0).uniform(-300.0, 300.0, (60, 2))
+    obs = np.column_stack([xy, np.zeros(60)])
+    close("a rectangle in a half-space (Okada) == cutde's", max(
+        float(np.abs(ls.half_space_rectangle(xy, 50.0, 20.0, dip, rake, nu)
+                     - cutde(obs, 50.0, 20.0, dip, rake)).max())
+        for dip, rake in ((30.0, 90.0), (90.0, 180.0), (20.0, 35.0),
+                          (60.0, -110.0))), TOL_SPACE_CLOSED)
+
+    # the transform where nothing is layered, so that cutde knows the answer
+    # AT DEPTH: the sides and base of a box. The megathrust goes through an
+    # interface between like materials, which is its lower source's test.
+    walls = _box_walls(SPACE_BOX)
+    close("its transform on a box's walls and base, like materials == cutde's",
+          max(rel(ls.displacement(walls, 200.0, depth, 30.0, dip, rake, plate,
+                                  plate),
+                  cutde(walls, 200.0, depth, dip, rake))
+              for depth, dip, rake in ((45.0, 20.0, 90.0), (15.0, 90.0, 180.0),
+                                       (15.0, 30.0, 35.0))), TOL_SPACE_FAR)
+
+    # the layers: an infinitely long fault is the plane-strain reference,
+    # under gravity, over a substrate nearly relaxed, with and without a base
+    x = np.concatenate([-np.linspace(150.0, 900.0, 12),
+                        np.linspace(150.0, 900.0, 12)])
+    line = np.column_stack([x, 0.0 * x, 0.0 * x])
+    worst = 0.0
+    for depth, dip, r, base in ((15.0, 30.0, 0.03, None),
+                                (45.0, 20.0, 0.003, -SPACE_BOX),
+                                (45.0, 20.0, 0.03, None)):
+        got = ls.displacement(line, np.inf, depth, 30.0, dip, 90.0, plate,
+                              soft(r), weight, base)
+        ref = lb.dip_slip_profile(x, depth, 30.0, dip, plate, soft(r), weight,
+                                  base)
+        worst = max(worst, rel(got[:, [0, 2]], np.column_stack(ref)),
+                    float(np.abs(got[:, 1]).max()))
+    close("an infinitely long thrust == the plane-strain reference, far away",
+          worst, TOL_SPACE_LONG)
+    xs = x[x > 0.0]
+    close("... and strike slip == the antiplane series", max(
+        rel(ls.displacement(np.column_stack([xs, 0.0 * xs, 0.0 * xs]), np.inf,
+                            15.0, 30.0, 90.0, 180.0, plate, (r * MU, LAM))[:, 1],
+            -lb.image_series(xs, 15.0, 30.0, MU, r * MU))
+        for r in (1.0, 0.3, 0.003)), TOL_SPACE_LONG)
+    # ... and NEXT TO the fault it is the closed form plus a smooth difference
+    xn = np.concatenate([-np.geomspace(1.0, 600.0, 20),
+                         np.geomspace(1.0, 600.0, 20)])
+    worst = 0.0
+    for depth, dip, base in ((15.0, 30.0, None), (45.0, 20.0, -SPACE_BOX)):
+        got = ls.surface_displacement(np.column_stack([xn, 0.0 * xn]), np.inf,
+                                      depth, 30.0, dip, 90.0, plate,
+                                      soft(0.003), weight, base)
+        ref = lb.dip_slip_profile(xn, depth, 30.0, dip, plate, soft(0.003),
+                                  weight, base)
+        worst = max(worst, float(np.abs(got[:, [0, 2]]
+                                        - np.column_stack(ref)).max()))
+    close("... and next to the fault, the closed form plus a smooth difference",
+          worst, TOL_SPACE_NEAR)
+
+    # a finite fault in the layers: the two transforms, which share the layer
+    # solve and nothing after it, agree far away; the field is continuous at
+    # the interface and zero on a clamped base; a stack is one at a time
+    subs = [soft(0.03), soft(0.003)]
+    args = (200.0, 45.0, 30.0, 20.0, 35.0, plate)
+    ring = SPACE_BOX * np.column_stack([np.cos(np.arange(12.0)),
+                                        np.sin(np.arange(12.0))])
+    here = lambda z: np.column_stack([ring, np.full(12, z)])   # noqa: E731
+    top = ls.displacement(here(0.0), *args, subs, weight, -SPACE_BOX)
+    close("a finite fault, layered: its two transforms agree far away",
+          rel(top, ls.surface_displacement(ring, *args, subs, weight,
+                                           -SPACE_BOX)), TOL_SPACE_FAR)
+    close("... a stack of substrates == one at a time", float(np.abs(
+        top[1] - ls.displacement(here(0.0), *args, subs[1], weight,
+                                 -SPACE_BOX)).max()), TOL_SPACE_EXACT)
+    close("... continuous across the interface", float(np.abs(
+        ls.displacement(here(-30.0), *args, subs, weight, -SPACE_BOX)
+        - ls.displacement(here(-30.0 - 1.0e-7), *args, subs, weight,
+                          -SPACE_BOX)).max()), TOL_SPACE_JOIN)
+    close("... and zero on a clamped base", float(np.abs(ls.displacement(
+        here(-SPACE_BOX), *args, subs, weight, -SPACE_BOX)).max()),
+        TOL_SPACE_EXACT)
+
+
+def r_window() -> None:
+    print("\n[r] the layered box as a window on a plate over a half-space")
+    from mbem.cases import layered_space
+
+    geo = dict(THRUST, **THROUGH)
+    meshes = layered_box.build_layered_box(**geo)
+    eps = dict(top="auto", sides_upper="auto", fault="auto",
+               fault_lower="auto", interface=THRUST_EPS,
+               sides_lower=THRUST_EPS, base=THRUST_EPS)
+    c = meshes["top"].centroids()
+    strip = ((np.abs(c[:, 1]) < 0.08 * geo["fault_half_len"])
+             & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < WINDOW_NEAR))
+
+    def miss(sides, relaxed):
+        soft = (relaxed * MU, LAM + 2.0 * (1.0 - relaxed) * MU / 3.0)
+        model = layered_box.build_model(
+            meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
+            mb.ElasticMaterial(*soft), sides=sides, rake=90.0,
+            density=THRUST_DENSITY, g=THRUST_G)
+        got = AssembledDense(generate_system(model), eps,
+                             "direct").solve()["u:top"][strip][:, [0, 2]]
+        ref = layered_space.surface_displacement(
+            c[strip, :2], geo["fault_half_len"], geo["fault_depth"],
+            -geo["z_interface"], geo["dip"], 90.0, (MU, LAM), soft,
+            tuple(model.gravity.weight(n)
+                  for n in (layered_box.PLATE, layered_box.SUBSTRATE)))
+        return np.sqrt(((got / 1.0e-3 - ref[:, [0, 2]]) ** 2).mean(axis=0)
+                       / (ref[:, [0, 2]] ** 2).mean(axis=0))
+
+    for name, m, tol in zip(("u_x", "u_z"), miss("window", 1.0),
+                            TOL_WINDOW_ELASTIC):
+        close(f"a megathrust in a window, at the earthquake: {name} vs the "
+              f"reference", float(m), tol)
+    held = miss("clamped", THRUST_RELAXED)
+    above("relaxed under gravity, clamped walls hold the plate (u_x, "
+          "tripwire)", float(held[0]), WINDOW_HELD)
+    for name, m, tol in zip(("u_x", "u_z"), miss("window", THRUST_RELAXED),
+                            TOL_WINDOW_RELAXED):
+        close(f"... and a window does not: {name} vs the reference",
+              float(m), tol)
+
+
 def l_plate_closed_forms() -> None:
     print("\n[l] the antiplane closed forms of the plate over a half-space")
     depth, thick, mu = 15.0, 30.0, 30.0
@@ -1274,6 +1657,10 @@ def main() -> bool:
     l_plate_closed_forms()
     m_gravity()
     n_dip_slip()
+    o_creeping_fault()
+    p_slab()
+    q_layered_space()
+    r_window()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

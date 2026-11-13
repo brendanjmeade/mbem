@@ -27,7 +27,7 @@ from ..la.preconditioner import BlockGaussSeidel
 from ..la.solver import RecycleSpace, fgmres
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, calibrated_diagonal,
-                               diagonal_matvec, term_diagonal)
+                               diagonal_matvec, rhs_terms_at, term_diagonal)
 
 
 def material_step(old: dict, new: dict) -> float:
@@ -498,7 +498,8 @@ class AssembledH:
 
         arrays = kb.MeshArrays()
         b = np.zeros(self.layout.n_unknowns)
-        for rt in self.system.rhs_terms:
+        rhs_terms = rhs_terms_at(self.system, self.materials)
+        for rt in rhs_terms:
             coeffs = kernel_coeffs(rt.kernel, self.materials[rt.region.name])
             pair = self._pairs.get((id(rt.field_patch), id(rt.source_patch),
                                     rt.kernel))
@@ -517,7 +518,7 @@ class AssembledH:
                                            *coeffs, p.order)
                 contrib = u.ravel()
             b[rt.row.offset:rt.row.stop] += rt.scale * contrib
-        add_jump_rhs(self.system, self.calib, b)
+        add_jump_rhs(self.system, self.calib, b, rhs_terms)
         return b
 
     # -- operator ---------------------------------------------------

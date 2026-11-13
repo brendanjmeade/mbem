@@ -47,7 +47,7 @@ from __future__ import annotations
 import enum
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import Mapping
+from typing import Callable, Mapping
 
 import numpy as np
 
@@ -590,10 +590,90 @@ _OPEN_FLOOR = 1e-3                  # |Omega| below this => treated as closed-ca
 _CLOSURE_TOL = 1e-6                 # closure identity tolerance (steradian, relative)
 
 
+@dataclass(frozen=True)
+class FarField:
+    """The walls of a box as a WINDOW on the medium it is cut from.
+
+    A region must close, so a body that runs to infinity is modelled as a box,
+    and what its walls are told is part of the model. Clamped they hold what
+    should move, free they release what should be held, and for a plate over
+    a relaxing substrate no box is large enough for either to stop mattering
+    (docs/viscoelastic.md, section 8). Told instead the displacement the
+    model's OWN sources produce in the unbounded reference medium -- a layered
+    half-space, which has a solution that needs no box -- the walls carry the
+    far field and the box solves only what the reference does not know: its
+    interior, whatever the geometry there.
+
+    ``patches`` names the walls: PRESCRIBED_DISPLACEMENT patches whose own
+    ``value`` is None. ``displacement(points (M, 3), materials)`` is the
+    reference's displacement there, ``materials`` mapping every region name to
+    its material. It DEPENDS ON THE MATERIALS, so every state of a run has its
+    own data, which is why the model holds it and ``Patch.value`` does not:
+    ``RegionModel.value_of`` is where a patch's datum is read, and
+    ``with_materials`` carries the far field to the state it builds. The data
+    are exact for sources the reference solves and approximate for whatever
+    else radiates (a solved slip, a body that is not the reference's): what
+    the walls miss is that part's far field, small where the box is large.
+
+    ``spec`` describes it for a run's record. A ``displacement`` that offers
+    ``stack(points, [materials, ...])`` is asked for all the states of a run
+    at once (``prepare``), which a layered reference does for the price of
+    little more than one.
+    """
+    patches: tuple
+    displacement: Callable
+    spec: Mapping = field(default_factory=dict)
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def __post_init__(self):
+        patches = (self.patches,) if isinstance(self.patches, str) \
+            else tuple(self.patches)
+        object.__setattr__(self, "patches", patches)
+
+    @staticmethod
+    def _key(patch: "Patch", materials: Mapping) -> tuple:
+        return (patch.name,) + tuple(
+            (name, float(m.mu), float(m.lam))
+            for name, m in sorted(materials.items()))
+
+    def values(self, patch: "Patch", materials: Mapping) -> np.ndarray:
+        """The datum of ``patch`` at its dof nodes, (n_dofs, 3)."""
+        key = self._key(patch, materials)
+        if key not in self._cache:
+            v = np.asarray(self.displacement(patch.nodes(), dict(materials)),
+                           float)
+            if v.shape != (patch.n_dofs, 3):
+                raise ValueError(
+                    f"far field on '{patch.name}': displacement returned "
+                    f"{v.shape}, expected {(patch.n_dofs, 3)}")
+            self._cache[key] = np.ascontiguousarray(v)
+        return self._cache[key]
+
+    def prepare(self, patches, states) -> None:
+        """Fill the cache for ``patches`` at every material map of ``states``
+        in one call per patch, where ``displacement`` can stack."""
+        stack = getattr(self.displacement, "stack", None)
+        if stack is None:
+            return
+        for p in patches:
+            todo = [m for m in states if self._key(p, m) not in self._cache]
+            if not todo:
+                continue
+            got = np.asarray(stack(p.nodes(), [dict(m) for m in todo]), float)
+            if got.shape != (len(todo), p.n_dofs, 3):
+                raise ValueError(
+                    f"far field on '{p.name}': stack returned {got.shape}, "
+                    f"expected {(len(todo), p.n_dofs, 3)}")
+            for m, v in zip(todo, got):
+                self._cache[self._key(p, m)] = np.ascontiguousarray(v)
+
+
 class RegionModel:
-    def __init__(self, regions: list[Region], gravity: Gravity | None = None):
+    def __init__(self, regions: list[Region], gravity: Gravity | None = None,
+                 far_field: FarField | None = None):
         self.regions = regions
         self.gravity = gravity
+        self.far_field = far_field
         self._sigma: dict[tuple[str, str], int] = {}
         self.validate()
 
@@ -760,6 +840,47 @@ class RegionModel:
                         f"= {total[k]:.6f} sr, expected 4*pi")
 
         self._validate_gravity(pnames)
+        self._validate_far_field(pnames)
+
+    def _validate_far_field(self, pnames: dict) -> None:
+        """Each wall is a PRESCRIBED_DISPLACEMENT boundary patch with no
+        datum of its own: two statements of one value would have to agree."""
+        ff = self.far_field
+        if ff is None:
+            return
+        for name in ff.patches:
+            p = pnames.get(name)
+            if (p is None or p.bc is not BCType.PRESCRIBED_DISPLACEMENT
+                    or p.value is not None):
+                raise ValueError(
+                    f"far_field names {name!r}, which is not a "
+                    f"PRESCRIBED_DISPLACEMENT boundary patch with value=None "
+                    f"(patches: {sorted(pnames)})")
+
+    # -- boundary data ----------------------------------------------
+
+    def value_of(self, patch: Patch) -> np.ndarray:
+        """The prescribed datum of ``patch`` at its dof nodes, (n_dofs, 3):
+        ``Patch.value_array()``, or on a wall of the ``far_field`` the
+        reference's displacement AT THIS MODEL'S MATERIALS. The one place a
+        datum is read: the equations and the evaluators both come here, so a
+        state is solved and read back with the same walls."""
+        ff = self.far_field
+        if ff is None or patch.name not in ff.patches:
+            return patch.value_array()
+        return ff.values(patch, {r.name: r.material for r in self.regions})
+
+    def far_field_patches(self) -> list:
+        """The wall patches the far field gives data to, in model order."""
+        if self.far_field is None:
+            return []
+        seen, out = set(), []
+        for r in self.regions:
+            for p in r.patches:
+                if p.name in self.far_field.patches and id(p) not in seen:
+                    seen.add(id(p))
+                    out.append(p)
+        return out
 
     def _validate_gravity(self, pnames: dict) -> None:
         """Every region has a density, and each ``surface`` name is an outer
@@ -888,7 +1009,8 @@ class RegionModel:
         return dict(self._sigma)
 
     def with_materials(self, material_map: dict) -> "RegionModel":
-        """This model with some regions' materials replaced, nothing else.
+        """This model with some regions' materials replaced, nothing else
+        (its ``far_field`` then gives the walls that state's data).
 
         ``material_map`` maps region name -> ElasticMaterial-compatible. A
         solution solved after ``rebuild_for_materials`` must be READ BACK
@@ -910,5 +1032,6 @@ class RegionModel:
         new.regions = [replace(r, material=material_map[r.name])
                        if r.name in material_map else r for r in self.regions]
         new.gravity = self.gravity
+        new.far_field = self.far_field
         new._sigma = self._sigma
         return new

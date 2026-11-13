@@ -38,6 +38,12 @@ a single layer whose density is proportional to the displacement. It is a
 ``BlockTerm`` with ``col_op = B``: the block acts on ``B x[col]``, per density
 node. A prescribed-displacement patch has no B, so nothing moves to the RHS.
 
+A prescribed datum is read through ``RegionModel.value_of``, never from the
+patch: on a wall of the model's ``FarField`` it is the reference's
+displacement at the model's materials, so it changes with the STATE while the
+operator's geometry does not. Such a wall always emits its RHS term, zero or
+not, and a backend takes a state's right-hand side from ``rhs_terms_at``.
+
 A FAULT is not a special case: ``sigma(R,f)`` is defined for it too
 (``FAULT_ORIENTATION``, see ``core.py``), so a fault's slip enters the
 RHS through the very same ``-sigma`` coefficient a prescribed boundary
@@ -77,7 +83,7 @@ the three traction components; locked nodes get identity rows (b = 0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -172,6 +178,7 @@ def generate_system(model: RegionModel) -> BlockSystem:
         ensure_fault_convention("traction")
     layout = UnknownLayout(model)
     system = BlockSystem(model=model, layout=layout)
+    walls = {id(p) for p in model.far_field_patches()}
 
     for region in model.regions:
         # One B per (region, patch), the SAME array in every row block: the
@@ -193,8 +200,8 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         diag=COLLOCATION_JUMP if p is q else 0.0))
                 else:
                     # u_p prescribed: move (sigma H + D_q delta_qp) @ u_bar
-                    u_bar = p.value_array().ravel()
-                    if np.any(u_bar):
+                    u_bar = model.value_of(p).ravel()
+                    if np.any(u_bar) or id(p) in walls:
                         system.rhs_terms.append(RhsTerm(
                             row=row, kernel=KERNEL_T, field_patch=q,
                             source_patch=p, region=region, scale=-sigma,
@@ -210,7 +217,7 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         scale=-sigma))
                 else:
                     # t_p prescribed: move -sigma G @ t_bar to RHS (+sigma)
-                    t_bar = p.value_array().ravel()
+                    t_bar = model.value_of(p).ravel()
                     if np.any(t_bar):
                         system.rhs_terms.append(RhsTerm(
                             row=row, kernel=KERNEL_U, field_patch=q,
@@ -261,8 +268,8 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         field_patch=f, source_patch=p, region=region,
                         scale=-sigma))
                 else:
-                    u_bar = p.value_array().ravel()
-                    if np.any(u_bar):
+                    u_bar = model.value_of(p).ravel()
+                    if np.any(u_bar) or id(p) in walls:
                         system.rhs_terms.append(RhsTerm(
                             row=row, kernel=KERNEL_HT, field_patch=f,
                             source_patch=p, region=region, scale=sigma,
@@ -273,7 +280,7 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         field_patch=f, source_patch=p, region=region,
                         scale=sigma))
                 else:
-                    t_bar = p.value_array().ravel()
+                    t_bar = model.value_of(p).ravel()
                     if np.any(t_bar):
                         system.rhs_terms.append(RhsTerm(
                             row=row, kernel=KERNEL_GT, field_patch=f,
@@ -303,6 +310,22 @@ def generate_system(model: RegionModel) -> BlockSystem:
                                               vector=f.value_array().ravel()))
 
     return system
+
+
+def rhs_terms_at(system: BlockSystem, materials: dict) -> list:
+    """The system's RHS terms with the data of ``materials``: the system's
+    own, except that a term whose source is a wall of the model's
+    ``FarField`` carries the reference's displacement AT THOSE MATERIALS.
+    ``materials`` maps every region name to its material, as the backends
+    hold it. Rows, kernels and patches are the system's, so nothing a backend
+    built for the operator is invalidated."""
+    ff = system.model.far_field
+    if ff is None:
+        return system.rhs_terms
+    state = system.model.with_materials(materials)
+    return [replace(rt, vector=state.value_of(rt.source_patch).ravel())
+            if rt.source_patch.name in ff.patches else rt
+            for rt in system.rhs_terms]
 
 
 # ---- the traction rows' frame, constraint and locked nodes ----------------
@@ -444,14 +467,16 @@ def add_block_diagonal(A: np.ndarray, r0: int, c0: int, D: np.ndarray,
                 A[rows + a, cols + b] += w * D[:, a, b]
 
 
-def add_jump_rhs(system: BlockSystem, calib: dict | None, b: np.ndarray):
+def add_jump_rhs(system: BlockSystem, calib: dict | None, b: np.ndarray,
+                 rhs_terms: list | None = None):
     """Prescribed-displacement rows: the free term multiplies the KNOWN
     u_bar of the row's own patch at the collocation points (the nodal value
     interpolated by ``Patch.collocation_values``), so it moves to the RHS
     with its LHS sign -- ``b[row] -= C_c @ u_bar(x_c)`` (calibrated) or
     ``b[row] += scale_half * u_bar(x_c)`` (scale_half = -COLLOCATION_JUMP).
-    The emitting RhsTerm is the one with ``add_half_of_vector``."""
-    for rt in system.rhs_terms:
+    The emitting RhsTerm is the one with ``add_half_of_vector``.
+    ``rhs_terms`` are a state's (``rhs_terms_at``), the system's by default."""
+    for rt in system.rhs_terms if rhs_terms is None else rhs_terms:
         if not rt.add_half_of_vector:
             continue
         r0, r1 = rt.row.offset, rt.row.stop

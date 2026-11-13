@@ -43,7 +43,8 @@ from ..kernels import basis as kb
 from ..model.core import BCType
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, apply_fault_rows,
-                               calibrated_diagonal, term_diagonal)
+                               calibrated_diagonal, rhs_terms_at,
+                               term_diagonal)
 
 
 class DenseBackend:
@@ -398,14 +399,15 @@ class AssembledDense:
                                    t.field_patch.collocation_shape())
 
         b = np.zeros(n)
-        for rt in self.system.rhs_terms:
+        rhs_terms = rhs_terms_at(self.system, self.materials)
+        for rt in rhs_terms:
             blk = self._cached_block(block_cache, rt.field_patch,
                                      rt.source_patch, rt.kernel, rt.region)
             r0, r1 = rt.row.offset, rt.row.stop
             b[r0:r1] += rt.scale * (blk @ rt.vector)
         for rv in self.system.rhs_values:
             b[rv.row.offset:rv.row.stop] += rv.vector
-        add_jump_rhs(self.system, self.calib, b)
+        add_jump_rhs(self.system, self.calib, b, rhs_terms)
         apply_fault_rows(A, b, self.system)
 
         self._arrays = None          # end of assembly scope

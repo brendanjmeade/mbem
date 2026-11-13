@@ -132,6 +132,10 @@ def _model_fingerprint(model, system) -> dict:
             # None is "no gravity", which is not gravity on a weightless body
             "gravity": (None if model.gravity is None
                         else dataclasses.asdict(model.gravity)),
+            # the walls that are a window, and what they look out on
+            "far_field": (None if model.far_field is None
+                          else {"patches": list(model.far_field.patches),
+                                "spec": dict(model.far_field.spec)}),
             "n_unknowns": int(system.layout.n_unknowns),
             "n_tris": int(sum(p["n_triangles"] for r in regions
                               for p in r["patches"])),
@@ -248,6 +252,15 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     # base -- and a partial map would make a run mean different things on them.
     base = {r.name: r.material for r in model.regions}
     overrides = cfg.state_overrides(states)
+    if model.far_field is not None:
+        # every state's wall data in one call, where the reference can stack
+        t0 = time.perf_counter()
+        model.far_field.prepare(
+            model.far_field_patches(),
+            [{**base, **{k: m.build() for k, m in
+                         overrides[cfg.slug(st.label)].items()}}
+             for st in states])
+        phases["far_field"] = time.perf_counter() - t0
     cur, held, ok, solutions = asm, {}, True, {}
     for st in states:
         want = overrides[cfg.slug(st.label)]

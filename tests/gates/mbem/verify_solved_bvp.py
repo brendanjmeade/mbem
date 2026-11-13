@@ -33,6 +33,12 @@ It uses THREE anchors because they fail differently:
      fault's geometry and Burgers vector, which side goes up, and the solved
      surface against cutde on the identical mesh. Dip slip moves the surface
      in the plane of its normal, which strike slip never does.
+     A sixth (A6) is the box as a WINDOW (``model.FarField``): with sides and
+     base carrying cutde's displacement of the same fault, the truncation
+     that A1's loose tolerance budgets for is gone (30 % beyond 128 km with
+     the shipping walls, 1.5 % with these). The data follow the MATERIALS: a
+     state rebuilt at another Poisson ratio is solved, and read back, with
+     that ratio's walls, on both backends.
 
   B. INTERNAL, manufactured, tight.  Impose the exact data of a known
      elasticity solution on a closed box and check that the solve reproduces
@@ -124,6 +130,7 @@ from mbem.volume import _strain                                   # noqa: E402
 from mbem.kernels import basis as kb                              # noqa: E402
 from mbem.model import (                                          # noqa: E402
     BCType,
+    FarField,
     Patch,
     Region,
     RegionModel,
@@ -167,6 +174,13 @@ FAULT_BOX_KW = dict(half_x=200.0, z_bottom=-120.0, fault_half_len=20.0,
 # production eps the band excludes only the x = 0 centroids beyond the fault
 # ends, and the trace-adjacent elements sit within 1 % of cutde.
 TRACE_EXCLUSION_EPS = 1.5
+# A6, the walls as a window on the half-space
+WINDOW_NU = (0.30, 0.45)
+WINDOW_RIM = 128.0             # km: beyond it the shipping box is all wall
+WINDOW_FREE = 0.15             # tripwire: free sides + clamped base ABOVE this
+#                                (measured 0.300)
+TOL_WINDOW = 0.03              # measured 0.015 beyond the rim, 0.011 over the
+#                                top, 0.003 inside at the other state
 
 COS_TOL = 0.9998       # measured worst 1-cos 9.8e-5 (surface) / 8.0e-5 (interior);
 #                        a sign flip drives the cosine negative
@@ -474,6 +488,91 @@ def a_external_cutde(meshes):
                   1.0 - cosine(u_int, ref_int), 1.0 - COS_TOL)
             check(f"A2 interior u vs cutde: median rel    {tag}",
                   median_rel(u_int, ref_int), MED_TOL_EVAL, "{:.4f}")
+
+
+def a_window(meshes):
+    """The walls as a WINDOW on the half-space (``model.FarField``): sides and
+    base carry cutde's displacement of the model's own fault."""
+    print("\n[A6] the box as a WINDOW: walls carrying the half-space's "
+          "displacement")
+    fault, eps = meshes["fault"], "auto"
+    b = SLIP * np.array([0.0, -1.0, 0.0])
+
+    def half_space(points, materials):
+        m = materials["crust"]
+        return _cutde_halfspace_disp(points, fault, b,
+                                     m.lam / (2.0 * (m.lam + m.mu)))
+
+    def model(walls, mat):
+        data = (lambda x: half_space(x, {"crust": mat})) \
+            if walls == "value" else None
+        bc = BCType.FREE_TRACTION if walls == "free" \
+            else BCType.PRESCRIBED_DISPLACEMENT
+        top = Patch("top", meshes["top"], BCType.FREE_TRACTION)
+        patches = [top, Patch("sides", meshes["sides"], bc, value=data),
+                   Patch("base", meshes["base"],
+                         BCType.PRESCRIBED_DISPLACEMENT, value=data)]
+        region = Region("crust", mat, patches,
+                        probe_point=np.array([90.0, 90.0, -60.0]),
+                        faults=[Patch("fault", fault, BCType.FAULT,
+                                      value=np.broadcast_to(
+                                          b, (fault.n_triangles, 3)))])
+        return RegionModel([region], far_field=FarField(
+            ("sides", "base"), half_space) if walls == "window" else None)
+
+    mats = [material(nu) for nu in WINDOW_NU]
+    x = meshes["top"].centroids()
+    obs = x.copy()
+    obs[:, 2] = -1.0e-6
+    r = np.hypot(x[:, 0], x[:, 1])
+    rim = (r > WINDOW_RIM) & (np.abs(x[:, 0]) > 4.0)
+    ref = [half_space(obs, {"crust": m}) for m in mats]
+
+    def misfit(u, k=0):
+        return relerr(u[rim], ref[k][rim])
+
+    free = AssembledDense(generate_system(model("free", mats[0])), eps,
+                          "direct").solve()
+    asm = AssembledDense(generate_system(model("window", mats[0])), eps,
+                         "direct")
+    sol = asm.solve()
+    check_true("A6 the shipping box is far off beyond 128 km (tripwire)",
+               misfit(free["u:top"]) > WINDOW_FREE,
+               f"{misfit(free['u:top']):.3f} > {WINDOW_FREE}")
+    check("A6 a window is not: surface u beyond 128 km vs cutde",
+          misfit(sol["u:top"]), TOL_WINDOW, "{:.4f}")
+    check("A6 ... and over the whole top",
+          relerr(sol["u:top"][np.abs(x[:, 0]) > 4.0],
+                 ref[0][np.abs(x[:, 0]) > 4.0]), TOL_WINDOW, "{:.4f}")
+    same = AssembledDense(generate_system(model("value", mats[0])), eps,
+                          "direct").solve()
+    check("A6 FarField == the same data written into Patch.value",
+          max(relerr(sol[k], same[k]) for k in same), 1.0e-13)
+    # the data FOLLOW THE MATERIALS: a state is solved, and read back, with
+    # its own walls
+    sol2 = asm.rebuild_for_materials({"crust": mats[1]}).solve()
+    same2 = AssembledDense(generate_system(model("value", mats[1])), eps,
+                           "direct").solve()
+    check("A6 rebuilt at another nu == the walls of that nu",
+          max(relerr(sol2[k], same2[k]) for k in same2), 1.0e-13)
+    check_true("A6 ... which are other walls (tripwire)",
+               relerr(sol2["t:sides"], sol["t:sides"]) > 0.01,
+               f"{relerr(sol2['t:sides'], sol['t:sides']):.3f}")
+    pts = np.array([[30.0, 10.0, -20.0], [-80.0, 50.0, -40.0],
+                    [150.0, -120.0, -70.0], [-160.0, -150.0, -100.0]])
+    state = model("window", mats[0]).with_materials({"crust": mats[1]})
+    check("A6 interior u of that state, read through it, vs cutde",
+          relerr(evaluate_displacement(state, "crust", sol2, pts, eps,
+                                       warn_near=False),
+                 half_space(pts, {"crust": mats[1]})), TOL_WINDOW, "{:.4f}")
+    from mbem.backends import HBackend
+    hsol = HBackend().assemble(generate_system(model("window", mats[0])),
+                               eps)
+    check("A6 compressed == dense",
+          max(relerr(hsol.solve()[k], sol[k]) for k in sol), 1.0e-3)
+    check("A6 compressed, rebuilt == dense, rebuilt",
+          max(relerr(v, sol2[k]) for k, v in hsol.rebuild_for_materials(
+              {"crust": mats[1]}).solve().items()), 1.0e-3)
 
 
 def a_slip_sense(meshes):
@@ -1488,6 +1587,7 @@ def main():
           for k in ("top", "sides", "base", "fault")}
     print(f"  fault box triangles: {nt}")
     a_external_cutde(meshes)
+    a_window(meshes)
     a_slip_sense(meshes)
     a_first_row(meshes)
     a_thrust()

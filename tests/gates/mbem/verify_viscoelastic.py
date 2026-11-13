@@ -139,6 +139,13 @@ the real-axis fit under test.
      far away and next to the fault; and for a finite fault in the layers,
      its two transforms against each other, continuity at the interface, a
      clamped base, a stack.
+  r  the layered box as a WINDOW (``sides="window"``: every wall carrying
+     that reference's displacement of the prescribed slip, state by state):
+     a megathrust through the interface in a 300 km box, against the
+     reference in three dimensions. At the earthquake the base no longer
+     lifts the surface; relaxed under gravity the plate's two halves, which
+     clamped walls hold (the tripwire), move as the reference's do. What is
+     left in the vertical is the plate's faces ([n]), which no wall mends.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -237,6 +244,14 @@ TOL_SPACE_NEAR = 3.0e-4          # ... next to the fault, of the slip; 1.2e-4
 TOL_SPACE_JOIN = 1.0e-8          # continuity at the interface; 2e-10
 TOL_SPACE_EXACT = 1.0e-12        # a clamped base, a stack; 6e-18, 2e-16
 SPACE_BOX = 800.0                # km: the box whose walls are asked for
+# [r] the megathrust of [n] (THROUGH) with every wall a window, against the
+# reference in three dimensions within WINDOW_NEAR of the trace
+WINDOW_NEAR = 150.0
+TOL_WINDOW_ELASTIC = (0.04, 0.03)    # u_x, u_z at the earthquake; 0.020, 0.011
+#                                      (clamped: 0.021, 0.041 -- the base)
+WINDOW_HELD = 0.05                   # u_x relaxed with CLAMPED walls; 0.071
+TOL_WINDOW_RELAXED = (0.03, 0.06)    # ... with a window; 0.010, 0.033 (u_z is
+#                                      the plate's faces)
 # [p] a 30-degree megathrust to the base of a 30 km plate that goes on down
 # as a slab to 100 km, 80 km either side of mid-strike
 SLAB = dict(half_x=300.0, z_interface=-30.0, z_bottom=-300.0,
@@ -1176,6 +1191,48 @@ def q_layered_space() -> None:
         TOL_SPACE_EXACT)
 
 
+def r_window() -> None:
+    print("\n[r] the layered box as a window on a plate over a half-space")
+    from mbem.cases import layered_space
+
+    geo = dict(THRUST, **THROUGH)
+    meshes = layered_box.build_layered_box(**geo)
+    eps = dict(top="auto", sides_upper="auto", fault="auto",
+               fault_lower="auto", interface=THRUST_EPS,
+               sides_lower=THRUST_EPS, base=THRUST_EPS)
+    c = meshes["top"].centroids()
+    strip = ((np.abs(c[:, 1]) < 0.08 * geo["fault_half_len"])
+             & (np.abs(c[:, 0]) > 4.0) & (np.abs(c[:, 0]) < WINDOW_NEAR))
+
+    def miss(sides, relaxed):
+        soft = (relaxed * MU, LAM + 2.0 * (1.0 - relaxed) * MU / 3.0)
+        model = layered_box.build_model(
+            meshes, 1.0e-3, mb.ElasticMaterial(MU, LAM),
+            mb.ElasticMaterial(*soft), sides=sides, rake=90.0,
+            density=THRUST_DENSITY, g=THRUST_G)
+        got = AssembledDense(generate_system(model), eps,
+                             "direct").solve()["u:top"][strip][:, [0, 2]]
+        ref = layered_space.surface_displacement(
+            c[strip, :2], geo["fault_half_len"], geo["fault_depth"],
+            -geo["z_interface"], geo["dip"], 90.0, (MU, LAM), soft,
+            tuple(model.gravity.weight(n)
+                  for n in (layered_box.PLATE, layered_box.SUBSTRATE)))
+        return np.sqrt(((got / 1.0e-3 - ref[:, [0, 2]]) ** 2).mean(axis=0)
+                       / (ref[:, [0, 2]] ** 2).mean(axis=0))
+
+    for name, m, tol in zip(("u_x", "u_z"), miss("window", 1.0),
+                            TOL_WINDOW_ELASTIC):
+        close(f"a megathrust in a window, at the earthquake: {name} vs the "
+              f"reference", float(m), tol)
+    held = miss("clamped", THRUST_RELAXED)
+    above("relaxed under gravity, clamped walls hold the plate (u_x, "
+          "tripwire)", float(held[0]), WINDOW_HELD)
+    for name, m, tol in zip(("u_x", "u_z"), miss("window", THRUST_RELAXED),
+                            TOL_WINDOW_RELAXED):
+        close(f"... and a window does not: {name} vs the reference",
+              float(m), tol)
+
+
 def l_plate_closed_forms() -> None:
     print("\n[l] the antiplane closed forms of the plate over a half-space")
     depth, thick, mu = 15.0, 30.0, 30.0
@@ -1603,6 +1660,7 @@ def main() -> bool:
     o_creeping_fault()
     p_slab()
     q_layered_space()
+    r_window()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

@@ -57,6 +57,11 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      the stratification is heavy side up.
   l  ``--dry-run`` is dry on a SWEEP too: every child is validated and named,
      and no study directory is made.
+  n  a WINDOW reaches a run through the builder (``sides="window"``) and
+     nowhere else: the dump records the far field the model carried; the
+     runner asks for every state's walls at once, and a state is then the
+     dense solve of the model AT THAT STATE'S MATERIALS, walls included; and
+     those are not the elastic state's walls.
   m  a fault that CREEPS reaches a run through ``Laplace.faults``
      (``rheology.ViscousFault``): each state records the fault's drag at its
      s, infinite in the elastic one, where the fault is locked; a state is
@@ -168,6 +173,22 @@ def a_same_model() -> None:
     check("... its lower reach a second fault, in the substrate",
           lower == ["fault", "fault_lower"]
           and [len(r.faults) for r in direct.regions] == [1, 1])
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="window", rake=90.0,
+                                     lower="creep")
+    via = layered_box_model(layered_box_meshes(**kw), sides="window",
+                            rake=90.0, lower="creep")
+    _same_model("layered_box, a window, the lower reach creeping", direct, via)
+    check("... every wall a window on the same far field, of the plate's slip",
+          via.far_field.patches == layered_box.WALLS
+          and via.far_field.spec == direct.far_field.spec
+          and via.far_field.spec["depth"] == 30.0)
+    kw.update(fault_depth=30.0, slab_depth=80.0, slab_half_len=50.0)
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped", rake=90.0)
+    _same_model("layered_box, a plate that subducts", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped",
+                                  rake=90.0))
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:
@@ -647,6 +668,58 @@ def m_creeping_fault(tmp: pathlib.Path) -> None:
           refused_with(hmat, ValueError, "dense backend only"))
 
 
+def n_window_run(tmp: pathlib.Path) -> None:
+    """[n] a window through the config path."""
+    print("\n[n] a window: every state solved with its own walls")
+    from mbem.backends.dense import AssembledDense
+    from mbem.cases import layered_box
+    from mbem.model import generate_system
+    path = CONFIGS / "plate_substrate.py"
+    run = cfg.load(path, half_x=150.0, fault_half_len=40.0, backend="dense",
+                   t_min=0.3, t_max=3.0, per_decade=2, sides="window")
+    d = tmp / "window"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    far = resolved["model"]["far_field"]
+    check("the dump records the far field and its walls",
+          far is not None and tuple(far["patches"]) == layered_box.WALLS
+          and far["spec"]["half_len"] == 40.0, f"{far and far['patches']}")
+    check("the walls of every state were asked for at once",
+          "far_field" in rep["phases"])
+    bundle = cfg.resolve(run.model.geometry.builder, cfg.MESH_BUILDERS)(
+        scale=run.model.geometry.scale, **dict(run.model.geometry.params))
+    model = cfg.resolve(run.model.builder, cfg.MODEL_BUILDERS)(
+        bundle, **dict(run.model.params))
+    last = resolved["states"][-1]
+    state = model.with_materials({k: cfg.Material(**m).build()
+                                  for k, m in last["materials"].items()})
+    wall = next(p for p in model.far_field_patches() if p.name == "sides_upper")
+    check("a state's walls are not the elastic state's",
+          _rel(state.value_of(wall), model.value_of(wall)) > 0.05,
+          f"{_rel(state.value_of(wall), model.value_of(wall)):.3f}")
+    # the same state with its walls WRITTEN IN, at its materials: nothing of
+    # the run's path -- no rebuild, no stack -- is in this solve
+    from mbem.model import BCType, Patch, Region, RegionModel
+    written = {p.name: Patch(p.name, p.mesh, p.bc, value=state.value_of(p))
+               for p in model.far_field_patches()}
+    shared: dict = {}
+    regions = []
+    for r in state.regions:
+        patches = [written.get(p.name) or shared.setdefault(p.name, p)
+                   for p in r.patches]
+        regions.append(Region(r.name, r.material, patches,
+                              probe_point=r.probe_point, faults=r.faults))
+    direct = AssembledDense(generate_system(RegionModel(regions)),
+                            run.model.eps, "direct").solve()
+    got = np.load(d / f"fields_{cfg.slug(last['label'])}.npz")
+    check("a state == the dense solve at its materials with its walls "
+          "written in",
+          max(_rel(got[k], direct[k]) for k in direct) < 1e-12,
+          f"{max(_rel(got[k], direct[k]) for k in direct):.1e}")
+
+
 def l_sweep_dry_run(tmp: pathlib.Path) -> None:
     from mbem import cli
     runs = tmp / "dry"
@@ -689,6 +762,7 @@ def main() -> bool:
         k_gravity_run(pathlib.Path(tmp))
         l_sweep_dry_run(pathlib.Path(tmp))
         m_creeping_fault(pathlib.Path(tmp))
+        n_window_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

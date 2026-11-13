@@ -36,13 +36,18 @@ slip, FAULT; solved slip, FAULT_TRACTION) answer alike.
 A region with NO boundary patch is the whole space: nothing to close, every
 point inside, and its faults the only sources or unknowns (the penny-crack
 gate lives there). It must have at least one fault.
+
+GRAVITY is a property of the model, not of a patch or a material: ``Gravity``
+below, held as ``RegionModel.gravity``, and turned into the one condition it
+imposes by ``RegionModel.buoyancy``.
 """
 
 from __future__ import annotations
 
 import enum
 import inspect
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Mapping
 
 import numpy as np
 
@@ -477,6 +482,94 @@ class Region:
         return len(self.patches) == 0
 
 
+@dataclass(frozen=True)
+class Gravity:
+    """Gravity, as buoyancy on the boundary (docs/viscoelastic.md, section 7).
+
+    The body is at rest under gravity before it is deformed, its prestress
+    hydrostatic. A displacement then carries prestressed material with it, and
+    where a boundary separates two densities that leaves a restoring load: a
+    surface lifted by ``w`` carries ``rho g w`` more rock than before. With the
+    material treated as incompressible IN THE GRAVITY TERMS ONLY, that is the
+    whole effect -- the equations inside a region stay homogeneous, the
+    kernels are untouched, and gravity is a condition on its boundary:
+
+        region R sees on patch p the traction   t_p + B u_p,
+        B = -(rho_R - rho_ref) g  n (x) up      (n the STORED normal)
+
+    with ``rho_ref`` what lies on the other side of ``p``:
+
+    * 0 on a patch named in ``surface`` (air): the free surface, where the
+      load is the weight of the relief the displacement builds;
+    * the first incident region's density on an INTERFACE, so the first region
+      sees ``t_p`` itself, the second ``t_p`` plus the buoyancy of the
+      contrast, and equal densities give exactly the model without gravity;
+    * ``rho_R`` on every other outer face (no term): the sides and base of a
+      box are cuts through material that continues, not cliffs, and a
+      hydrostatic surrounding of the same density loads them with nothing.
+      It is also a reservoir, which is what lets a relaxed substrate keep its
+      pressure as a half-space would.
+
+    A fault carries no term: the stress at a POINT is continuous across it.
+
+    ``density`` (kg/m^3) names EVERY region; ``g`` is m/s^2. ``up`` is the
+    direction buoyancy acts along, one vector for a flat earth, or, with
+    ``center``, the radial direction from that point (a sphere).
+
+    The traction of a slot or a datum is the MATERIAL one where the two
+    differ: on the free surface ``Patch.value`` is the applied load, and the
+    stress read back by ``evaluate_stress`` is the stress at a fixed point in
+    space, which is the material stress minus ``rho g (u . up) I`` -- the shear
+    components are the same.
+
+    The error of the incompressible treatment is of relative order
+    ``rho g L / K`` (L the scale of the deformation, K the bulk modulus): 6 %
+    per 100 km at K = 50 GPa, and nothing in an incompressible body.
+    """
+    density: Mapping
+    surface: tuple = ()
+    g: float = defaults.GRAVITY
+    up: tuple = (0.0, 0.0, 1.0)
+    center: tuple | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "density",
+                           {str(k): float(v) for k, v in self.density.items()})
+        surface = (self.surface,) if isinstance(self.surface, str) \
+            else tuple(self.surface)
+        object.__setattr__(self, "surface", surface)
+        if any(not (v >= 0.0 and np.isfinite(v)) for v in self.density.values()):
+            raise ValueError(f"densities must be finite and >= 0: {self.density}")
+        if not (self.g >= 0.0 and np.isfinite(self.g)):
+            raise ValueError(f"g {self.g} must be finite and >= 0")
+        up = np.asarray(self.up, float)
+        if up.shape != (3,) or not np.linalg.norm(up) > 0.0:
+            raise ValueError(f"up {self.up!r} must be a nonzero 3-vector")
+        object.__setattr__(self, "up", tuple(float(v) for v in
+                                             up / np.linalg.norm(up)))
+        if self.center is not None:
+            c = np.asarray(self.center, float)
+            if c.shape != (3,):
+                raise ValueError(f"center {self.center!r} must be a point")
+            object.__setattr__(self, "center", tuple(float(v) for v in c))
+
+    def weight(self, region_name: str) -> float:
+        """``rho g`` of a region in the trunk's units, GPa/km."""
+        return (self.density[region_name] * self.g
+                * defaults.WEIGHT_GPA_PER_KM)
+
+    def up_at(self, points) -> np.ndarray:
+        """Unit up vectors (N, 3) at ``points``."""
+        pts = np.asarray(points, float).reshape(-1, 3)
+        if self.center is None:
+            return np.broadcast_to(np.asarray(self.up), pts.shape).copy()
+        d = pts - np.asarray(self.center)
+        r = np.linalg.norm(d, axis=1)
+        if np.any(r == 0.0):
+            raise ValueError("a node lies at the centre of gravity: no up there")
+        return d / r[:, None]
+
+
 def _solid_angle_sum(mesh, x: np.ndarray) -> float:
     """Sum of van-Oosterom signed solid angles of all triangles from x.
 
@@ -498,8 +591,9 @@ _CLOSURE_TOL = 1e-6                 # closure identity tolerance (steradian, rel
 
 
 class RegionModel:
-    def __init__(self, regions: list[Region]):
+    def __init__(self, regions: list[Region], gravity: Gravity | None = None):
         self.regions = regions
+        self.gravity = gravity
         self._sigma: dict[tuple[str, str], int] = {}
         self.validate()
 
@@ -665,6 +759,84 @@ class RegionModel:
                         f"region '{r.name}': closure sum at its centroid "
                         f"= {total[k]:.6f} sr, expected 4*pi")
 
+        self._validate_gravity(pnames)
+
+    def _validate_gravity(self, pnames: dict) -> None:
+        """Every region has a density, and each ``surface`` name is an outer
+        FREE_TRACTION patch: the free surface is where the air is, and a
+        clamped face has no relief to weigh."""
+        g = self.gravity
+        if g is None:
+            return
+        names = {r.name for r in self.regions}
+        if set(g.density) != names:
+            raise ValueError(
+                f"gravity.density must name every region and no other: got "
+                f"{sorted(g.density)}, the model has {sorted(names)}")
+        for name in g.surface:
+            p = pnames.get(name)
+            if p is None or p.bc is not BCType.FREE_TRACTION:
+                raise ValueError(
+                    f"gravity.surface names {name!r}, which is not a "
+                    f"FREE_TRACTION boundary patch of the model "
+                    f"(patches: {sorted(pnames)})")
+
+    # -- gravity -----------------------------------------------------
+
+    def _buoyancy_weight(self, region: Region, patch: Patch) -> float:
+        """``(rho_R - rho_ref) g`` in GPa/km (``Gravity``): zero without
+        gravity, on a fault, and wherever the far side is as dense."""
+        g = self.gravity
+        if g is None or patch.bc in FAULT_KINDS:
+            return 0.0
+        if patch.bc is BCType.INTERFACE:
+            ref = g.weight(self.interface_regions(patch)[0].name)
+        elif patch.name in g.surface:
+            ref = 0.0
+        else:
+            return 0.0
+        return g.weight(region.name) - ref
+
+    def buoyancy(self, region: Region, patch: Patch):
+        """``B`` (patch.n_nodes, 3, 3) with ``region`` seeing the traction
+        ``t_p + B u_p`` on ``patch``, or None where there is no term.
+
+        The ONE statement of the buoyancy condition (``Gravity``): the
+        equations add ``-sigma G B`` to the u columns, the evaluators add
+        ``B u_p`` to the single-layer density, and neither restates it.
+        ``B = -w n (x) up`` per density node, ``n`` the stored element normal
+        and ``up`` taken at the node.
+        """
+        w = self._buoyancy_weight(region, patch)
+        if w == 0.0:
+            return None
+        normals, _ = patch.mesh.normals_and_areas()
+        n = np.repeat(np.asarray(normals, float), n_nodes(patch.order), axis=0)
+        return -w * np.einsum("ni,nj->nij", n,
+                              self.gravity.up_at(patch.nodes()))
+
+    def unstable_contrasts(self) -> list:
+        """Names of the patches whose density contrast is somewhere heavy
+        side UP. An elastic body holds that; a body that relaxes does not --
+        it has a growing mode, which the Laplace route's decaying exponentials
+        cannot represent, so a Laplace run refuses a model that lists any."""
+        out = []
+        if self.gravity is None:
+            return out
+        for r in self.regions:
+            for p in r.patches:
+                w = self._buoyancy_weight(r, p)
+                if w == 0.0:
+                    continue
+                normals, _ = p.mesh.normals_and_areas()
+                n_out = self._sigma[(r.name, p.name)] * np.asarray(normals, float)
+                rise = np.einsum("ni,ni->n", n_out,
+                                 self.gravity.up_at(p.mesh.centroids()))
+                if np.any(w * rise < -defaults.BUOYANCY_UNSTABLE_TOL * abs(w)) \
+                        and p.name not in out:
+                    out.append(p.name)
+        return out
+
     # -- convenience -------------------------------------------------
 
     def point_in_region(self, region, points, closure: bool = False):
@@ -714,3 +886,29 @@ class RegionModel:
 
     def sigma_table(self) -> dict[tuple[str, str], int]:
         return dict(self._sigma)
+
+    def with_materials(self, material_map: dict) -> "RegionModel":
+        """This model with some regions' materials replaced, nothing else.
+
+        ``material_map`` maps region name -> ElasticMaterial-compatible. A
+        solution solved after ``rebuild_for_materials`` must be READ BACK
+        through the result, because the evaluators take the moduli from the
+        ``Region`` and the rebuild changes them only inside the operator:
+        read through the base model, another state's densities are combined
+        with the base coefficients, and the answer is wrong and plausible.
+
+        Geometry is shared, not copied: the same Patch objects (an interface
+        is identified by ``is``) and the same orientation table, which depend
+        on the mesh alone. So nothing is re-validated, and this model is left
+        untouched.
+        """
+        unknown = set(material_map) - {r.name for r in self.regions}
+        if unknown:
+            raise KeyError(f"unknown region(s) {sorted(unknown)} "
+                           f"(regions: {[r.name for r in self.regions]})")
+        new = RegionModel.__new__(RegionModel)
+        new.regions = [replace(r, material=material_map[r.name])
+                       if r.name in material_map else r for r in self.regions]
+        new.gravity = self.gravity
+        new._sigma = self._sigma
+        return new

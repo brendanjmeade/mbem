@@ -957,6 +957,45 @@ BENCH_EXACT_ROWS = 1024
 BENCH_RANDOM_VECTORS = 3           # seeded test vectors, plus the unit translation
 BENCH_MATVEC_REPEATS = 5           # matvec wall = median of this many
 
+# --- Viscoelastic: the Laplace route (laplace.py) ----------------------
+# Collocation points per decade of time. The response to a step is fitted by
+# exponentials whose relaxation times are the reciprocals of these points, so
+# this is the resolution of the relaxation spectrum. Measured on exact
+# transforms (a relaxing Eshelby sphere, one and two poles; a creeping penny
+# crack; the plate over a half-space, whose pole is repeated n-fold), over
+# three decades of time, worst case of each:
+#     per decade   solves   displacement   t du/dt    cond of the fit
+#         2           9       4.4e-3        6.7e-2       4e3
+#         3          13       9.5e-4        1.2e-2       2e5
+#         4          17       4.2e-5        1.9e-3       1e7
+# 3 puts the inversion well under the ~1 % the boundary discretization gives
+# at eps = 0.1 h. A RATE (an interseismic velocity) wants 4. The condition
+# number is the noise gain's ceiling, which is why a compressed solve at
+# 1e-4 should not be pushed to 4 without checking.
+LAPLACE_POINTS_PER_DECADE = 3
+# The window of times asked for is widened by this many decades at each end
+# before the points are laid out: a fit is constrained only INSIDE the span
+# of its relaxation times, and half a decade is what keeps the ends of the
+# window as good as its middle (the table above was measured with it).
+LAPLACE_PAD_DECADES = 0.5
+# Singular values of the fit matrix below this fraction of the largest are
+# dropped. The matrix is square and its condition number is 1e5-1e7, so this
+# changes nothing at the default resolution; it is what keeps a much finer
+# grid from dividing by rounding.
+PRONY_RCOND = 1.0e-13
+
+# --- Gravity (model/core.py ``Gravity``; docs/viscoelastic.md section 7) ---
+# Standard gravity, m/s^2. A model overrides it by passing ``g``.
+GRAVITY = 9.8
+# kg/m^3 times m/s^2 is Pa/m; the trunk's units are km and GPa (rule 12), so a
+# weight density rho g is in GPa/km: 3000 kg/m^3 at 9.8 m/s^2 is 0.0294.
+WEIGHT_GPA_PER_KM = 1.0e-6
+# A density contrast is STABLE where the heavier side is below. Its sign is
+# read per element as contrast x (outward normal . up); a face is called
+# unstable only past this, so a vertical wall (exactly zero, up to the mesher's
+# rounding) is neither.
+BUOYANCY_UNSTABLE_TOL = 1.0e-9
+
 # --- Not here ---------------------------------------------------------
 # The fault SIGN CONVENTION is not a tolerance and does not live here:
 # it is ``FAULT_ORIENTATION`` in ``mbem/model/core.py``, next to the

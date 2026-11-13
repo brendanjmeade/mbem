@@ -3,211 +3,211 @@
   "01-topo-het.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.7010928277572608,
-   "log_min": -5.830839999880076,
-   "max": 0.019902478903532028,
-   "min": 1.4762503042220487e-06,
-   "sha256": "d86e38d4607b453e"
+   "log_max": -1.7010927871122499,
+   "log_min": -5.830831805870163,
+   "max": 0.019902480766177177,
+   "min": 1.4762781574972905e-06,
+   "sha256": "b88257af93f94a7d"
   },
   "01-topo-het.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.310953878162159,
-   "log_min": -7.151823704963743,
-   "max": 0.0048870425671339035,
-   "min": 7.049791861390986e-08,
-   "sha256": "4dfccaa163136c51"
+   "log_max": -2.3109539195438606,
+   "log_min": -7.152605084377059,
+   "max": 0.004887042101472616,
+   "min": 7.037119331698705e-08,
+   "sha256": "bad159e64401bede"
   },
   "01-topo-het.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -1.4615817315109032,
-   "log_min": -5.562118866985481,
+   "log_min": -5.562067025405,
    "max": 0.034547630697488785,
-   "min": 2.7408239020587644e-06,
-   "sha256": "e36ff08e82e8a36f"
+   "min": 2.741151092777727e-06,
+   "sha256": "dac3bf5eacb6eb6f"
   },
   "01-topo-hom.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.7006830349105964,
-   "log_min": -6.320747938273108,
-   "max": 0.01992126740515232,
-   "min": 4.778065090249584e-07,
-   "sha256": "d9ba7996d017916b"
+   "log_max": -1.700682872483911,
+   "log_min": -6.320609286437331,
+   "max": 0.019921274855732918,
+   "min": 4.779590767611808e-07,
+   "sha256": "a601a98d85219ff1"
   },
   "01-topo-hom.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -2.329912742674764,
-   "log_min": -7.589952487313834,
+   "log_min": -7.591691416384519,
    "max": 0.004678291268646717,
-   "min": 2.570677004598565e-08,
-   "sha256": "247baba5174d3160"
+   "min": 2.5604045106319973e-08,
+   "sha256": "65b597d28d500aa0"
   },
   "01-topo-hom.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.4612734639681362,
-   "log_min": -6.065121079661321,
-   "max": 0.034572161734104156,
-   "min": 8.607537438365398e-07,
-   "sha256": "6f7061c0ca93739b"
+   "log_max": -1.4612733235771964,
+   "log_min": -6.065028795859304,
+   "max": 0.03457217290997505,
+   "min": 8.609366659584339e-07,
+   "sha256": "2b7bf7650842ac18"
   },
   "02-flat-het.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -1.7009752576506334,
-   "log_min": -5.811672010788397,
+   "log_min": -5.812356576069884,
    "max": 0.019907867535948753,
-   "min": 1.5428652204718674e-06,
-   "sha256": "cb42d40f06e1ed3e"
+   "min": 1.5404351643155678e-06,
+   "sha256": "1061039141bc457b"
   },
   "02-flat-het.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.3111951176963164,
-   "log_min": -7.148736725827451,
-   "max": 0.004884328693151474,
-   "min": 7.100080523514407e-08,
-   "sha256": "1c4122b95d37e6f7"
+   "log_max": -2.3111952005057095,
+   "log_min": -7.149493974792434,
+   "max": 0.004884327761828899,
+   "min": 7.087711395570295e-08,
+   "sha256": "77b94fc9b2c1f532"
   },
   "02-flat-het.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -1.4615356061973068,
-   "log_min": -5.548935144200293,
+   "log_min": -5.54956937360788,
    "max": 0.03455130010843277,
-   "min": 2.825301862685592e-06,
-   "sha256": "4ad11b60c08bcb39"
+   "min": 2.8211788958287798e-06,
+   "sha256": "34f1b53dc839e531"
   },
   "02-flat-hom.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.7006312238788728,
-   "log_min": -6.356032985052096,
-   "max": 0.01992364414036274,
-   "min": 4.4052140424355457e-07,
-   "sha256": "23a1eb165b2fce69"
+   "log_max": -1.7006310614715634,
+   "log_min": -6.355926018023726,
+   "max": 0.019923651590943336,
+   "min": 4.4062991833015985e-07,
+   "sha256": "854c409c7f7c8a3b"
   },
   "02-flat-hom.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -2.3312398423854126,
-   "log_min": -7.276149043026343,
+   "log_min": -7.276753949851289,
    "max": 0.004664017353206873,
-   "min": 5.2948170292665964e-08,
-   "sha256": "26831fdfe531ebf0"
+   "min": 5.2874472800112926e-08,
+   "sha256": "b22e43da1a17026e"
   },
   "02-flat-hom.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -1.4612215692096422,
-   "log_min": -6.075522861451327,
-   "max": 0.03457629308104515,
-   "min": 8.40382767819392e-07,
-   "sha256": "4b5203ac84936d0f"
+   "log_max": -1.461221428835477,
+   "log_min": -6.0754717802144524,
+   "max": 0.034576304256916046,
+   "min": 8.40481618524791e-07,
+   "sha256": "43b832af2f227788"
   },
-  "clearance_h.175610b2ce5b1a14": {
+  "clearance_h.8e887038e5939e25": {
    "bytes": 551412,
    "encoding": "linear_u8",
    "max": 3.0,
    "min": 0.0,
-   "sha256": "175610b2ce5b1a14"
+   "sha256": "8e887038e5939e25"
   },
-  "clearance_h.94aa7efc40a9f4c1": {
+  "clearance_h.dff096d330069a86": {
    "bytes": 551412,
    "encoding": "linear_u8",
    "max": 3.0,
    "min": 0.0,
-   "sha256": "94aa7efc40a9f4c1"
+   "sha256": "dff096d330069a86"
   },
   "diff_01-topo-hom_minus_01-topo-het.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.917487851029771,
-   "log_min": -6.810504808186352,
-   "max": 0.0012092390097677708,
-   "min": 1.5470173764242645e-07,
-   "sha256": "63358ba6c9215283"
+   "log_max": -2.737008472154279,
+   "log_min": -6.810429574318511,
+   "max": 0.0018322786781936884,
+   "min": 1.5472853931441932e-07,
+   "sha256": "2eebe9925a5048e0"
   },
   "diff_01-topo-hom_minus_01-topo-het.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.683349396323791,
-   "log_min": -8.00456028945362,
-   "max": 0.0020732448901981115,
-   "min": 9.895544827998037e-09,
-   "sha256": "68a64a0434485de4"
+   "log_max": -2.9839889983787224,
+   "log_min": -8.004793883047656,
+   "max": 0.0010375546989962459,
+   "min": 9.890223751085614e-09,
+   "sha256": "05a84cbdb64948bc"
   },
   "diff_01-topo-hom_minus_01-topo-het.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.651616248778753,
-   "log_min": -6.541348840732001,
-   "max": 0.0022304051090031862,
-   "min": 2.875088114251412e-07,
-   "sha256": "e4c688357e2d89c4"
+   "log_max": -2.4922665126790364,
+   "log_min": -6.541100977905186,
+   "max": 0.003219092730432749,
+   "min": 2.8767294679710176e-07,
+   "sha256": "420c19185804ec37"
   },
   "diff_02-flat-het_minus_01-topo-het.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.9443190324770803,
-   "log_min": -7.820114562156346,
-   "max": 0.00113679189234972,
-   "min": 1.5131620401120927e-08,
-   "sha256": "a9a8d4b83f8dce64"
+   "log_max": -2.944318810103402,
+   "log_min": -7.8237985542200095,
+   "max": 0.0011367924744263291,
+   "min": 1.500380619745556e-08,
+   "sha256": "1082445d6f743283"
   },
   "diff_02-flat-het_minus_01-topo-het.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -3.9005416730468645,
-   "log_min": -9.055120701643538,
-   "max": 0.00012573561980389059,
-   "min": 8.808040408148088e-10,
-   "sha256": "b5f81fa44fbc8bdd"
+   "log_max": -3.900542929617126,
+   "log_min": -9.05524503697119,
+   "max": 0.00012573525600600988,
+   "min": 8.805519091659164e-10,
+   "sha256": "312fbdfdeeb850f5"
   },
   "diff_02-flat-het_minus_01-topo-het.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
    "log_max": -2.7038564500966826,
-   "log_min": -7.523444919879363,
+   "log_min": -7.5257708338528255,
    "max": 0.0019776232074946165,
-   "min": 2.996091552631697e-08,
-   "sha256": "86f8edd7a5441227"
+   "min": 2.9800885315012238e-08,
+   "sha256": "47c891aeed8b41b7"
   },
   "diff_02-flat-hom_minus_01-topo-het.max_shear": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.9168237857672676,
-   "log_min": -6.658646076165821,
-   "max": 0.00121108943130821,
-   "min": 2.1945926675925875e-07,
-   "sha256": "0f968ec853f08868"
+   "log_max": -2.7468102757941333,
+   "log_min": -6.658624619393325,
+   "max": 0.0017913882620632648,
+   "min": 2.1947010964140645e-07,
+   "sha256": "96e818aa09027e56"
   },
   "diff_02-flat-hom_minus_01-topo-het.u_mag": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.684324572090403,
-   "log_min": -8.062159175846432,
-   "max": 0.0020685947965830564,
-   "min": 8.666441786431278e-09,
-   "sha256": "d59cc77292ab17df"
+   "log_max": -2.981623250529645,
+   "log_min": -8.062622222787914,
+   "max": 0.0010432220296934247,
+   "min": 8.657206507223236e-09,
+   "sha256": "663b41dfd75fd317"
   },
   "diff_02-flat-hom_minus_01-topo-het.von_mises": {
    "bytes": 551412,
    "encoding": "log10_u8",
-   "log_max": -2.6509147011256147,
-   "log_min": -6.382725002266799,
-   "max": 0.0022340109571814537,
-   "min": 4.14261904779778e-07,
-   "sha256": "8e87ff43b70604c7"
+   "log_max": -2.502977144537798,
+   "log_min": -6.382708704102711,
+   "max": 0.0031406739726662636,
+   "min": 4.142774514548364e-07,
+   "sha256": "84113037ef0de197"
   },
-  "region.073ac40f2edcf6e8": {
+  "region.658d0d2537b3f6a7": {
    "bytes": 551412,
    "encoding": "codes_u8",
    "filter": "nearest",
-   "sha256": "073ac40f2edcf6e8",
+   "sha256": "658d0d2537b3f6a7",
    "values": [
     0,
     1,
@@ -248,53 +248,53 @@
  "nodata": 0,
  "schema": 1,
  "source": {
-  "git": "8c68b01+dirty",
-  "sampled_from": "runs/20261002T153045Z-topo_inclusion_topo_hmat-sweep-surface-efc201e-dirty-ec3f",
-  "volume_run": "20261003T043705Z-volume-topo_inclusion_topo_hmat-8c68b01-dirty-3579"
+  "git": "82a2825",
+  "sampled_from": "runs/20261111T023351Z-topo_inclusion_topo_hmat-sweep-surface-82a2825-1138",
+  "volume_run": "20261111T023433Z-volume-topo_inclusion_topo_hmat-82a2825-621f"
  },
  "states": {
   "01-topo-het": {
-   "clearance_h": "clearance_h.94aa7efc40a9f4c1",
+   "clearance_h": "clearance_h.8e887038e5939e25",
    "fields": {
     "max_shear": "01-topo-het.max_shear",
     "u_mag": "01-topo-het.u_mag",
     "von_mises": "01-topo-het.von_mises"
    },
    "kind": "state",
-   "region": "region.073ac40f2edcf6e8"
+   "region": "region.658d0d2537b3f6a7"
   },
   "01-topo-hom": {
-   "clearance_h": "clearance_h.94aa7efc40a9f4c1",
+   "clearance_h": "clearance_h.8e887038e5939e25",
    "fields": {
     "max_shear": "01-topo-hom.max_shear",
     "u_mag": "01-topo-hom.u_mag",
     "von_mises": "01-topo-hom.von_mises"
    },
    "kind": "state",
-   "region": "region.073ac40f2edcf6e8"
+   "region": "region.658d0d2537b3f6a7"
   },
   "02-flat-het": {
-   "clearance_h": "clearance_h.175610b2ce5b1a14",
+   "clearance_h": "clearance_h.dff096d330069a86",
    "fields": {
     "max_shear": "02-flat-het.max_shear",
     "u_mag": "02-flat-het.u_mag",
     "von_mises": "02-flat-het.von_mises"
    },
    "kind": "state",
-   "region": "region.073ac40f2edcf6e8"
+   "region": "region.658d0d2537b3f6a7"
   },
   "02-flat-hom": {
-   "clearance_h": "clearance_h.175610b2ce5b1a14",
+   "clearance_h": "clearance_h.dff096d330069a86",
    "fields": {
     "max_shear": "02-flat-hom.max_shear",
     "u_mag": "02-flat-hom.u_mag",
     "von_mises": "02-flat-hom.von_mises"
    },
    "kind": "state",
-   "region": "region.073ac40f2edcf6e8"
+   "region": "region.658d0d2537b3f6a7"
   },
   "diff_01-topo-hom_minus_01-topo-het": {
-   "clearance_h": "clearance_h.175610b2ce5b1a14",
+   "clearance_h": "clearance_h.dff096d330069a86",
    "fields": {
     "max_shear": "diff_01-topo-hom_minus_01-topo-het.max_shear",
     "u_mag": "diff_01-topo-hom_minus_01-topo-het.u_mag",
@@ -304,7 +304,7 @@
    "region": "region.c7f362f9f89ed6ac"
   },
   "diff_02-flat-het_minus_01-topo-het": {
-   "clearance_h": "clearance_h.175610b2ce5b1a14",
+   "clearance_h": "clearance_h.dff096d330069a86",
    "fields": {
     "max_shear": "diff_02-flat-het_minus_01-topo-het.max_shear",
     "u_mag": "diff_02-flat-het_minus_01-topo-het.u_mag",
@@ -314,7 +314,7 @@
    "region": "region.c7f362f9f89ed6ac"
   },
   "diff_02-flat-hom_minus_01-topo-het": {
-   "clearance_h": "clearance_h.175610b2ce5b1a14",
+   "clearance_h": "clearance_h.dff096d330069a86",
    "fields": {
     "max_shear": "diff_02-flat-hom_minus_01-topo-het.max_shear",
     "u_mag": "diff_02-flat-hom_minus_01-topo-het.u_mag",

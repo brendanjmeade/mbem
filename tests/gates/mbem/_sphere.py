@@ -175,3 +175,163 @@ def sphere_model(level, bc, nu, eps_over_h=0.3, value=None, fault=None,
     if return_asm:
         return model, region, sol, eps_spec, h, asm
     return model, region, sol, eps_spec, h
+
+
+# ------------------------------------- a layered sphere under buoyancy --
+# The exact reference for gravity (``mbem.model.Gravity``, docs/viscoelastic.md
+# section 7): concentric elastic shells on a rigid core, loaded on the outer
+# surface by a normal traction sigma P_n(cos theta), with RADIAL buoyancy on
+# the surface and on every density interface. A finite body, a closed surface,
+# an exact solution -- which a flat earth under gravity does not have. Used by
+# ``verify_solved_bvp`` (elastic) and ``verify_viscoelastic`` (per s, and on a
+# complex contour, so the arithmetic here is generic: floats or mpmath).
+
+def sphere_mesh(level, radius):
+    """The icosphere scaled to ``radius``."""
+    unit = icosphere(level)
+    return mb.TriMesh(
+        vertices=np.ascontiguousarray(np.asarray(unit.vertices, float) * radius),
+        triangles=np.ascontiguousarray(np.asarray(unit.triangles)))
+
+
+def _p2(c):
+    return 0.5 * (3.0 * c * c - 1.0)
+
+
+def degree2_load(sigma):
+    """``Patch.value`` for the normal load ``sigma P_2(cos theta) r_hat``."""
+    def load(x, normals):
+        r = np.linalg.norm(x, axis=1)
+        return sigma * _p2(x[:, 2] / r)[:, None] * (x / r[:, None])
+    return load
+
+
+def degree2_amplitude(nodes, u) -> float:
+    """``U`` of ``u . r_hat = U P_2(cos theta)``, by least squares over the
+    nodes of a sphere patch."""
+    r = np.linalg.norm(nodes, axis=1)
+    p = _p2(nodes[:, 2] / r)
+    return float((np.einsum("ni,ni->n", u, nodes / r[:, None]) * p).sum()
+                 / (p * p).sum())
+
+
+def spheroidal(n, mu, lam, r):
+    """The four degree-n spheroidal solutions of the elastic equations at
+    radius ``r``, as rows ``[U, V, T_r, T_theta]`` by columns (regular A, B;
+    irregular A, B), for ``u = U Y r_hat + V grad_1 Y`` and the traction on
+    the sphere ``T_r Y r_hat + T_theta grad_1 Y``:
+
+        A:  u = grad(omega),                      omega = r^m Y,  m = n, -n-1
+        B:  u = r^2 grad(omega) + alpha x omega,
+            alpha = -2 (m lam + (3m+1) mu) / ((m+3) lam + (m+5) mu)
+
+        T_r = (lam + 2 mu) U' + lam (2 U - n(n+1) V) / r
+        T_theta = mu (V' - V / r + U / r)
+
+    (Love's solution; each field checked symbolically against the Navier
+    operator when this was written, and pinned in the gate by Kelvin's
+    stiffness of the incompressible sphere, which uses all four formulas.)
+    """
+    rows = [[], [], [], []]
+    for m in (n, -n - 1):
+        al = -2 * (m * lam + (3 * m + 1) * mu) / ((m + 3) * lam + (m + 5) * mu)
+        for U, dU, V, dV in (
+                (m * r ** (m - 1), m * (m - 1) * r ** (m - 2),
+                 r ** (m - 1), (m - 1) * r ** (m - 2)),
+                ((m + al) * r ** (m + 1), (m + al) * (m + 1) * r ** m,
+                 r ** (m + 1), (m + 1) * r ** m)):
+            for row, v in zip(rows, (
+                    U, V,
+                    (lam + 2 * mu) * dU + lam * (2 * U - n * (n + 1) * V) / r,
+                    mu * (dV - V / r + U / r))):
+                row.append(v)
+    return rows
+
+
+def _solve(M, rhs):
+    if all(isinstance(v, (int, float, np.floating)) for row in M for v in row):
+        return list(np.linalg.solve(np.array(M, float), np.array(rhs, float)))
+    import mpmath as mp
+    return list(mp.lu_solve(mp.matrix(M), mp.matrix(rhs)))
+
+
+def solid_sphere_stiffness(n, mu, lam, a):
+    """``sigma / U(a)`` of a SOLID sphere under the normal load
+    ``sigma Y_n`` with no shear traction: the two regular solutions."""
+    U, V, Tr, Tt = (row[:2] for row in spheroidal(n, mu, lam, a))
+    c = _solve([Tt, Tr], [0.0, 1.0])
+    return 1.0 / (U[0] * c[0] + U[1] * c[1])
+
+
+def _shell_coefficients(n, layers, radii, weights, sigma):
+    """The 4 N coefficients of ``shells_on_core`` (its docstring)."""
+    N = len(layers)
+    M, rhs = [], []
+
+    def row(k, vals, sign=1):
+        """An equation row carrying ``vals`` in layer k's four columns."""
+        out = [0.0] * (4 * N)
+        out[4 * k:4 * k + 4] = [sign * v for v in vals]
+        return out
+
+    def add(a, b=None):
+        M.append(a if b is None else [x + y for x, y in zip(a, b)])
+        rhs.append(0.0)
+
+    U, V, Tr, Tt = spheroidal(n, *layers[0], radii[0])
+    add(row(0, U))
+    add(row(0, V))
+    for k in range(N - 1):
+        lo = spheroidal(n, *layers[k], radii[k + 1])
+        up = spheroidal(n, *layers[k + 1], radii[k + 1])
+        add(row(k, lo[0]), row(k + 1, up[0], -1))
+        add(row(k, lo[1]), row(k + 1, up[1], -1))
+        add(row(k, lo[3]), row(k + 1, up[3], -1))
+        add(row(k, [t + weights[k] * u for t, u in zip(lo[2], lo[0])]),
+            row(k + 1, [t + weights[k + 1] * u for t, u in zip(up[2], up[0])],
+                -1))
+    U, V, Tr, Tt = spheroidal(n, *layers[-1], radii[-1])
+    add(row(N - 1, Tt))
+    add(row(N - 1, [t + weights[-1] * u for t, u in zip(Tr, U)]))
+    rhs[-1] = sigma
+    return _solve(M, rhs)
+
+
+def shells_on_core(n, layers, radii, weights, sigma):
+    """Radial surface/interface displacement amplitudes ``[U(r_1), ...,
+    U(r_N)]`` of N welded shells on a rigid core of radius ``r_0``.
+
+    ``layers[k] = (mu, lam)`` and ``weights[k] = rho g`` of the shell between
+    ``radii[k]`` and ``radii[k + 1]``. The conditions are those of
+    ``Gravity``: the MATERIAL traction is continuous, and it is the traction
+    of the elastic field plus ``rho g U`` along the normal, so
+
+        core        U = V = 0
+        interface   U, V, T_theta continuous;  [T_r + rho g U] continuous
+        surface     T_theta = 0;  T_r + rho g U = sigma
+    """
+    c = _shell_coefficients(n, layers, radii, weights, sigma)
+    out = []
+    for k in range(len(layers)):
+        Uk = spheroidal(n, *layers[k], radii[k + 1])[0]
+        out.append(sum(u * x for u, x in zip(Uk, c[4 * k:4 * k + 4])))
+    return out
+
+
+def shell_displacement(layers, radii, weights, sigma, k, x):
+    """The exact degree-2 displacement (N, 3) at points ``x`` inside shell
+    ``k`` of ``shells_on_core``: ``U(r) P_2 r_hat + V(r) dP_2/dtheta
+    theta_hat``."""
+    c = _shell_coefficients(2, layers, radii, weights, sigma)[4 * k:4 * k + 4]
+    x = np.asarray(x, float)
+    r = np.linalg.norm(x, axis=1)
+    ct = x[:, 2] / r
+    st = np.sqrt(1.0 - ct * ct)
+    ph = np.arctan2(x[:, 1], x[:, 0])
+    theta_hat = np.stack([ct * np.cos(ph), ct * np.sin(ph), -st], axis=1)
+    out = np.zeros_like(x)
+    for i, ri in enumerate(r):
+        U, V = (sum(a * b for a, b in zip(row, c))
+                for row in spheroidal(2, *layers[k], ri)[:2])
+        out[i] = U * _p2(ct[i]) * x[i] / ri - 3.0 * V * ct[i] * st[i] * theta_hat[i]
+    return out

@@ -75,6 +75,58 @@ def fault_box_model(bundle: MeshBundle, *, slip_mag: float = 0.01,
 
 
 # ---------------------------------------------------------------------
+# layered_box
+# ---------------------------------------------------------------------
+
+def layered_box_meshes(*, scale: float = 1.0, half_x: float = 400.0,
+                       z_interface: float = -30.0, z_bottom: float = -300.0,
+                       fault_half_len: float = 150.0, fault_depth: float = 15.0,
+                       near_field_radius: float = 90.0,
+                       edge_fault: float = 5.0, edge_near: float = 20.0,
+                       edge_far: float = 80.0, edge_side: float = 80.0,
+                       edge_interface: float = 15.0,
+                       dip: float = 90.0) -> MeshBundle:
+    """An elastic plate over a substrate with a fault in the plate, at
+    ``scale``. As for the fault box, only the EDGES are divided by
+    scale: the box does not shrink, it refines."""
+    from mbem.cases.layered_box import build_layered_box
+    d = build_layered_box(half_x=half_x, z_interface=z_interface,
+                          z_bottom=z_bottom, fault_half_len=fault_half_len,
+                          fault_depth=fault_depth,
+                          near_field_radius=near_field_radius,
+                          edge_fault=edge_fault / scale,
+                          edge_near=edge_near / scale,
+                          edge_far=edge_far / scale,
+                          edge_side=edge_side / scale,
+                          edge_interface=edge_interface / scale, dip=dip)
+    meshes = {k: v for k, v in d.items() if hasattr(v, "triangles")}
+    arrays = {k: v for k, v in d.items()
+              if isinstance(v, np.ndarray) and k not in meshes}
+    scalars = {k: v for k, v in d.items()
+               if k not in meshes and k not in arrays}
+    return MeshBundle(meshes, arrays, scalars)
+
+
+def layered_box_model(bundle: MeshBundle, *, slip_mag: float = 0.001,
+                      mu_plate: float = 30.0, lam_plate: float = 30.0,
+                      mu_substrate: float = 30.0, lam_substrate: float = 30.0,
+                      sides: str = "free", order_top: int = 0,
+                      rho_plate: float = 0.0, rho_substrate: float = 0.0,
+                      g: float | None = None, rake: float = 180.0):
+    """Densities in kg/m^3; both zero (the default) is no gravity at all,
+    not gravity on a weightless body."""
+    from mbem import ElasticMaterial
+    from mbem.cases.layered_box import build_model
+    density = (rho_plate, rho_substrate) if (rho_plate or rho_substrate) \
+        else None
+    return build_model(bundle.flat(), slip_mag,
+                       ElasticMaterial(mu=mu_plate, lam=lam_plate),
+                       ElasticMaterial(mu=mu_substrate, lam=lam_substrate),
+                       sides=sides, order_top=order_top, density=density, g=g,
+                       rake=rake)
+
+
+# ---------------------------------------------------------------------
 # topo_inclusion
 # ---------------------------------------------------------------------
 

@@ -33,6 +33,15 @@ part of it fails quietly rather than loudly:
      site renders cannot crash on a bad encoding, it just draws the wrong
      numbers convincingly -- so the error is pinned, and the two encodings
      someone might "simplify" to are shown losing 99.7 % and 54.7 %.
+  h  a MATERIAL STATE is read back with its own moduli. A solution solved
+     after ``rebuild_for_materials`` carries that state's densities, and the
+     evaluators take the coefficients from the model they are handed -- so
+     through the base model the two come from different states and the field
+     is wrong by tens of per cent, with nothing to flag it. ``mbem sample``
+     did exactly that for every non-base state. Manufactured again, because
+     u = A x is exact at ANY moduli: the state readout must return A x and
+     C_state:A, the base-model readout of the same solution must MISS, and
+     the function the CLI resolves a stored state's model with is pinned.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -48,7 +57,7 @@ import numpy as np
 from local_box_mesh_eq import (_concatenate_meshes,
                               make_rectangular_patch_eq,
                               make_vertical_panel_eq)
-from mbem import ElasticMaterial, defaults, volume as V, vti
+from mbem import ElasticMaterial, cli, defaults, volume as V, vti
 from mbem.backends.dense import AssembledDense
 from mbem.evaluate import evaluate_displacement, evaluate_stress
 from mbem.geometry import distance_to_mesh, solid_angle_batch
@@ -82,6 +91,10 @@ TOL_MANU_S = 5.0e-2      # interior sigma vs C:A
 TOL_MANU_E = 5.0e-2      # strain vs A_sym, and dilatation vs tr A
 TOL_CLEAR = 1.0e-12      # clearance_h vs the evaluator's own d/h
 TOL_WEB_LOG = 3.0e-2     # log10-uint8 over 5 decades; measured 2.4 %
+# [h]: a second material for the same box, softer and at another nu, so that
+# both kernels move (the slip kernel sees nu only, the force kernel 1/mu).
+STATE_MU, STATE_NU = 12.0, 0.18
+MISS_STATE = 0.10        # the base-model readout must be at least this wrong
 
 
 def check(name, ok, extra="") -> bool:
@@ -120,7 +133,8 @@ def _closed_box(edge=BOX_EDGE):
 
 
 def _manufactured():
-    """Closed box, u = A x on every face. Returns (model, region, sol, eps)."""
+    """Closed box, u = A x on every face. Returns (model, region, sol, eps,
+    asm); the assembly is kept for [h], which rebuilds it at a second material."""
     box = _closed_box()
     # lam from (mu, nu) once, here, to set up the manufactured case; the
     # solver and the sampler only ever see (mu, lam). Rule 8 forbids a
@@ -133,9 +147,9 @@ def _manufactured():
     region = Region("block", mat, patches,
                     probe_point=np.array([1.0, 2.0, -0.5 * BOX_H]))
     model = RegionModel([region])
-    sol = AssembledDense(generate_system(model), EPS_BOX, "direct",
-                         jump="calibrated").solve()
-    return model, region, sol, EPS_BOX
+    asm = AssembledDense(generate_system(model), EPS_BOX, "direct",
+                         jump="calibrated")
+    return model, region, asm.solve(), EPS_BOX, asm
 
 
 # ------------------------------------------------------------------ clauses --
@@ -469,12 +483,72 @@ def g_webexport() -> None:
           "interpolating a region code invents regions")
 
 
+def h_material_state(model, region, eps, asm) -> None:
+    """[h] a state's solution is read with the state's moduli."""
+    print("\n[h] MATERIAL STATE: densities and coefficients from ONE state")
+    base = region.material
+    mat = ElasticMaterial(mu=STATE_MU,
+                          lam=2.0 * STATE_MU * STATE_NU / (1.0 - 2.0 * STATE_NU))
+    sol = asm.rebuild_for_materials({region.name: mat}).solve()
+    state = model.with_materials({region.name: mat})
+
+    grid = V.make_grid(model, 5.0)
+    code = V.classify(model, grid)                 # geometry: the base model's
+    c_h, _, _ = V.clearance(model, grid, eps)
+    sel = np.flatnonzero((code > 0) & (c_h > 2.0 * defaults.NEAR_BOUNDARY_H_RATIO))
+    pts, n = grid.points[sel], sel.size
+    u_ex = pts @ STRAIN_A.T
+    sig_ex = mat.lam * np.trace(STRAIN_A) * np.eye(3) + 2.0 * mat.mu * STRAIN_A
+    e_ex = 0.5 * (STRAIN_A + STRAIN_A.T)
+
+    f = V.sample(state, sol, eps, grid, code)
+    close("state readout: u == A x", relerr(f["u"][sel], u_ex), TOL_MANU_U)
+    close("state readout: sigma == C_state:A",
+          relerr(f["sigma"][sel], np.broadcast_to(sig_ex, (n, 3, 3))),
+          TOL_MANU_S)
+    close("state readout: strain == sym(A)  [Hooke at the state's moduli]",
+          relerr(f["strain"][sel], np.broadcast_to(e_ex, (n, 3, 3))),
+          TOL_MANU_E)
+
+    # The tripwire. Without it the three checks above would pass on any
+    # material that happened to give A x, and the clause could not fail.
+    bad = V.sample(model, sol, eps, grid, code)
+    miss_u, miss_s = (relerr(bad["u"][sel], u_ex),
+                      relerr(bad["sigma"][sel],
+                             np.broadcast_to(sig_ex, (n, 3, 3))))
+    check("the BASE model reads that same solution wrong (u)",
+          miss_u > MISS_STATE, f"{miss_u:.2f} > {MISS_STATE}")
+    check("the BASE model reads that same solution wrong (sigma)",
+          miss_s > MISS_STATE, f"{miss_s:.2f} > {MISS_STATE}")
+    check("with_materials left the base model's material alone",
+          region.material is base and model.regions[0] is region)
+
+    # What `mbem sample` does with a stored run: resolve the state's model
+    # from the run's own spec. Given the JSON form a resolved dump holds.
+    resolved = {"spec": {"states": [
+        {"label": "base", "materials": {}},
+        {"label": "soft state", "materials": {
+            region.name: {"mu": mat.mu, "lam": mat.lam}}}]}}
+    m_base = cli._state_model(resolved, model, "base").regions[0].material
+    m_soft = cli._state_model(resolved, model, "soft-state").regions[0].material
+    check("stored state -> its own moduli (found by file slug)",
+          (m_soft.mu, m_soft.lam) == (mat.mu, mat.lam)
+          and (m_base.mu, m_base.lam) == (base.mu, base.lam))
+    try:
+        cli._state_model(resolved, model, "undeclared")
+        refused = False
+    except KeyError:
+        refused = True
+    check("a state the spec does not declare is refused, not read as base",
+          refused)
+
+
 def main() -> bool:
     t0 = time.time()
     print("=" * 76)
     print("Volume sampling: the same field, on a grid, with its own provenance")
     print("=" * 76)
-    model, region, sol, eps = _manufactured()
+    model, region, sol, eps, asm = _manufactured()
     print(f"  manufactured box: {sum(p.mesh.n_triangles for p in region.patches)}"
           f" triangles, nu={NU}, eps/h={EPS_BOX / BOX_EDGE:.3f}")
     a_chunking(model, region, sol, eps)
@@ -484,6 +558,7 @@ def main() -> bool:
     e_vti_roundtrip(model, region, sol, eps)
     f_clearance_is_the_solver_s(model, region, sol, eps)
     g_webexport()
+    h_material_state(model, region, eps, asm)
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

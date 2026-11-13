@@ -31,7 +31,10 @@ contribution is integrated **analytically**, so (following Ferranti & Cortez)
 This package contains only the elastic full-space machinery: the point-source
 kernel, the triangular displacement-discontinuity solution, the `mbem` BEM
 solver (region model + calibrated dense backend), and worked examples.  There is
-**no half-space / Mindlin code, no viscoelasticity, and no LaTeX** here.
+**no half-space / Mindlin code and no LaTeX** here.  Linear viscoelasticity
+(Maxwell, Burgers) is available by the Laplace route, and gravity as buoyancy
+on the boundary, both with no volume mesh; see "Viscoelastic relaxation" and
+"Gravity" below.
 
 Boundary patches and faults carry a piecewise-constant (P0) density by default
 or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
@@ -135,6 +138,204 @@ direction (the gate's clause [g]); the symmetric part of the fault operator
 is indefinite at eps/h <= 0.1, which the dense LU does not mind.  The
 `configs/penny.py` study runs the ladder.
 
+## Viscoelastic relaxation
+
+A region may relax: its shear modulus becomes a function of the Laplace
+parameter `s` (`mbem.rheology.Maxwell`, `Burgers`) while its bulk modulus stays
+elastic, so Poisson's ratio moves in time.  By the correspondence principle the
+problem at each real `s` is an ELASTIC one at `(mu(s), lam(s))`, on the same
+mesh, with the same boundary unknowns -- there is no volume mesh and no stored
+history.  It costs no kernel work either, because with `g = 1/(1 - nu)` every
+operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`
+(`docs/viscoelastic.md`), which holds for the elastic stress and NOT for the
+raw total: the eigenstress removal above is also what makes this work.
+
+A run declares the rheology and the code derives the states:
+
+```
+python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sides=free,clamped
+```
+
+```python
+from mbem import laplace
+s, stack = laplace.run_stack(run_dir)            # elastic state, then one per s
+u_top = np.tensordot(laplace.Prony(s).weights(t), stack["u:top"], axes=1)
+```
+
+`Prony` fits a constant plus exponentials whose relaxation times are the
+reciprocals of the collocation points, so the map from the stack to any time
+is one matrix: value, rate, the closed-form sum over an infinite train of
+repeating earthquakes, and the velocity of a fault locked between them.  At the default three points per decade the inversion
+error is under 1e-3 on exact transforms, well below the spatial error.  Time
+has the unit the rheology's `tau` has.
+
+Three things to know.  A region that relaxes needs ONE scalar `eps` on its
+closed boundary: with `eps="auto"` a nearly relaxed region loses its pressure
+response (9 % at mu(s)/K = 5e-4, 54 % at 5e-5 on the Eshelby sphere) and with
+one scalar it does not (0.2 % throughout), so the runner refuses the former.
+The box is part of the model: there is no half-space, and a plate with free
+sides floats as its substrate relaxes, which clamped sides prevent.  And a
+fault in a fluid under a sustained traction creeps for ever, which the fit
+represents only with `Prony(secular=True)`.
+
+`configs/plate_substrate.py` is the Nur-Mavko / Savage-Prescott model, an
+elastic plate over a Maxwell (or Burgers) substrate with a strike-slip fault in
+the plate, and its study is a box-size ladder against the antiplane closed
+form.  The postseismic displacement 16-32 km from the fault is 0.86 / 0.96 /
+0.99 of the closed form at one Maxwell time and 0.77 / 0.91 / 0.97 at ten, for
+box half-widths of 400 / 800 / 1600 km: it converges, and it tells you how much
+box a result needs.
+
+A Burgers substrate (`--set tau_K=0.1 --set t_min=0.02`) converges on the same
+ladder at the same rate.
+
+The time-stepper with memory on the boundary, which would couple this to
+stress-driven fault slip, is designed in `docs/viscoelastic.md` and not built.
+
+## Gravity
+
+A body that relaxes with no gravity sinks under a load for ever; with it, the
+surface settles where the relief it has built weighs what the load does.
+`mbem.model.Gravity` puts that in as a condition on the boundary:
+
+```python
+from mbem.model import Gravity, RegionModel
+model = RegionModel(regions, gravity=Gravity(
+    density={"plate": 2700.0, "substrate": 3300.0},   # kg/m^3, every region
+    surface=("top",)))                                # the patches open to the air
+```
+
+```
+python -m mbem run configs/plate_substrate.py --set rho_plate=2700 --set rho_substrate=3300
+```
+
+The body is prestressed hydrostatically and a displacement carries that
+prestress with it.  Treating the material as incompressible IN THE GRAVITY
+TERMS ONLY, the equations inside a region stay the homogeneous elastic ones
+and all that is left is a traction proportional to the displacement:
+`rho g (u . up)` along the normal on the free surface, the same with the
+density CONTRAST on an interface between regions, and nothing on a fault, or
+on the sides and base of a box, which are cuts through material that
+continues.  So there is no kernel work and no volume term, the buoyancy
+coefficient is not a modulus (a Laplace state under gravity is still an elastic
+solve), and both compressed backends carry it.  The price is an error of
+relative order `rho g L / K` in a compressible body, 6 % per 100 km of
+deformation scale at K = 50 GPa; `docs/viscoelastic.md` section 7 has the
+derivation.
+
+It is gated against a body that HAS an exact solution under gravity, which a
+flat earth does not: shells welded on a rigid core with radial buoyancy
+(`Gravity(center=...)`).  The solved surface displacement is within 2 % of
+exact with and without gravity while gravity itself stiffens the shell by
+28 %; relaxing, it follows the exact response in time to the same 2 % and
+ends isostatic to 4e-4, where without gravity the load has sunk 2500 times as
+far.  A relaxed flat box under a smooth load is hydrostatic to 3e-3.
+
+Three things to know.  The stress `evaluate_stress` returns is the stress at a
+fixed point of space; the stress of the material is that plus
+`rho g (u . up) I`, the same in shear.  A Laplace run refuses a stratification
+with the heavier side up, because a body that relaxes then has a growing mode
+and the fit has only decaying ones.  And a long strike-slip fault barely feels
+any of this (6e-4 of the fault-parallel displacement on the plate above);
+gravity acts on vertical motion.
+
+A thrust is where it is first order, and `configs/plate_substrate.py` runs one:
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
+    --set edge_near=10 --set t_max=100 --set half_x=800 \
+    --sweep refine=1,2 --sweep gravity=0,1
+```
+
+The fault breaks the surface along x = 0 and dips toward +x; `rake` is Aki &
+Richards' (180 right-lateral, the default; 90 a thrust).  Dip slip bends the
+plate.  In the reference a 30-degree thrust to 15 km in a 30 km plate leaves
+a trough over its lower edge 0.11 of the slip deep at the earthquake, 0.30
+after ten Maxwell times and 0.52 after a hundred, where it stops, the plate
+afloat; without gravity it is 0.97 at a hundred and has no limit.
+
+That reference is a second calculation, since no closed form covers a plate
+over a relaxing substrate under gravity: plane strain, one wavenumber at a
+time (`mbem.cases.layered_box.dip_slip_profile`), itself held to cutde's
+half-space (4e-6), to the classical stiffness of a loaded half-space and of a
+plate on a fluid, to the exact rotation of a dislocated free plate (7e-5) and
+to a contour inversion in time (3e-4).  Against it, on the 800 km box above,
+the postseismic displacement within 120 km of the trace is off by 2.8 % at
+one Maxwell time, 2.0 % at ten and 5.7 % at a hundred, and what is left at a
+hundred is horizontal (9 %, the walls of the box; the vertical is 2.9 %).
+
+One thing to know that the strike-slip plate never showed.  A plate that
+bends is only as good as its two faces: with piecewise-constant elements the
+relaxed vertical motion is short by an amount first order in the elements on
+the top and on the interface and in the interface's eps -- 12 % at 10 km,
+15 km and 1.5 km on a 30 km plate, 6 % at half of each.  Being first order,
+it cancels between two meshes that have those three in one ratio, which is
+what `--sweep refine=1,2` runs and the figure draws
+(`mbem.cases.layered_box.two_mesh_limit`): 14 % and 8 % in the vertical at a
+hundred Maxwell times become the 2.9 % above.
+
+**The earthquake cycle.**  A fault locked between earthquakes that repeat
+every `period` is the same fault slipping steadily, less a difference that is
+periodic, and the fit sums it in closed form:
+
+```python
+s, stack = laplace.run_stack(run_dir)
+v = np.tensordot(laplace.Prony(s).locked_rate_weights(t, period),
+                 stack["u:top"], axes=1)       # per unit slip RATE
+```
+
+is the surface velocity at `t` after the latest earthquake, measured from
+steady slip.  Its mean over the cycle is minus the elastic response: back
+slip is the cycle's average whatever relaxes, and relaxation only moves
+velocity between early and late.  For the thrust above, repeating every
+twenty Maxwell times, a point 97 km into the hanging wall moves at -0.14 of
+the slip rate just after an earthquake and +0.21 just before the next, about
+a mean of +0.11: it goes on the way the earthquake moved it and turns a sixth
+of the way through the cycle.  The reference for this needs no fit (a
+periodic response is a Fourier series, its coefficients the solution at
+imaginary `s`), and the model is within 2.3 % of it early in the cycle and
+2.1 % late.  Any dip-slip run of `configs/plate_substrate.py` draws it
+(`plate_cycle`).
+
+**A megathrust.**  A fault deeper than the plate is thick goes through the
+interface, and its lower reach is a second fault, in the substrate: slip
+inside the region that relaxes.
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+    --set rho_substrate=3300 --set edge_near=10 --set near_field_radius=200 \
+    --set half_x=800 --set t_max=250 --sweep refine=1,2
+```
+
+The reference takes the same fault (two sources, each in the moduli of its
+own layer), and its lower source is held by three limits that are exact: an
+interface between like materials is none (7e-15), under a plate 10 m thick
+the half-space closed form holds whatever the substrate (5e-4), and slip in
+a fluid moves nothing at the surface (1e-6).  That last is the physics too.
+For a megathrust dipping 20 degrees to 45 km through a 30 km plate, the part
+below the plate is two thirds of the vertical motion at the earthquake and
+under 1 % by a hundred Maxwell times: slip in a body that relaxes is
+forgotten, and what is left is a plate cut through, whose two halves
+converge as the substrate lets go.  So the far field catches up with the
+trench (400 km into the hanging wall, 0.09 of the slip at the earthquake and
+0.45 at a hundred Maxwell times), and the cycle is the one subduction zones
+show: repeating every fifty Maxwell times, a point 200 km inland moves
+toward the trench at 0.56 of the slip rate just after an earthquake and away
+from it at 0.45 just before the next.
+
+The model is within 0.4 % (horizontal) and 1.4 % (vertical) of that
+reference at the earthquake, with a rigid base where the model's is.  In
+relaxation it is within 11 % at one Maxwell time and 22 % at 250, and here
+that is the box and not the mesh, the two-mesh limit moving nothing: clamped
+walls 800 km away hold the two halves at 0.69 of the reference's
+convergence.  Free sides (`--set sides=free`) let them go, to 0.95, and
+release them too early (1.11 at one Maxwell time), so the two bracket the
+reference at every time.  What a plate that continues beyond a wall does is
+stiff early and slack late, and a wall that knows it is the open problem
+this model points at (`BACKLOG.md`).
+
 ## Layout
 
 ```
@@ -147,7 +348,11 @@ src/mbem/                 region-model BEM solver: dense and block-compressed
   kernels/                numba kernels, P0/P1/P2 closed forms
   la/                     ACA, flat H-matrix, bbFMM, FGMRES, preconditioners
   cases/                  reference models the gates and studies share (the
-                          fault box, the inclusion, topography, the penny crack)
+                          fault box, the inclusion, topography, the penny
+                          crack, the plate over a substrate)
+  rheology.py, laplace.py linear viscoelasticity by correspondence: Maxwell
+                          and Burgers shear moduli, and the fit that turns
+                          per-s elastic solves into a function of time
   figures/                the figure makers, in a lazy registry
 src/mollified_kernel/     point-source kernel + analytic triangle integration
   mollified_elastic_kernels.py   regularized Kelvin point kernels
@@ -162,8 +367,8 @@ src/local_box_mesh_eq.py  equilateral Delaunay box / fault mesh builders
 src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
-configs/                  eight studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 46 gates (print PASS/FAIL)
+configs/                  nine studies, each a Python module declaring a run
+tests/                    run_all.py + test_gates.py; 47 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -212,7 +417,7 @@ python -m mbem verify [-k fmm] [--fast]             # the gates, through the CLI
 ```
 
 A run folder holds `resolved.json` (the spec, the keyword arguments actually
-passed, eps resolved to numbers per patch, all 111 `defaults` constants, and the
+passed, eps resolved to numbers per patch, every uppercase `defaults` constant, and the
 environment), `report.json` (iterations, residuals, phase timings, peak RSS),
 the solution fields as `.npz`, and a `MANIFEST` of sha256 hashes.
 
@@ -224,7 +429,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 46 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 47 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 
@@ -237,7 +442,7 @@ python tests/gates/mbem/verify_evaluate_stress.py            # mbem stress == cl
 python tests/gates/mbem/verify_stress_assembler.py           # numba batched stress assemblers == scalar oracle (machine precision)
 python tests/gates/mbem/verify_eigenstress_exact.py           # EXACT finite-triangle eigenstress == moss/clq oracles; sign; rim disagreement with anelastic.py
 python tests/gates/mbem/verify_boundary_eigenstress.py       # boundary double layers subtracted too: near-boundary interior stress converges (icosphere vs exact Kelvin)
-python tests/gates/mbem/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space and manufactured solutions (end to end)
+python tests/gates/mbem/verify_solved_bvp.py                 # assembly -> BCs -> solve -> displacement vs cutde half-space (strike slip, and a 30-degree thrust) and manufactured solutions (end to end)
 python tests/gates/mbem/verify_disp_contract.py              # matrix-free displacement evaluation == dense matrices == legacy oracle
 python tests/gates/mbem/verify_dense_backend.py              # dense assembly invariants (calibration cache bit-identity, rebuilds)
 python tests/gates/mbem/verify_hbackend.py                   # H backend == dense (ACA, calibrated jump, combined storage, rung ladder)
@@ -246,6 +451,7 @@ python tests/gates/mbem/verify_deflation_estimate.py         # all-Neumann rigid
 python tests/gates/mbem/verify_nodal_kernels.py              # P0/P1/P2 numba kernels == clq oracle (1e-12); edge primitives; order 0 == the P0 path
 python tests/gates/mbem/verify_nodal_solve.py                # P1/P2 solves: P0 bitwise, patch test, rigid covariance, h-convergence, P1 faults, refusals, the shared-node layout
 python tests/gates/mbem/verify_penny_crack.py                # traction-BC fault on the penny crack vs Eshelby/Sneddon; continuous P2 readout; coupled round trip; rigid translation
+python tests/gates/mbem/verify_viscoelastic.py               # every operator is {1, g} x {1, mu, 1/mu} times geometry, g = 1/(1-nu); one eps per closed surface; the Laplace route against closed forms per s and in time (relaxing full space, Eshelby sphere, two-layer torsion, creeping penny crack); gravity on a relaxing shell; a dipping fault's plane-strain reference and a thrust under gravity against it, its two-mesh limit, a locked fault's cycle against a Fourier series, and the fault taken through the interface
 ```
 
 ## The field in the volume
@@ -436,6 +642,12 @@ the dense LU reference to ~1e-9.  (Use `eta=0.8`: the looser default
 admissibility can accept inaccurate low-rank factors for a near-field block.)
 
 ## References
+
+Viscoelasticity by correspondence on the boundary goes back to Rizzo & Shippy
+(1971); the layered-earth problems it is compared with are Nur & Mavko (1974),
+Savage & Prescott (1978) and Rybicki (1971), and the cycle of a locked fault
+is Savage (1983) and Thatcher & Rundle (1984). `docs/viscoelastic.md` has the
+full list.
 
 The mollification follows the method of regularized Stokeslets and its surface
 (triangulated-BIE) extension:

@@ -27,6 +27,17 @@ and D_c the (3,3) diagonal of that point; at P0 N = [[1]] and this is the
 plain block diagonal. The row-sum identity behind the calibrated diagonal
 carries to P1/P2 through the partition of unity ``sum_k N_k = 1``.
 
+GRAVITY (``core.Gravity``) is a condition on the boundary, and this is where
+it enters. Region R sees on patch p the traction ``t_p + B u_p`` with
+``B = RegionModel.buoyancy(R, p)``, so the t_p coefficient above also lands on
+the u_p columns:
+
+    A[row(R,q), u_p] += -sigma(R,p) * G^{m(R)}_{qp} B_p
+
+a single layer whose density is proportional to the displacement. It is a
+``BlockTerm`` with ``col_op = B``: the block acts on ``B x[col]``, per density
+node. A prescribed-displacement patch has no B, so nothing moves to the RHS.
+
 A FAULT is not a special case: ``sigma(R,f)`` is defined for it too
 (``FAULT_ORIENTATION``, see ``core.py``), so a fault's slip enters the
 RHS through the very same ``-sigma`` coefficient a prescribed boundary
@@ -95,6 +106,21 @@ class BlockTerm:
                                  # on the q == p u-block, else 0; applied per
                                  # collocation point through term_diagonal /
                                  # add_block_diagonal
+    col_op: object = None        # (source n_nodes, 3, 3) or None: the block
+                                 # acts on ``col_op @ x[col]`` node by node
+                                 # (the buoyancy term). EVERY consumer of a
+                                 # term goes through ``col_vector`` /
+                                 # ``col_block``; one that read ``x[col]``
+                                 # itself would drop gravity without a word.
+
+    def col_vector(self, x: np.ndarray) -> np.ndarray:
+        """The source density this term's kernel acts on, from ``x[col]``."""
+        return x if self.col_op is None else diagonal_matvec(self.col_op, x)
+
+    def col_block(self, blk: np.ndarray) -> np.ndarray:
+        """The kernel block ``(rows, 3 n_nodes)`` as it acts on ``x[col]``."""
+        return blk if self.col_op is None else block_times_diagonal(
+            blk, self.col_op)
 
 
 @dataclass(frozen=True)
@@ -148,6 +174,10 @@ def generate_system(model: RegionModel) -> BlockSystem:
     system = BlockSystem(model=model, layout=layout)
 
     for region in model.regions:
+        # One B per (region, patch), the SAME array in every row block: the
+        # FMM grouping folds a source's terms into one traversal and tells
+        # them apart by identity.
+        buoyancy = {id(p): model.buoyancy(region, p) for p in region.patches}
         for q in region.patches:
             row = layout.row_slot(region, q)
 
@@ -186,6 +216,14 @@ def generate_system(model: RegionModel) -> BlockSystem:
                             row=row, kernel=KERNEL_U, field_patch=q,
                             source_patch=p, region=region, scale=sigma,
                             vector=t_bar))
+
+                # ---- buoyancy: R sees t_p + B u_p, so -sigma * G B on u_p ----
+                B = buoyancy[id(p)]
+                if B is not None:
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(p, "u"), kernel=KERNEL_U,
+                        field_patch=q, source_patch=p, region=region,
+                        scale=-sigma, col_op=B))
 
             # ---- fault sources of this region ----
             # Same -sigma rule as the prescribed-u branch above; for a
@@ -241,6 +279,12 @@ def generate_system(model: RegionModel) -> BlockSystem:
                             row=row, kernel=KERNEL_GT, field_patch=f,
                             source_patch=p, region=region, scale=-sigma,
                             vector=t_bar))
+                B = buoyancy[id(p)]                  # as in the boundary rows
+                if B is not None:
+                    system.terms.append(BlockTerm(
+                        row=row, col=layout.slot(p, "u"), kernel=KERNEL_GT,
+                        field_patch=f, source_patch=p, region=region,
+                        scale=sigma, col_op=B))
             for g in region.faults:
                 sigma = float(model.orientation(region, g))
                 if g.bc is BCType.FAULT_TRACTION:
@@ -371,6 +415,14 @@ def diagonal_matvec(D: np.ndarray, x: np.ndarray) -> np.ndarray:
     """(Nc,3,3) block-diagonal times a flattened (3*Nc,) vector of values
     AT the collocation points."""
     return np.einsum("nij,nj->ni", D, x.reshape(-1, 3)).ravel()
+
+
+def block_times_diagonal(blk: np.ndarray, D: np.ndarray) -> np.ndarray:
+    """``blk @ blockdiag(D)``: a kernel block ``(rows, 3 Nc)`` times an
+    (Nc,3,3) block-diagonal on its columns, without forming the diagonal."""
+    rows = blk.shape[0]
+    return np.einsum("rnk,nkj->rnj", blk.reshape(rows, -1, 3),
+                     D).reshape(rows, -1)
 
 
 def add_block_diagonal(A: np.ndarray, r0: int, c0: int, D: np.ndarray,

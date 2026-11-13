@@ -31,7 +31,6 @@ import datetime
 import hashlib
 import json
 import pathlib
-import re
 import secrets
 import shutil
 import time
@@ -44,10 +43,6 @@ from mbem import provenance as prov
 RUNS = prov.REPO / "runs"
 
 
-def _slug(s: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s)).strip("-") or "x"
-
-
 def new_run_dir(name: str, runs_dir: pathlib.Path | None = None) -> pathlib.Path:
     """``<UTC>-<name>-<git>-<4 hex>``, created exclusively.
 
@@ -58,7 +53,7 @@ def new_run_dir(name: str, runs_dir: pathlib.Path | None = None) -> pathlib.Path
     base = runs_dir or RUNS
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     for _ in range(4):
-        d = base / f"{stamp}-{_slug(name)}-{_slug(prov.git_hash())}-{secrets.token_hex(2)}"
+        d = base / f"{stamp}-{cfg.slug(name)}-{cfg.slug(prov.git_hash())}-{secrets.token_hex(2)}"
         try:
             d.mkdir(parents=True)
             return d
@@ -134,6 +129,9 @@ def _model_fingerprint(model, system) -> dict:
                         "material": {"mu": r.material.mu, "lam": r.material.lam},
                         "patches": patches})
     return {"regions": regions,
+            # None is "no gravity", which is not gravity on a weightless body
+            "gravity": (None if model.gravity is None
+                        else dataclasses.asdict(model.gravity)),
             "n_unknowns": int(system.layout.n_unknowns),
             "n_tris": int(sum(p["n_triangles"] for r in regions
                               for p in r["patches"])),
@@ -181,7 +179,22 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     phases["system"] = time.perf_counter() - t0
 
     known = {r.name for r in model.regions}
-    for st in run.states:
+    states = run.states
+    if run.laplace is not None:
+        from mbem import rheology
+        relaxing = {k: rheology.from_spec(v)
+                    for k, v in run.laplace.rheology.items()}
+        unknown = set(relaxing) - known
+        if unknown:
+            raise KeyError(f"laplace.rheology names regions not in the "
+                           f"model: {sorted(unknown)} (model has "
+                           f"{sorted(known)})")
+        rheology.require_one_eps(model, run.model.eps, relaxing)
+        rheology.require_stable(model)
+        states = rheology.laplace_states(
+            {r.name: (r.material.mu, r.material.lam) for r in model.regions},
+            relaxing, run.laplace.s)
+    for st in states:
         unknown = set(st.materials) - known
         if unknown:
             raise KeyError(f"state {st.label!r} names regions not in the model: "
@@ -212,6 +225,10 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 "config_path": str(config_path) if config_path else None,
                 "notes": run.notes, "tags": list(run.tags)},
         "spec": dataclasses.asdict(run),
+        # The states AS SOLVED. For a Laplace run they exist nowhere in the
+        # spec -- they are derived from the model -- and `mbem sample` reads a
+        # state back with the materials recorded here.
+        "states": [dataclasses.asdict(st) for st in states],
         "builders": {"mesh": cfg.builder_name(run.model.geometry.builder),
                      "model": cfg.builder_name(run.model.builder)},
         "effective": {"backend": effective_backend,
@@ -224,11 +241,20 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     if save:
         _write_json(run_dir / "resolved.json", resolved)
 
-    cur, ok, solutions = asm, True, {}
-    for st in run.states:
-        if st.materials:
+    # A state is the BASE model with its own materials replaced
+    # (``config.State``), so each backend is handed the COMPLETE map. The two
+    # ``rebuild_for_materials`` disagree about a region the map does not name
+    # -- dense keeps the operator's current material, compressed resets to the
+    # base -- and a partial map would make a run mean different things on them.
+    base = {r.name: r.material for r in model.regions}
+    overrides = cfg.state_overrides(states)
+    cur, held, ok, solutions = asm, {}, True, {}
+    for st in states:
+        want = overrides[cfg.slug(st.label)]
+        if want != held:
             cur = cur.rebuild_for_materials(
-                {k: m.build() for k, m in st.materials.items()})
+                {**base, **{k: m.build() for k, m in want.items()}})
+            held = want
         t0 = time.perf_counter()
         sol = cur.solve(**run.solve.kwargs()) if run.backend.kind != "dense" \
             else cur.solve()
@@ -246,7 +272,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         ok &= bool(getattr(rep, "converged", True))
         report["states"].append(row)
 
-        if save and run.outputs.save_meshes and st is run.states[0]:
+        if save and run.outputs.save_meshes and st is states[0]:
             # Written once per run, not per state: the mesh is the run's, and a
             # material state does not change it. A figure needs it because a
             # solution is just numbers until you know which triangles they sit
@@ -265,7 +291,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
             if missing:
                 raise KeyError(f"outputs.slots names slots the solution does "
                                f"not have: {missing} (have {sorted(sol)})")
-            np.savez(run_dir / f"fields_{_slug(st.label)}.npz",
+            np.savez(run_dir / f"fields_{cfg.slug(st.label)}.npz",
                      **{k: sol[k] for k in want})
 
     if save and run.outputs.figures:
@@ -320,7 +346,7 @@ def execute_study(config_path: pathlib.Path, axes: dict,
     for i, combo in enumerate(itertools.product(*(axes[k] for k in keys)),
                               start=1):
         pt = dict(zip(keys, combo))
-        child = study_dir / f"{i:02d}-{'-'.join(_slug(v) for v in combo)}"
+        child = study_dir / f"{i:02d}-{'-'.join(cfg.slug(v) for v in combo)}"
         child.mkdir()
         run = cfg.load(config_path, **dict(params, **pt))
         print(f"  [{', '.join(f'{k}={v}' for k, v in pt.items())}] {run.name}",

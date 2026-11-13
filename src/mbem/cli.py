@@ -249,6 +249,26 @@ def _rebuild(resolved: dict):
     return bundle, model, spec["model"]["eps"]
 
 
+def _state_model(resolved: dict, model, state: str):
+    """The model a stored state is READ BACK with: ``_rebuild``'s base model
+    at that state's materials. ``state`` is the slug its fields file carries.
+
+    The base model is right for the geometry and wrong for the moduli of any
+    state that replaced a material, and the evaluators cannot tell: they
+    combine the state's densities with whatever coefficients the model holds.
+    A state the spec does not declare is refused rather than read as the base.
+    """
+    # "states" is what the run solved; runs stored before it was recorded have
+    # only the spec's, which for them is the same thing.
+    overrides = cfg.state_overrides(
+        resolved.get("states") or resolved["spec"]["states"])
+    if state not in overrides:
+        raise KeyError(f"fields for state {state!r}, but the run's spec "
+                       f"declares only {sorted(overrides)}")
+    return model.with_materials(
+        {name: m.build() for name, m in overrides[state].items()})
+
+
 def _check_mesh(resolved: dict, model) -> list:
     """Per-patch ``mesh_sha256`` of the rebuilt model against the stored run."""
     import hashlib
@@ -346,15 +366,18 @@ def cmd_sample(a) -> int:
                       f"{sorted(run.fields)}")
                 return 2
             tag = f"{child.name}-{st}" if study else st
+            # Geometry (grid, classification, clearance) is the base model's;
+            # the MODULI are the state's.
+            st_model = _state_model(run.resolved, model, st)
             fields, dt = V.timed(
                 f"sample {tag}",
-                lambda: V.sample(model, run.fields[st], eps, grid, code,
+                lambda: V.sample(st_model, run.fields[st], eps, grid, code,
                                  eigenstress=not a.no_eigenstress), log=print)
             report["phases"][f"sample:{tag}"] = dt
             saved[tag] = (fields, code)
             arrays = V.as_vti_arrays(grid, fields, code, c_h, c_eps,
                                      c_fault)
-            p = vti.write(out / f"volume_{runner._slug(tag)}.vti", grid.origin,
+            p = vti.write(out / f"volume_{cfg.slug(tag)}.vti", grid.origin,
                           grid.spacing, grid.dims, arrays)
             print(f"  wrote {p.name}  ({p.stat().st_size / 1e6:.1f} MB)")
             report["volumes"].append(p.name)
@@ -373,7 +396,7 @@ def cmd_sample(a) -> int:
             d = V.difference(fa, fb, both)
             arrays = V.as_vti_arrays(grid, d, both.astype(np.int8),
                                      c_h, c_eps, c_fault)
-            name = f"diff_{runner._slug(k)}_minus_{runner._slug(base)}.vti"
+            name = f"diff_{cfg.slug(k)}_minus_{cfg.slug(base)}.vti"
             p = vti.write(out / name, grid.origin, grid.spacing, grid.dims,
                           arrays)
             print(f"  wrote {p.name}  ({p.stat().st_size / 1e6:.1f} MB)")

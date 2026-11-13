@@ -50,7 +50,12 @@ c0-p2-mollified-collocation). Every tolerance carries its measurement.
       slip, u:top, interior u and stress recovered to 1e-8 (an identity;
       measured 1e-14). TRIPWIRES: zeroing the (fault rows, boundary columns)
       block moves b by > 5e-4 (measured 1.4e-3 / 1.8e-3: the fault is deep);
-      zeroing (boundary rows, b columns) moves u:top by 1.
+      zeroing (boundary rows, b columns) moves u:top by 1. Then the same
+      round trip UNDER GRAVITY, the box's top the free surface: buoyancy is
+      then part of the top's single layer in the boundary rows, in the readout
+      that makes the target and in the fault's traction rows, and the slip
+      comes back only if the three agree. TRIPWIRE: the traction rows without
+      their buoyancy block.
   [f] translation: a free-traction box (all three patches Neumann,
       deflated) around a P0 traction fault: the fault rows applied to a unit
       translation of the box (the deflation basis Z) vanish (1e-12, measured
@@ -143,6 +148,15 @@ TOL_RESIDUAL = 1e-10
 TOL_READOUT_VS_ROWS = 1e-6     # near-list vs full-sum eigenstress; measured 1e-13 .. 1e-12
 TOL_ROUNDTRIP = 1e-8           # measured 1e-14
 TRIP_MOVE = 5e-4               # measured 1.36e-3 / 1.75e-3 (the fault is 15 km deep) and 1.0
+# [e] under gravity: rho g on the box's top at 5 GPa/km (rho g L / mu ~ 13 on
+# the 80 km box), so that buoyancy is a large part of the top's single layer.
+# The fault is 15 km down and vertical, so that layer is a small part of ITS
+# shear traction: dropping the rows' buoyancy block moves b by 1.4e-4 (P0) and
+# 1.7e-4 (P2) -- ten orders above the round trip's closure, a tenth of what
+# dropping every boundary column does (TRIP_MOVE).
+GRAVITY_WEIGHT = 5.0           # GPa/km
+GRAVITY_TRIP = 5e-5            # measured 1.36e-4 / 1.73e-4
+GRAVITY_LIVE = 0.05            # u:top with and without gravity; measured 0.13
 TOL_TRANSLATION = 1e-12        # measured 1.6e-18 (the identity is exact for the smeared layer too)
 TRANSLATION_CONTRAST = 100.0   # measured 5e8
 FACET_GROWTH = 2.0             # |T - V| at vertices, eps/h 0.1 -> 0.025: measured 3.5
@@ -468,6 +482,50 @@ def e_round_trip():
                     moved = np.linalg.norm(x2[sl.offset:sl.stop] - x_ref[sl.offset:sl.stop]) \
                         / np.linalg.norm(x_ref[sl.offset:sl.stop])
                     check_gt(f"TRIPWIRE {label}: zeroing {name} moves {read}", float(moved), TRIP_MOVE)
+
+    # The same round trip UNDER GRAVITY (model.Gravity). The box's top is the
+    # free surface, and its single layer then carries the buoyancy B u as well
+    # as the applied load: in the boundary rows, in the readout that produces
+    # the target, and in the fault's traction rows (the KERNEL_GT block on the
+    # displacement columns). The round trip closes only if all three agree.
+    from mbem.kernels import KERNEL_GT
+    from mbem.model import Gravity
+    grav = Gravity(density={"block": GRAVITY_WEIGHT}, surface="top",
+                   g=1.0 / defaults.WEIGHT_GPA_PER_KM)
+    for order, layout in ((0, "discontinuous"), (2, "continuous")):
+        fA = Patch("fault", fmesh, BCType.FAULT, value=slip_field, order=order, layout=layout)
+        mA, rA = VB._build_box_model(box, mat, bcs, {k: None for k in keys}, faults=[fA])
+        mA = RegionModel(mA.regions, gravity=grav)
+        solA = solve(mA, eps)
+        nrm = fA.collocation_normals()
+        tA = evaluate_fault_traction(mA, rA, solA, fA, eps)
+        tA_t = tA - np.einsum("ni,ni->n", tA, nrm)[:, None] * nrm
+        fB = Patch("fault", fmesh, BCType.FAULT_TRACTION, value=tA_t, order=order,
+                   layout=layout, locked=np.zeros(fA.n_dofs, bool))
+        mB, _rB = VB._build_box_model(box, mat, bcs, {k: None for k in keys}, faults=[fB])
+        mB = RegionModel(mB.regions, gravity=grav)
+        solB = solve(mB, eps)
+        label = f"gravity, P{order} {layout}"
+        bA = fA.value_array()
+        check(f"{label}: b recovered", float(np.linalg.norm(solB['b:fault'] - bA) / np.linalg.norm(bA)),
+              TOL_ROUNDTRIP)
+        check(f"{label}: u:top recovered",
+              float(np.linalg.norm(solB['u:top'] - solA['u:top']) / np.linalg.norm(solA['u:top'])),
+              TOL_ROUNDTRIP)
+        # tripwire: the fault's traction rows without their buoyancy block
+        system = generate_system(mB)
+        n_all = len(system.terms)
+        system.terms = [t for t in system.terms
+                        if not (t.kernel == KERNEL_GT and t.col_op is not None)]
+        bare = quiet(AssembledDense, system, eps, "direct").solve()
+        moved = float(np.linalg.norm(bare['b:fault'] - bA) / np.linalg.norm(bA))
+        check_bool(f"{label}: the traction rows carry one buoyancy block",
+                   n_all - len(system.terms) == 1)
+        check_gt(f"TRIPWIRE {label}: without it b moves", moved, GRAVITY_TRIP)
+    noG = solve(RegionModel(mA.regions), eps)
+    check_gt("gravity is live on this box: it moves u:top",
+             float(np.linalg.norm(noG['u:top'] - solA['u:top']) / np.linalg.norm(noG['u:top'])),
+             GRAVITY_LIVE)
 
 
 # ---------------------------------------------------------------------------

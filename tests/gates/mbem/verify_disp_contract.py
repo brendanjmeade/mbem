@@ -185,15 +185,23 @@ def check_compressed_evaluator():
     print(f"    build {t_build:.2f} s, apply {t_apply*1e3:.1f} ms, "
           f"operator {ev.nbytes()/1e6:.1f} MB")
 
-    # second solution (rebuilt material) reuses the SAME operator
-    sol2 = asm.rebuild_for_materials(
-        {"crust": mb.ElasticMaterial(mu=45.0, lam=20.0)}).solve()
-    # evaluator's region material must match the solve's material:
-    ev.region.material = mb.ElasticMaterial(mu=45.0, lam=20.0)
-    u2_ref = evaluate_displacement(model, region, sol2, obs, 3.0)
-    err2 = _relmax(ev(sol2), u2_ref)
+    # second solution (rebuilt material) reuses the SAME operator. It is read
+    # through the model AT THAT STATE: the evaluators take the moduli from the
+    # model, so the state's densities need the state's coefficients. Both
+    # evaluators are handed the state, and the base model is not mutated.
+    mat2 = mb.ElasticMaterial(mu=45.0, lam=20.0)
+    sol2 = asm.rebuild_for_materials({"crust": mat2}).solve()
+    state = model.with_materials({"crust": mat2})
+    u2_ref = evaluate_displacement(state, region, sol2, obs, 3.0)
+    err2 = _relmax(ev(sol2, model=state), u2_ref)
     print(f"    repeated apply (new material): rel = {err2:.2e}")
-    return err < 1e-6 and err2 < 1e-6
+    # ... and the tripwire: read through the BASE model the same solution is
+    # visibly different, so err2 cannot pass by ignoring the state.
+    miss = _relmax(ev(sol2), u2_ref)
+    print(f"    same solution through the base model: rel = {miss:.2e} "
+          f"(must not agree)")
+    return (err < 1e-6 and err2 < 1e-6 and miss > 1e-2
+            and region.material is not mat2)
 
 
 def main():

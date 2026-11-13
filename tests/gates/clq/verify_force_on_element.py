@@ -114,6 +114,9 @@ def check_polar(rep):
                       worst, TOL_POLAR[name])
 
 
+ON_EDGE_SINE = 1.0e-12        # |sin| of the subtended angle that counts as ON
+
+
 def omega_2d(tri, x):
     """In-plane angle subtended by the triangle at an in-plane point: 2 pi
     strictly inside, pi on an open edge, the interior angle at a vertex, the
@@ -133,8 +136,14 @@ def omega_2d(tri, x):
         if np.hypot(*a) == 0.0 or np.hypot(*b) == 0.0:
             continue                      # observer at a vertex: edge drops out
         cross = a[0] * b[1] - a[1] * b[0]
-        if cross == 0.0 and a @ b < 0.0:
-            continue                      # observer ON this edge: zero-area wedge
+        # Observer ON this edge: a zero-area wedge, which drops out. Tested on
+        # the sine of the angle, NOT on ``cross == 0.0``: projecting into the
+        # triangle's plane leaves a cross product of a few ulp whose sign is
+        # the platform's, and arctan2(+-tiny, negative) is +-pi -- so an exact
+        # test returns pi on one machine and 0 or 2 pi on another.
+        if abs(cross) <= ON_EDGE_SINE * np.hypot(*a) * np.hypot(*b) \
+                and a @ b < 0.0:
+            continue
         tot += np.arctan2(cross, a @ b)
     return abs(tot)
 

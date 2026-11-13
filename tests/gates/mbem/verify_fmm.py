@@ -46,6 +46,10 @@ operator -- and never against another approximation.
      M2L tables it actually shares, counted on the lattices rather than on
      the cube indices. The half-width floor is checked by removal: without
      it a flat box's P2M is NaN.
+  h  GRAVITY: a buoyancy term puts a SECOND column slot on a source of its
+     group (``BlockTerm.col_op``), which ``FarGroups`` sums before the one
+     traversal. The grouped operator and its solution against the dense ones,
+     with and without gravity on the same model: the same error either way.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL. It is slow (minutes): the
 reference evaluates every M2L where it is used, in numpy.
@@ -77,7 +81,7 @@ from mbem.model.equations import (add_block_diagonal,            # noqa: E402
                                   term_diagonal)
 # The fault-zone model is STATED ONCE, in verify_hbackend; this gate uses
 # the same geometry at the same refinement so the two are comparable.
-from verify_hbackend import _build_zone_model                     # noqa: E402
+from verify_hbackend import _build_zone_model, _gravity_model     # noqa: E402
 
 # nu = 0.30. Every kernel number here runs off nu != 1/4, where a lam/mu
 # swap in the slip -> displacement pairing is invisible (msd rule 6).
@@ -1164,6 +1168,44 @@ def check_domain() -> bool:
             and margins[f"src f={f:g}"][1] == margins["cube"][1])
 
 
+def check_gravity() -> bool:
+    """[h] A buoyancy term shares its SOURCE with another term of the same
+    (region, kernel) group: on an interface the single layer carries the
+    traction slot and, through ``BlockTerm.col_op``, the displacement slot.
+    ``FarGroups`` sums the two before one traversal. Held to the dense
+    operator, and to the same model without gravity: the far field's error
+    is its own, and the buoyancy adds none to it."""
+    errs = {}
+    for gravity in (False, True):
+        model, eps = _gravity_model(gravity)
+        system = generate_system(model)
+        dense = AssembledDense(system, eps, "direct")
+        hasm = HBackend(far="fmm").assemble(system, eps)
+        v = np.random.default_rng(11).normal(size=system.layout.n_unknowns)
+        ref = dense.A @ v
+        mv = float(np.max(np.abs(hasm.matvec(v) - ref)) / np.max(np.abs(ref)))
+        sol_d, sol_h = dense.solve(), hasm.solve()
+        sol = max(float(np.max(np.abs(sol_h[k] - sol_d[k]))
+                        / np.max(np.abs(sol_d[k]))) for k in sol_d)
+        pc = hasm._precond
+        want = sum(bool(sb.lower_terms) for sb in pc.sbs)
+        sums = [len(parts) for g in hasm._groups.groups for parts in g.cols]
+        errs[gravity] = (mv, sol)
+        print(f"    gravity {str(gravity):5s}: matvec {mv:.3e}  solution "
+              f"{sol:.3e}  ({hasm.report.iterations} iterations); "
+              f"{sum(n > 1 for n in sums)} of {len(sums)} group sources are "
+              f"sums; {len(pc._lower)} of {want} lower sweeps grouped")
+        ok = hasm.report.converged and len(pc._lower) == want
+        if gravity:
+            ok &= any(n > 1 for n in sums)
+        else:
+            ok &= all(n == 1 for n in sums)
+        errs[gravity] += (ok,)
+    (mv0, sol0, ok0), (mv1, sol1, ok1) = errs[False], errs[True]
+    return bool(ok0 and ok1 and mv1 < 2.0 * NAIVE_TOL and mv1 < 1.5 * mv0
+                and sol1 < 1.5 * sol0)
+
+
 CHECKS = [
     ("point kernel vs the analytic triangle kernel", check_point_kernel),
     ("pair level: matvec and matrix vs the exact pair", check_pair),
@@ -1172,6 +1214,7 @@ CHECKS = [
     ("convergence in p", check_p_convergence),
     ("the eps^2 pass", check_eps_terms),
     ("interpolation domain", check_domain),
+    ("gravity: two column slots on one source", check_gravity),
 ]
 
 

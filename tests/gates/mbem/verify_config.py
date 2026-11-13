@@ -57,6 +57,12 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      the stratification is heavy side up.
   l  ``--dry-run`` is dry on a SWEEP too: every child is validated and named,
      and no study directory is made.
+  m  a fault that CREEPS reaches a run through ``Laplace.faults``
+     (``rheology.ViscousFault``): each state records the fault's drag at its
+     s, infinite in the elastic one, where the fault is locked; a state is
+     the dense solve with that drag; the dump round-trips; and it is REFUSED
+     on a prescribed slip, on a fault the model lacks and on the compressed
+     backend, which solves no slip.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -575,6 +581,72 @@ def k_gravity_run(tmp: pathlib.Path) -> None:
     check("REFUSED: a Laplace run with the heavier region on top", refused)
 
 
+def m_creeping_fault(tmp: pathlib.Path) -> None:
+    """[m] a fault's law through the config path."""
+    print("\n[m] a creeping fault: a law on a solved fault, by state")
+    from mbem import laplace, rheology
+    from mbem.backends.dense import AssembledDense
+    from mbem.model import generate_system
+    path = CONFIGS / "penny.py"
+    law = rheology.ViscousFault(tau=1.0, width=1.0)
+    run = dataclasses.replace(cfg.load(path), laplace=cfg.Laplace(
+        rheology={}, s=laplace.s_grid(0.3, 3.0, per_decade=2),
+        faults={"penny": law}))
+    d = tmp / "creep"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run finished", rep["status"] == "OK", rep["status"])
+    resolved = json.loads((d / "resolved.json").read_text())
+    rows = resolved["states"]
+    check("the elastic state is recorded with an infinite drag",
+          rows[0]["drag"] == {"penny": "inf"}, f"{rows[0]['drag']}")
+    worst = max(abs(r["drag"]["penny"] - law.drag(30.0, float(r["s"])))
+                for r in rows[1:])
+    check("each state records the law's drag at its s (mu tau s / width)",
+          worst < 1e-12, f"{worst:.1e}")
+    check("... where the fault is locked: no slip",
+          not np.any(np.load(d / "fields_elastic.npz")["b:penny"]))
+    bundle = cfg.resolve("penny", cfg.MESH_BUILDERS)(
+        scale=1.0, **dict(run.model.geometry.params))
+    model = cfg.resolve("penny", cfg.MODEL_BUILDERS)(
+        bundle, **dict(run.model.params))
+    last = rows[-1]
+    direct = AssembledDense(
+        generate_system(model), run.model.eps, "direct",
+        fault_drag={"penny": last["drag"]["penny"]}).solve()["b:penny"]
+    got = np.load(d / f"fields_{cfg.slug(last['label'])}.npz")["b:penny"]
+    check("a state == the dense solve with that drag (bitwise)",
+          np.array_equal(got, direct))
+    check("... and is not the fault without it",
+          _rel(got, np.load(d / "fields_elastic.npz")["b:penny"] + AssembledDense(
+              generate_system(model), run.model.eps,
+              "direct").solve()["b:penny"]) > 0.05)
+    check("the law comes back from the dump as itself",
+          rheology.from_spec(resolved["spec"]["laplace"]["faults"]["penny"])
+          == law)
+
+    def refused_with(run_bad, exc, fragment):
+        dd = tmp / f"creep_refused_{len(list(tmp.iterdir()))}"
+        dd.mkdir()
+        try:
+            runner.execute(run_bad, dd, path, save=False)
+        except exc as e:
+            return fragment in str(e)
+        return False
+
+    ghost = dataclasses.replace(run, laplace=dataclasses.replace(
+        run.laplace, faults={"elsewhere": law}))
+    check("REFUSED: a law for a fault the model does not have",
+          refused_with(ghost, KeyError, "not FAULT_TRACTION faults"))
+    fixed = dataclasses.replace(run, model=dataclasses.replace(
+        run.model, params=dict(run.model.params, prescribed=True)))
+    check("REFUSED: a law on a PRESCRIBED slip",
+          refused_with(fixed, KeyError, "not FAULT_TRACTION faults"))
+    hmat = dataclasses.replace(run, backend=cfg.Backend(kind="hmat"))
+    check("REFUSED: the compressed backend, which solves no slip",
+          refused_with(hmat, ValueError, "dense backend only"))
+
+
 def l_sweep_dry_run(tmp: pathlib.Path) -> None:
     from mbem import cli
     runs = tmp / "dry"
@@ -616,6 +688,7 @@ def main() -> bool:
         j_laplace_run(pathlib.Path(tmp))
         k_gravity_run(pathlib.Path(tmp))
         l_sweep_dry_run(pathlib.Path(tmp))
+        m_creeping_fault(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

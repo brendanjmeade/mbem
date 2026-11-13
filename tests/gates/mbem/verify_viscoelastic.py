@@ -118,6 +118,13 @@ the real-axis fit under test.
      the half-space closed form holds whatever the moduli, and by a fluid
      substrate, in which slip moves nothing at the surface; then the solved
      model against it, at the earthquake and relaxed under gravity.
+  o  a fault that RESISTS ITS SLIP RATE (``rheology.ViscousFault``, the drag
+     of ``equations.apply_fault_rows``): a penny crack whose faces drag with
+     kappa0 / sqrt(1 - r^2/a^2) keeps Eshelby's slip, with peak
+     dtau / (k_E + kappa0), which is exact. Per s; in time in an elastic
+     body, where it is one exponential with time eta_0 / k_E; and in a
+     Maxwell body, where the fault's creep and the body's are one transform.
+     It is locked at the instant of loading.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -204,6 +211,9 @@ TOL_BASIS_MODE = 1.0e-12         # basis-mode operator vs direct; rounding
 # exact one 0.9944-0.9954 at every s and in time; fitted creep rate 0.995.
 PENNY_BAND = (0.990, 1.000)
 PENNY_FLAT = 3.0e-3              # spread over s; 1e-3 measured
+# [o] the same crack with faces that drag: eta_0 = mu tau / a puts its one
+# relaxation time, eta_0 / k_E = 1.05, in the middle of WINDOW
+CREEP_TAU = 1.0
 TOL_PLATE_FORMS = 1.0e-10        # series vs contour inversion; 2e-13 measured
 # [m] the B10 shell, relaxing, one scalar eps. The P0 bias is -2.6 % on the
 # elastic state and VANISHES as the shell relaxes, the isostatic answer
@@ -850,6 +860,79 @@ def k_penny() -> None:
               float(ref[-1] / ref[0]), 2.0)
 
 
+def o_creeping_fault() -> None:
+    print("\n[o] a fault that resists its slip rate: creep on the fault itself")
+    mu, lam = MU, lam_of(MU, 0.30)
+    base = mb.ElasticMaterial(mu=mu, lam=lam)
+    a, delta0 = 1.0, 1.0e-3
+    drop = penny.stress_drop(mu, lam, delta0, a)
+    model = penny.build_model(penny.penny_mesh(a=a, h=a / 8), base,
+                              drop=drop, order=2)
+    fault = model.regions[0].faults[0]
+    x = fault.collocation_points()
+    # the drag that keeps the slip Eshelby's; the front is locked and never
+    # reads its own (infinite) value
+    shape = np.sqrt(np.clip(1.0 - (x[:, 0] ** 2 + x[:, 1] ** 2) / a ** 2,
+                            1.0e-12, None))
+    law = rheology.ViscousFault(tau=CREEP_TAU, width=a)
+    eta0 = mu * law.tau / law.width
+
+    def closed(m, kappa0):
+        """Eshelby's moment for this drop at moduli m, the faces dragging:
+        plain arithmetic, so it is also the transform on the contour."""
+        k_e = np.pi * m.mu * (1.0 + rheology.g_of(m.mu, m.lam)) / (8.0 * a)
+        return penny.eshelby_moment(drop / (k_e + kappa0), a)
+
+    asm = AssembledDense(generate_system(model), "auto", "direct",
+                         jump="calibrated")
+    t = times()
+    for label, rheo in (("elastic body", None), ("maxwell body", MAXWELL)):
+        s_grid = laplace.s_grid(*WINDOW)
+        mats = [base if rheo is None else relaxed(rheo, base, sv)
+                for sv in (np.inf,) + s_grid]
+        got = []
+        for sv, m in zip((np.inf,) + s_grid, mats):
+            k0 = law.drag(mu, sv)
+            sol = asm.rebuild_for_materials(
+                {"space": elastic(m)},
+                fault_drag={"penny": k0 / shape if np.isfinite(k0) else k0}
+            ).solve()
+            got.append(fault.integrate(sol["b:penny"])[0])
+        got = np.array(got)
+        close(f"{label}: locked at the instant of loading",
+              abs(got[0]) / penny.eshelby_moment(delta0, a), 1.0e-14)
+        ratio = got[1:] / np.array([float(closed(m, law.drag(mu, sv)))
+                                    for sv, m in zip(s_grid, mats[1:])])
+        check(f"{label}: moment over the closed form, per s",
+              PENNY_BAND[0] < ratio.min() and ratio.max() < PENNY_BAND[1],
+              f"{ratio.min():.4f} .. {ratio.max():.4f}")
+        close(f"{label}: ... flat in s", float(np.ptp(ratio)), PENNY_FLAT)
+        if rheo is None:
+            # one exponential, with the time the drag takes to unload the crack
+            t_c = eta0 / (drop / delta0)
+            ref = penny.eshelby_moment(delta0, a) * (1.0 - np.exp(-t / t_c))
+            rt = laplace.Prony(s_grid).weights(t) @ got / ref
+            above(f"{label}: the slip really grows over the window",
+                  float(ref[-1] / ref[0]), 5.0)
+        else:
+            ref = step_response(lambda sv: closed(
+                relaxed(rheo, base, sv), eta0 * sv), t)
+            rt = laplace.Prony(s_grid, secular=True).weights(t) @ got / ref
+            free = step_response(lambda sv: closed(
+                relaxed(rheo, base, sv), 0.0), t)
+            above(f"{label}: the drag holds back the first of it (tripwire)",
+                  float(free[0] / ref[0]), 5.0)
+        check(f"{label}: moment in time, the same band",
+              PENNY_BAND[0] < rt.min() and rt.max() < PENNY_BAND[1],
+              f"{rt.min():.4f} .. {rt.max():.4f}")
+    try:
+        asm.rebuild_for_materials({}, fault_drag={"nowhere": 1.0})
+        refused = False
+    except KeyError:
+        refused = True
+    check("a drag on a fault the model does not solve is refused", refused)
+
+
 def l_plate_closed_forms() -> None:
     print("\n[l] the antiplane closed forms of the plate over a half-space")
     depth, thick, mu = 15.0, 30.0, 30.0
@@ -1274,6 +1357,7 @@ def main() -> bool:
     l_plate_closed_forms()
     m_gravity()
     n_dip_slip()
+    o_creeping_fault()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

@@ -79,6 +79,17 @@ calibrated null space would no longer be one. ``apply_fault_rows`` then
 turns the Cartesian rows into the row frame: with ``allow_opening=False``
 the tangential pair and the constraint n_c . b_c = 0, with ``allow_opening``
 the three traction components; locked nodes get identity rows (b = 0).
+
+A fault may RESIST its slip: with a drag ``kappa`` the enforced rows read
+
+    n_c . sigma(x_c) - kappa b_c = dt(x_c)
+
+the traction the +n side exerts on the other being ``kappa`` times how far it
+has moved past it. In the Laplace domain a linear viscous fault is exactly
+that, ``kappa = eta_f s`` (``rheology.ViscousFault``), so it is a number of
+the STATE and not of the patch: the dense backend holds it (``fault_drag``)
+and hands it to ``apply_fault_rows``. ``kappa = 0`` is the fault above,
+``kappa = inf`` a locked one.
 """
 
 from __future__ import annotations
@@ -350,13 +361,19 @@ def traction_row_frame(fault: Patch) -> np.ndarray:
     return np.ascontiguousarray(np.stack([s, d, n], axis=1))
 
 
-def apply_fault_rows(A: np.ndarray, b: np.ndarray, system: BlockSystem) -> None:
+def apply_fault_rows(A: np.ndarray, b: np.ndarray, system: BlockSystem,
+                     drag: dict | None = None) -> None:
     """In place, for every FAULT_TRACTION fault: rotate its Cartesian traction
     rows and RHS into ``traction_row_frame``; with ``allow_opening=False``
     overwrite each free node's third row by the constraint n_c . b_c = 0;
     overwrite every locked node's three rows by b_c = 0. The constraint and
     identity rows are scaled by the mean |diagonal| of the fault's own
-    tangential self-block, so no new constant enters the system."""
+    tangential self-block, so no new constant enters the system.
+
+    ``drag`` maps a fault's name to its ``kappa >= 0`` (module docstring): a
+    number, or one per dof node, ``inf`` allowed. It acts on every ENFORCED
+    traction component, and each such row is divided by ``1 + kappa / scale``
+    so that it stays bounded and becomes ``b = 0`` at ``kappa = inf``."""
     for region, f in system.traction_faults():
         slot = system.layout.slot(f, "b")
         r0, r1 = slot.offset, slot.stop
@@ -376,6 +393,20 @@ def apply_fault_rows(A: np.ndarray, b: np.ndarray, system: BlockSystem) -> None:
         scale = float(np.mean(np.abs(diag))) if diag.size else 1.0
         if scale == 0.0:
             scale = 1.0
+        kappa = None if drag is None else drag.get(f.name)
+        if kappa is not None and free.size:
+            k = np.broadcast_to(np.asarray(kappa, float), (n,))[free]
+            if np.any(k < 0.0) or np.any(np.isnan(k)):
+                raise ValueError(f"fault '{f.name}': drag must be >= 0")
+            w = np.where(np.isinf(k), 0.0, scale / (scale + np.where(
+                np.isinf(k), 0.0, k)))
+            wk = np.where(np.isinf(k), scale, w * np.where(np.isinf(k), 0.0, k))
+            for i in range(3 if f.allow_opening else 2):
+                rows = r0 + 3 * free + i
+                A[rows, :] *= w[:, None]
+                b[rows] *= w
+                for j in range(3):
+                    A[rows, r0 + 3 * free + j] -= wk * F[free, i, j]
         if not f.allow_opening and free.size:
             nrm = np.asarray(f.collocation_normals(), float)
             rows = r0 + 3 * free + 2

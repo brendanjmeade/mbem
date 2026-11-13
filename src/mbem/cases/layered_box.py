@@ -5,8 +5,9 @@ Two regions in one closed box: ``plate`` (free top, its four sides, the
 interface) holding the fault, and ``substrate`` (the interface, its four sides,
 a clamped base). Give the substrate a rheology and this is the earthquake-cycle
 model of Nur & Mavko and Savage & Prescott, on a FINITE box: mbem has no
-half-space and no region that runs to infinity (docs/viscoelastic.md, section
-8), so the box is part of the model and its size is a parameter to be laddered.
+half-space and no region that runs to infinity, so the box is part of the
+model and its size a parameter to be laddered -- unless its walls are a
+window (``sides="window"`` below; docs/viscoelastic.md, section 8).
 
 A fault deeper than the plate is thick goes THROUGH the interface, and what
 lies below it is a second fault, in the substrate: a megathrust whose lower

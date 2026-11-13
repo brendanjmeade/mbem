@@ -422,7 +422,9 @@ def plate_thrust(study):
 
     A study that swept ``refine`` is a pair on one ray of the plate's faces:
     the first two panels then draw the two-mesh limit, and the third the
-    misfit against the size of those faces, the limit at zero.
+    misfit against the size of those faces, the limit at zero. One that swept
+    neither the box nor the faces has nothing to put on that axis, and the
+    third panel is the misfit through TIME.
     """
     import matplotlib.pyplot as plt
     from mbem import laplace
@@ -490,10 +492,18 @@ def plate_thrust(study):
             fontsize=8)
 
     worst = 0.0
+    in_time_only = len(faces) == 1 and boxes[-1] is None
     if len(faces) > 1:
         # the faces' size over the coarsest's; the limit of the pair at zero
         size = [float(faces[0]) / float(f) for f in faces] + [0.0]
     for g, color in zip(grav, (BLUE, ORANGE)):
+        if in_time_only:
+            when = np.geomspace(1.0, late, 13)
+            m = misfit(run_of(None, g), when)
+            worst = max(worst, float(m.max()))
+            a2.plot(when, m, "-", color=color, marker="o", ms=4.2, mec=color,
+                    label=named(g) or None)
+            continue
         if len(faces) > 1:
             across = size
             m = np.array([misfit(run_of(boxes[-1], g, f), (1.0, late))
@@ -509,7 +519,13 @@ def plate_thrust(study):
             a2.plot(across, m[:, k], ls, color=color,
                     marker="o", ms=4.2, mfc=mfc, mec=color,
                     label=named(g, ", ") + rf"$t = {t:g}\,\tau$")
-    if len(faces) > 1:
+    if in_time_only:
+        a2.set_xscale("log")
+        a2.set_xlim(1.0, late)
+        a2.set_xticks([1.0, late])
+        a2.set_xticklabels(["1", f"{late:g}"])
+        a2.minorticks_off()
+    elif len(faces) > 1:
         a2.set_xlim(-0.08, 1.08)
         a2.set_xticks([0.0, 0.5, 1.0])
     elif boxes[-1] is not None:
@@ -520,15 +536,20 @@ def plate_thrust(study):
     top = np.ceil(worst * 15.0) / 10.0             # the legend's third is clear
     a2.set_ylim(0.0, top)
     a2.set_yticks([0.0, top / 2.0, top])
-    a2.set_xlabel("size of the plate's faces (coarsest = 1)" if len(faces) > 1
-                  else "box half-width (km)")
+    a2.set_xlabel(r"$t\,/\,\tau$" if in_time_only
+                  else "size of the plate's faces (coarsest = 1)"
+                  if len(faces) > 1 else "box half-width (km)")
     a2.set_ylabel("departure from the layered reference"
-                  if contrast in ("lower", "slab_depth")
+                  if contrast in ("lower", "slab_depth", "creep_tau")
                   else "misfit to the reference")
     a2.set_box_aspect(1)
-    a2.legend(frameon=False, loc="upper right", fontsize=8)
+    if a2.get_legend_handles_labels()[0]:
+        a2.legend(frameon=False, loc="upper right", fontsize=8)
     what = (r"$u(t) - u(0^+)$, both components", f"$|x| <$ {span:g} km")
-    if len(faces) > 1:                  # the lines run along the bottom
+    if in_time_only:                    # under the letter, clear of curves
+        a2.text(0.05, 0.86, "\n".join(what), transform=a2.transAxes,
+                ha="left", va="top", fontsize=8)
+    elif len(faces) > 1:                # the lines run along the bottom
         a2.text(0.05, 0.62, "\n".join(what), transform=a2.transAxes,
                 ha="left", va="top", fontsize=8)
     else:
@@ -709,6 +730,11 @@ def plate_creep(study):
     of the surface through time, each law against the layered reference,
     which knows the rupture and the relaxation and no afterslip: the gap
     between them is what the creep adds.
+
+    A study that also swept ``refine`` is drawn on its finest mesh, not as a
+    two-mesh limit: these are dense runs, their pairs are close in size, and
+    a limit of meshes in the ratio r magnifies what they do not share by
+    (r + 1) / (r - 1).
     """
     import matplotlib.pyplot as plt
     from mbem import laplace
@@ -725,8 +751,6 @@ def plate_creep(study):
                if v is not None}
         return study.one(**sel) if sel else study.rows[0][1]
 
-    def coarse_of(tau):                 # the surface as a two-mesh limit
-        return run_of(tau, faces[0]) if len(faces) > 1 else None
 
     first = run_of(taus[0])
     gp = first.resolved["spec"]["model"]["geometry"]["params"]
@@ -780,8 +804,7 @@ def plate_creep(study):
         for site, comp, ls in ((int(np.argmin(np.abs(x - edge - X_FAR))), 0, "-"),
                                (int(np.argmin(np.abs(x - edge))), 1, "--")):
             _x, u, _xr, ref = in_plane_in_time(run, np.concatenate([[0.0], t]),
-                                               x[site:site + 1],
-                                               coarse=coarse_of(tau))
+                                               x[site:site + 1])
             post, want = u[1:, site, comp] - u[0, site, comp], \
                 ref[1:, 0, comp] - ref[0, 0, comp]
             if tau == taus[0]:

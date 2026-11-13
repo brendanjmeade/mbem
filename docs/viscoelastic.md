@@ -11,7 +11,10 @@ are the algebra around them. Section 6, time-stepping, is a design and is NOT
 built. Section 7, gravity, is built: buoyancy on the free surface and on
 density interfaces, with nothing in the volume; under it a thrust in the
 plate held to an independent reference, the earthquake cycle of a locked
-fault, and a megathrust through the interface. Section 8 is what is open.
+fault, and a megathrust through the interface. Section 8 gives the box
+walls that are a window on a layered half-space, and the reference in three
+dimensions they are made of. Section 9 is a fault that creeps, section 10 a
+plate that subducts. Section 11 is what is open.
 
 Notation as in `clq-derivation.md`: $\mathbf d=\mathbf x-\mathbf y$,
 $R_\varepsilon=\sqrt{|\mathbf d|^2+\varepsilon^2}$. One new symbol carries the
@@ -565,7 +568,15 @@ substrate the two halves of the plate approach from as far as the
 substrate's remaining shear reaches, which late on is farther than any box
 here, and clamped sides stop them. Free sides give the amplitude back (0.98
 of the reference against 0.93 at $\tilde\mu/\mu=0.003$ on the 300 km box)
-and float the plate (section 8).
+and float the plate (section 11). Section 8 gives the walls what they lack.
+
+*The fault is 800 km long, not infinitely.* Every number above is against
+plane strain. Against the reference in three dimensions (section 8), for the
+fault as long as it is, the limit of the two meshes is off by 4.0 % / 2.5 % /
+3.7 % at $\tau$ / $10\tau$ / $100\tau$ (plane strain: 2.8 / 2.0 / 5.7), the
+vertical by 1.8 % at $100\tau$ and the horizontal by 6.2 %, not 9.3: within
+120 km of an 800 km fault the two references differ by a few percent, and
+a third of what read as the walls was that.
 
 The 800 km box on the finer plate is 205,026 unknowns, 14 states in 19
 minutes, 42-48 iterations a state under gravity and up to 98 without; the
@@ -604,7 +615,8 @@ moved it, and it turns a sixth of the way through the cycle. Over the
 fault's lower edge the surface sinks at $0.38\,V$ early and rises at
 $0.27\,V$ late. The model's velocity (the two-mesh limit, both components,
 $|x|<120$ km) is within 2.3 % of the reference early and 2.1 % late, against
-4.6 % and 4.5 % on the coarser mesh alone. Gravity changes none of this by
+4.6 % and 4.5 % on the coarser mesh alone (4.0 % and 2.0 % against the
+fault as long as it is, section 8). Gravity changes none of this by
 more than 0.02 $V$ at this period, because a cycle of $20\tau$ reads the
 response to a few tens of $\tau$, where gravity has done little (the table
 above); it is the long cycles it bounds.
@@ -630,7 +642,8 @@ motion at the surface (rms) and a quarter of the horizontal; by $100\tau$ it
 is under 1 % of either. Slip inside a body that relaxes is forgotten. What
 is left is a plate cut through, and once the substrate has let go its two
 halves have simply converged, by $\cos 20^\circ=0.94$ of the slip. So the
-far field catches up with the trench, in the reference:
+far field catches up with the trench, in the reference (plane strain: a
+megathrust that is infinitely long):
 
 | over the slip | $0^+$ | $\tau$ | $10\tau$ | $100\tau$ | $250\tau$ |
 |---|---|---|---|---|---|
@@ -652,101 +665,427 @@ without.
 
 *The model against it* (800 km box, near field 200 km, a two-mesh pair with
 clamped sides and the coarser mesh again with free ones; $|x|<200$ km at
-mid-strike). At the earthquake it is within 0.4 % in $u_x$ and 1.4 % in
-$u_z$ of the reference with a rigid base where the model's is. Against a
-half-space the vertical is off by 12 %, and that is one number: the surface
-stands 0.016 of the slip higher everywhere, for a base 800 km down. A source
-132 km wide feels the bottom of this box where the thrust did not.
+mid-strike). The model's fault is 800 km long, and for a megathrust that is
+not long enough to be read against plane strain: in a half-space its
+mid-strike uplift differs from the infinitely long fault's by 0.015 of the
+slip, 11 % of itself, a difference that falls only as one over the length,
+and relaxed the two differ by 5-10 % in $u_x$ (section 8). So the reference here is the one
+in three dimensions, for the fault as long as it is.
 
-Relaxation is where the box takes over, and it is not the mesh. Misfit of
-the postseismic displacement against the half-space reference, and how far
-the two sides of the trench have converged over how far the reference's
-have:
+At the earthquake the model is within 0.2 % in $u_x$ and 0.8 % in $u_z$ of
+it with a rigid base where the model's is. Against a half-space the vertical
+is off by 4.9 %, and that is one number: the surface stands 0.006 of the
+slip higher everywhere, for a base 800 km down. A source 132 km wide feels
+the bottom of this box where the thrust did not.
+
+Relaxation is where the box takes over. Misfit of the postseismic
+displacement against the half-space reference, and how far the two sides of
+the trench have converged over how far the reference's have:
 
 | | $\tau$ | $10\tau$ | $100\tau$ | $250\tau$ |
 |---|---|---|---|---|
-| clamped sides, 10 / 15 / 1.5 km | 0.113 | 0.153 | 0.215 | 0.223 |
-| half of each | 0.105 | 0.147 | 0.208 | 0.217 |
-| the limit of the two | 0.105 | 0.145 | 0.206 | 0.215 |
-| free sides, 10 / 15 / 1.5 km | 0.083 | 0.070 | 0.140 | 0.157 |
-| convergence, clamped | 0.99 | 0.90 | 0.71 | 0.69 |
-| convergence, free | 1.11 | 1.09 | 0.98 | 0.95 |
+| clamped sides, 10 / 15 / 1.5 km | 0.118 | 0.112 | 0.142 | 0.142 |
+| half of each | 0.096 | 0.101 | 0.129 | 0.130 |
+| the limit of the two | 0.078 | 0.093 | 0.124 | 0.124 |
+| free sides, 10 / 15 / 1.5 km | 0.149 | 0.119 | 0.151 | 0.156 |
+| convergence, clamped | 0.96 | 0.90 | 0.81 | 0.81 |
+| convergence, free | 1.04 | 1.07 | 1.11 | 1.11 |
 
-The two-mesh limit, which took the thrust from 14 % to 3 %, moves nothing
-here: the plate is cut through, its halves want to converge as rigid blocks
-once the substrate lets go, and clamped walls 800 km away hold them at 0.69
-of the way. Free sides let them go (0.95) and over-shoot early (1.11), when
-the plate beyond the box should still be holding; and they float, by 0.035
-of the slip at $250\tau$, without which the horizontal misfit there is 4 %
-and not 15 %. So the two side conditions bracket the reference from either
-side at every time: the plate that continues beyond a wall is stiff early
-and slack late, and neither a clamp nor a free edge is that.
+The two-mesh limit mends the vertical (8 % at $10\tau$ and after, from 19 %
+and 13 % on the two meshes) and leaves the horizontal at 13 %: the plate is
+cut through, its halves converge as rigid blocks once the substrate lets go,
+and clamped walls 800 km away hold them at 0.81 of the way. Free sides let
+them go too far, 1.11, and float them. So the two side conditions bracket
+the reference from either side at every time, and neither is what the plate
+beyond a wall does. (Read against plane strain these runs gave 11-22 % and
+a convergence of 0.69 clamped, 0.95 free: a third of that was the
+reference, an infinitely long fault standing for one 800 km long.)
 
-The cycle at $T=50\tau$ inherits it: velocity from steady slip within 11 %
-of the reference early and 9 % late with clamped sides, 7 % and 6 % with
-free ones. At 191 km the reference moves at $-0.47\,V$ early and
-$+0.45\,V$ late; clamped gives $-0.36$ and $+0.37$, free $-0.56$ and
-$+0.48$.
+The cycle at $T=50\tau$ inherits it: velocity from steady slip within 7 %
+of the reference early and 6 % late with clamped sides, 10 % and 8 % with
+free ones. At 191 km the reference moves at $-0.48\,V$ early and
+$+0.42\,V$ late; clamped gives $-0.37$ and $+0.37$, free $-0.56$ and
+$+0.48$. Section 8 takes the walls out of all of it.
 
 The pair is 105,246 and 373,224 unknowns, 16 states each, in 12 and 58
 minutes on a shared machine, 38-51 iterations a state (37-82 with free
 sides, which condition worse as the plate floats).
 
-## 8. Open
+## 8. The walls: a box as a window
 
-- **A plate with free sides floats.** As $\tilde\mu(s)\to0$ only the shear of
-  the substrate holds the plate against a rigid horizontal translation. A
-  dislocation is self-equilibrated, but its discrete net force is small rather
-  than zero, and the translation it causes is that force over $\tilde\mu(s)$.
-  On the split fault box of B6 with a relaxing lower region, the net
-  translation of the free surface (zero by symmetry) is 1 % of the deformation
-  at $\tilde\mu/\mu=10^{-2}$, 11 % at $10^{-3}$ and as large as the
-  deformation at $10^{-4}$, and the condition number grows as
-  $\tilde\mu^{-2}$. It is the same with one $\varepsilon$ or per-element
-  $\varepsilon$. Clamping the plate's sides removes it (0.3 % at $10^{-4}$,
-  condition number as $\tilde\mu^{-1}$); `deflate` does not, because the mode
-  is not a translation of every unknown. The force-over-$\tilde\mu$ reading
-  fits the $1/\tilde\mu$ growth but has not been isolated.
-- A region that extends to infinity while touching an interface (a true
-  half-space under a plate). Regions must close today.
+A region must close, so the plate over a half-space of section 5 is a plate
+over a deep box, and the box has walls. Section 7 ended on them: a relaxed
+plate slides from farther than any box, clamped walls hold it, free ones let
+it go too far, and the two bracket the reference. Two remedies were measured
+where the problem is smallest and has an exact answer, the elastic fault box
+against the half-space (`cutde`): surface displacement beyond 128 km of a
+strike-slip fault, in a box 200 km to its walls and 100 km deep.
+
+| walls | misfit |
+|---|---|
+| free sides over a clamped base (the box as it was) | 0.22 |
+| clamped sides and base | 0.49 |
+| springs, $\mathbf t=-k\mathbf u$ with $k=\alpha\mu/L$, at the best $\alpha$ | 0.15 |
+| the half-space's own displacement of the same fault | 0.010 |
+
+A spring at its best stiffness halves the error of the middle distances
+(8 % to 4 % between 64 and 128 km) and leaves the rim; the best stiffness is
+fitted (between $\alpha=2$ and 4) and differs with the source (an opening
+fault's best leaves 0.25); and over a substrate that relaxes, what a plate
+beyond a wall does is not one stiffness but stiff early and slack late. The
+third row needs no fit. Tell the walls what the model's own sources do in
+the medium the box was cut from.
+
+**The window** (`model.FarField`). Named walls are prescribed-displacement
+patches whose datum is $\mathbf u_{\rm ref}(\mathbf x)$, the displacement of
+the model's prescribed slip in an unbounded reference medium that has a
+solution of its own: here a plate over a half-space. The box then solves
+only what the reference does not know, its interior, whatever is in it, and
+the reference carries the far field. The datum depends on the materials, so
+every state has its own, and three things in the code follow from that:
+
+- the model holds it, not the patch: `RegionModel.value_of` is the one place
+  a datum is read, by the equations and by the evaluators alike, so a state
+  is solved and read back with the same walls;
+- `with_materials` carries it to the state it builds, so the rule of section
+  5 stands as it was, a state is the base model with its own materials;
+- the operator does not see it. Walls are a right-hand side
+  (`equations.rhs_terms_at`), so `rebuild_for_materials` solves each state
+  with its own on the assembly it already has, on both backends. The runner
+  asks the reference for every state's walls in one call.
+
+It is exact where the reference is: for the sources it solves, in the medium
+it solves. What the walls miss is the far field of anything else, a slip
+that is solved and not prescribed (section 9), a body that is not layered
+(section 10). That part falls off with distance, so the size of the box
+comes back as a parameter, for it alone.
+
+**The reference in three dimensions** (`cases.layered_space`) is the
+plane-strain reference of section 7 turned about the vertical: a RECTANGULAR
+fault, from the surface down, in the plate over the substrate, under the
+same buoyancy, at any point of either layer. In the frame of a horizontal
+wavevector ($\xi$ along it, $t$ across it) elasticity splits into the P-SV
+system of section 7 at $|k|$, unchanged, and an SH one for the transverse
+displacement, which buoyancy does not enter. Slip is an eigenstrain
+$\mathbf E={\rm sym}(\mathbf b\otimes\mathbf n)$, and at a source depth it
+is a jump
+
+$$[u_\xi]=2E_{\xi z},\quad
+[u_z]=E_{zz}+\frac{\lambda\,(E_{\xi\xi}+E_{tt})}{\lambda+2\mu},\quad
+[\tau_{\xi z}]=ik\,\frac{4\mu(\lambda+\mu)E_{\xi\xi}+2\mu\lambda E_{tt}}
+{\lambda+2\mu},\qquad
+[u_t]=2E_{tz},\quad[\tau_{tz}]=2ik\mu E_{\xi t}$$
+
+of which the plane-strain source is the case $E_{tt}=0$. The fault is
+integrated along strike in closed form and down dip by Gauss points, cut at
+any level it straddles; the transform back is a quadrature in polar
+wavenumbers, geometric from tiny $k$, because a relaxed plate's far field
+decays like $1/r$ and lives there. It has two forms. At the SURFACE, near
+the fault as well as far, it is Okada's closed form for the half-space plus
+the transform of the smooth difference from it, as in section 7. At DEPTH,
+which is what a wall asks for, the spectrum is tapered, which is a smoothing
+over a length the caller's distance from the fault sets; its error is fourth
+order in that ratio, 1e-4 of the field at the default, and it is not for
+points near the fault.
+
+| anchor | error |
+|---|---|
+| Okada's rectangle against `cutde`, every dip and rake | 7e-11 |
+| the transform on the sides and base of an 800 km box, like materials, against `cutde` (to 800 km depth; the megathrust through an interface between like materials included) | 7e-5 |
+| an infinitely long thrust and megathrust against the plane-strain reference, gravity, $\mu_s/\mu$ to 0.003, with and without a base | 4e-5 far away, 1.1e-4 of the slip next to the fault |
+| an infinitely long strike-slip fault against the antiplane series | 6e-5 |
+| a finite megathrust at mid-strike as it lengthens, against plane strain: half-length 2000 / 4000 / 8000 / 16000 km | 2.6e-2 / 5e-3 / 2.4e-4 / 7e-6 |
+| a finite layered fault: its two forms against each other far away | 1e-5 |
+| continuity at the interface; zero on a clamped base; a stack against one at a time | 3e-11; rounding; exact |
+
+The walls and base of the 800 km megathrust box are 1,686 points, and
+sixteen states of them cost 7 s.
+
+**A fault is as long as it is.** The fifth row is the one that changed what
+was known. A megathrust 800 km long is not infinitely long where sections 5
+to 7 took it to be: in a half-space, by the two closed forms, its
+mid-strike uplift within 200 km differs from the infinitely long fault's by
+0.015 of the slip, 11 % of itself (at most 0.029 / 0.016 / 0.008 / 0.004 of
+the slip at half-lengths of 200 / 400 / 800 / 1600 km: one over the
+length), and over a relaxed substrate the two postseismic displacements
+differ by 5-10 % in $u_x$ and more in $u_z$. For
+the thrust, read within 120 km, it is a few percent. So section 7 gives its
+megathrust numbers against this reference, and a study with a window among
+its runs is compared with it throughout (`figures/plate.py`).
+
+**The megathrust in a window** (`--set sides=window`).
+
+The megathrust of section 7 again, the same box and the same mesh, every
+wall a window. Against the reference in three dimensions:
+
+| 800 km box, fault 800 km long, faces 10 / 15 / 1.5 km | clamped | free | window |
+|---|---|---|---|
+| at the earthquake, $u_x$ and $u_z$ | 0.009, 0.039 | 0.022, 0.035 | 0.008, 0.017 |
+| postseismic $u_x$ at $\tau$ / $10\tau$ / $100\tau$ / $250\tau$ | 0.065 / 0.102 / 0.140 / 0.141 | 0.065 / 0.088 / 0.154 / 0.160 | 0.021 / 0.017 / 0.023 / 0.023 |
+| postseismic $u_z$ | 0.41 / 0.19 / 0.15 / 0.15 | 0.55 / 0.29 / 0.13 / 0.13 | 0.22 / 0.16 / 0.15 / 0.15 |
+| the two sides' convergence over the reference's | 0.94 / 0.90 / 0.81 / 0.81 | 1.04 / 1.07 / 1.11 / 1.11 | 0.98 / 0.99 / 0.99 / 0.99 |
+| the cycle at $T=50\tau$, early / late | 0.086 / 0.064 | 0.098 / 0.083 | 0.039 / 0.025 |
+
+The horizontal was the walls, and it is mended: 2 % where clamped walls left
+14 % and free ones 16 %, the plate's two halves converging as the
+reference's do. In the cycle a point 191 km into the hanging wall moves at
+$-0.45\,V$ early and $+0.42\,V$ late, against the reference's $-0.48$ and
+$+0.42$ and the clamped box's $-0.36$ and $+0.37$. The base no longer lifts
+the surface (1.7 % in $u_z$ at the earthquake, from 3.9 %). The walls of all
+sixteen states are 14 s of the run.
+
+The vertical was never the walls: late on it is 15 % of the postseismic
+part with all three. It is the plate's faces on this one mesh (section 7).
+A second mesh takes it out, as it did for the thrust. A rupture 300 km long
+in a window 400 km to its walls, as a pair (`--sweep refine=1,2`):
+
+| against the reference in three dimensions | 10 / 15 / 1.5 km | half of each | the limit of the two |
+|---|---|---|---|
+| at the earthquake, $u_x$ and $u_z$ | 0.007, 0.019 | 0.004, 0.009 | 0.001, 0.004 |
+| postseismic, both components, at $\tau$ / $10\tau$ / $100\tau$ | 0.055 / 0.051 / 0.086 | 0.026 / 0.026 / 0.043 | 0.007 / 0.010 / 0.016 |
+| ... $u_x$ | 0.020 / 0.014 / 0.026 | 0.010 / 0.008 / 0.014 | 0.003 / 0.004 / 0.005 |
+| ... $u_z$ | 0.199 / 0.163 / 0.172 | 0.095 / 0.083 / 0.085 | 0.026 / 0.031 / 0.032 |
+| the cycle at $T=20\tau$, early / late | 0.036 / 0.018 | 0.017 / 0.010 | 0.005 / 0.004 |
+
+Every row halves with the faces, so the limit is what a first-order error
+leaves: a megathrust through the interface within 1.6 % of the reference at
+every time and its cycle within 0.5 %, where section 7's, between clamped
+walls, was at 12 % and 7 %. The pair is 62,544 and 219,315 unknowns, fourteen states each, in
+13 and 39 minutes with three studies sharing the machine; the walls are 7 s
+and 41 s of that.
+
+*A window can be small.* A rupture 300 km long in a box 400 km to its
+walls, the same faces: clamped, the postseismic $u_x$ is off by 20 % / 23 %
+/ 23 % at $\tau$ / $10\tau$ / $100\tau$, the two sides converge 0.78 / 0.67
+/ 0.61 of the reference's, and in a cycle of $20\tau$ the point 191 km into
+the hanging wall moves the wrong way early ($+0.11\,V$ for $-0.06$). As a
+window: 2.0 % / 1.4 % / 2.6 %, 0.98 / 0.99 / 0.99, and $-0.05\,V$.
+With clamped walls twice as far away the same rupture is off by 3.4 % /
+5.0 % / 7.9 % and its sides converge 0.96 / 0.93 / 0.88: a rupture of finite
+length does let go of its walls as they recede, slowly. In a window the box
+is not in the answer: 1.9 % / 1.6 % / 2.8 % at 800 km for 2.0 % / 1.4 % /
+2.6 % at 400, and with the vertical in, 5.3 / 5.1 / 8.5 % for 5.5 / 5.1 /
+8.6 %.
+
+**The elastic box** has the same option (`fault_box.build_model(walls=
+"window")`, `configs/fault_box.py --set walls=window`): its sides and base
+on a uniform half-space, which is `layered_space` with nothing layered. The
+case's own window agrees with the one made of `cutde` to 8e-4 in the
+solution, and on the gate's box (120 km deep) takes the surface beyond 128
+km from 30 % off to 1.5 %. The default is unchanged, because every
+committed baseline was measured on the box.
+
+## 9. A fault that creeps
+
+Until here slip was prescribed, or solved from a traction it must produce
+(`BCType.FAULT_TRACTION`). Let a solved fault resist its slip RATE instead,
+the side the normal points into dragging the other with a shear traction
+$\eta_f\,\dot{\mathbf b}$. With nothing slipped before the step,
+$\tilde{\boldsymbol\tau}=\eta_f s\,\tilde{\mathbf b}$, and for step data
+(section 1) the state at $s$ has, on that fault, the rows
+
+$$\mathbf n\cdot\boldsymbol\sigma(\mathbf x_c)-\kappa(s)\,\mathbf b_c
+=\Delta\mathbf t,\qquad\kappa(s)=\eta_f s:$$
+
+the elastic traction of every source, as before, less a stiffness times the
+fault's own slip. That is an elastic problem like every other state, so a
+linear viscous fault needs no time-stepper, and neither does friction that
+strengthens with rate, linearized about a steady rate $V$, which is the same
+law with $\eta_f=(a-b)\sigma_n/V$. At $s=\infty$ the drag is infinite and
+the fault is locked: it does not slip at the instant of loading. As $s\to0$
+it vanishes and the fault ends where it carries no traction. In between,
+its slip is whatever the rest of the model loads it with: afterslip.
+
+`rheology.ViscousFault(tau, width)` states it as the shear zone it stands
+for, `width` thick, of a material whose Maxwell time is `tau` at the
+unrelaxed modulus of the region holding the fault: $\eta_f=\mu\tau/w$, a
+time and a ratio like every rheology here. A patch of size $L$ unloads in
+about $\tau L/w$. `Laplace.faults` gives a solved fault its law; every state
+then carries the fault's $\kappa$ (`State.drag`), which the dense backend
+hands to `equations.apply_fault_rows`, where each enforced row is divided by
+$1+\kappa/\kappa_0$, $\kappa_0$ the fault's own stiffness, so that it stays
+bounded and becomes $\mathbf b=0$ at infinity.
+
+**The anchor is exact.** A penny crack under a shear drop $\Delta\tau$ whose
+faces drag with $\kappa_0/\sqrt{1-r^2/a^2}$ keeps Eshelby's elliptical slip,
+because that slip's traction is uniform: the peak is
+$\Delta\tau/(k_E+\kappa_0)$, $k_E$ the crack's own stiffness. In an elastic
+body $\kappa_0=\eta_0 s$ makes it one exponential with time $\eta_0/k_E$;
+in a Maxwell body $k_E$ relaxes too and the fault's creep and the body's
+are one transform. Moment over the closed form, continuous P2 at $a/h=8$:
+0.9943-0.9944 per $s$ and 0.9932-0.9954 in time in the elastic body,
+0.9943-0.9949 and 0.9941-0.9949 in the Maxwell one, where the reference in
+time is a contour inversion. The 0.6 % is the crack's own (section 5);
+against the same crack without drag the drag is right to 2e-4.
+
+**Afterslip below a megathrust** (`--set lower=creep`). The megathrust of
+section 7 with the rupture in the plate and its lower reach, in the
+substrate, a fault that creeps: locked at the earthquake, then loaded by the
+rupture above it and by the substrate as it relaxes.
+
+*The study* (`--sweep creep_tau=1,1e6 --sweep refine=1,1.5`): a rupture 200
+km long in a window 300 km to its walls and 200 km deep. The rupture is the
+plate's part of the fault, to 30 km; its lower reach, to 45 km, creeps with
+$\tau_c=\tau$ over a zone 10 km wide, or is held ($\tau_c=10^6\tau$, a reach
+no window sees slip). Dense: 19,338 unknowns on faces of 15 / 22.5 / 2.25 km
+and 31,179 on 10 / 15 / 1.5, fourteen states in 5 and 16 minutes on a shared
+machine.
+
+Held, the model is the reference's: within 1.1 % and 1.4 % ($u_x$, $u_z$) at
+the earthquake and, in $u_x$, within 1.4 % / 1.0 % / 1.4 % of the
+postseismic part at $\tau$ / $10\tau$ / $100\tau$, in a box 300 km to its
+walls. Its vertical is the plate's faces, 14 % / 17 % / 23 % of the
+postseismic part on the finer mesh and 22-30 % on the coarser.
+
+Let go, the reach slips by 0.22 of the rupture's slip on average once it has
+unloaded: 0.04 at $0.3\tau$, 0.10 at $\tau$, 0.17 at $3\tau$, 0.21 at
+$10\tau$, and no more after. It is 0.45 just under the rupture and 0.08 at
+its lower edge, and its moment is 11 % of the rupture's. On the coarser mesh
+the mean is 0.20 and the peak 0.38.
+
+At the surface it is an EARLY signal. At $\tau$ the postseismic displacement
+departs from the reference, which knows no afterslip, by 34 % of it (18 %
+in $u_x$), where the held model departs by 4 %; at $10\tau$ by 11 % against
+5 %; and at $100\tau$ the two are one. In the cycle (every $20\tau$) a point
+148 km into the hanging wall moves toward the trench at $0.41\,V$ just after
+an earthquake with the creep and $0.29\,V$ without it, and away from it at
+$0.31\,V$ late, either way. Slip in a body that relaxes is forgotten
+(section 7), and a reach that creeps in the substrate is such slip: it
+reshapes the first Maxwell times and leaves the rest alone.
+
+Three limits. A solved fault is on the dense backend, so these models are
+tens of thousands of unknowns, their plates' faces are coarse (section 7),
+and a pair of them is too close in size for a two-mesh limit: meshes in the
+ratio $r$ magnify what they do not share by $(r+1)/(r-1)$, five here. The
+window's walls carry the far field of the prescribed slip and not of the
+creep, whose moment is a tenth of the rupture's. And uniform slip ends in a
+line where its traction is unbounded: the creeping reach begins on that
+line, so its slip against it is set by the mollification width (0.38 and
+0.45 on the two meshes), and it is the integral of the afterslip that
+settles (0.20, 0.22), not its peak.
+
+## 10. A plate that subducts
+
+Layers are what the reference of section 8 knows, and a boundary method is
+for what it does not. `layered_box` with `slab_depth` lets the footwall
+plate go on down the dip as an elastic SLAB, in the substrate that relaxes
+around it. Plate and slab are one region, so the megathrust is the plate's
+own fault, down to the plate's base at the deepest; below that the plane is
+the slab's upper face, an interface and not a fault. The interface wraps the
+slab: flat, less the footprint under the megathrust, plus the slab's top,
+its bottom (the parallel plane through the point under the trench at the
+plate's base), a horizontal tip and two vertical caps. The pieces do not
+share nodes and need not: elements are discontinuous and a surface closes
+by its geometry (its area is exact to rounding).
+
+Two things it rests on. A slab of the substrate's own material is no slab,
+and the solved surface says so to 1.1 % (`verify_viscoelastic` [p]), where
+over a soft substrate the slab changes it by 21 %. And a slab of a plate
+lighter than the mantle is a light body under a heavy one, which the
+Laplace route refuses once anything relaxes (section 7): the study gives
+plate and mantle one density, as the base of the lithosphere has nearly
+none to offer, and keeps the free surface's.
+
+**The study** (`--sweep slab_depth=0,150`): a megathrust dipping 20 degrees
+to the base of a 30 km plate, 200 km long, with and without a slab that
+reaches 150 km of depth, 412 km from the trench, in a window 500 km to its
+walls; 38,130 and 63,240 unknowns, fourteen states. At the earthquake the
+slab is invisible, plate and mantle being one elastic material until
+something relaxes, and the surface says so at production scale: within 0.8 %
+and 1.4 % of the layered reference in $u_x$ and $u_z$ with the slab, 1.0 %
+and 1.3 % without. After it, the slab is the largest thing in the model:
+
+| over the slip | $0^+$ | $\tau$ | $10\tau$ | $100\tau$ |
+|---|---|---|---|---|
+| uplift 27 km behind the trench, no slab | 0.29 | 0.28 | 0.21 | 0.14 |
+| ... with the slab | 0.29 | 0.29 | 0.30 | 0.25 |
+| over the megathrust's lower edge (99 km), no slab | -0.13 | -0.10 | -0.02 | -0.01 |
+| ... with the slab | -0.12 | -0.15 | -0.20 | -0.08 |
+| $u_x$ 28 km seaward of the trench, no slab | 0.15 | 0.20 | 0.36 | 0.40 |
+| ... with the slab | 0.15 | 0.18 | 0.27 | 0.34 |
+
+Without a slab the plate lets go of its bend as the mantle relaxes: the
+uplift halves and the trough fills. With one, the uplift stays and the
+trough DEEPENS for ten Maxwell times before it recovers: the slab is an
+elastic strut through the mantle, it goes on carrying what the mantle
+sheds, and the mantle wedge above it relaxes against a face that does not.
+The postseismic displacement of the two models differs by 61 % of the
+slabless one at $\tau$, 70 % at $10\tau$ and 43 % at $100\tau$ (the
+horizontal by 36 / 43 / 26 %, the vertical by more than itself until late),
+where the slabless model is within 3-10 % of the reference. In the cycle
+(every $20\tau$) the surface over the megathrust's lower edge, 82 km from
+the trench, rises at $0.41\,V$ just after an earthquake without the slab
+(the reference: 0.39) and sinks at $0.18\,V$ with it. A layered reference
+is not a stand-in for a subduction zone.
+
+*The walls do not know the slab.* They carry the slabless far field, and
+the slab's tip is 88 km from one of them. The same model in a window 800 km
+to its walls (67,182 unknowns) differs from this one by 0.1 % at the
+earthquake and, in the postseismic part, by 1.5 % at $\tau$, 2.7 % at
+$10\tau$ and 7 % at $100\tau$: the horizontal by 2 % or less at every time,
+the vertical by 3 %, 5 % and 31 %. So late on, a third of the slab model's
+vertical change, which is small, belongs to the box (12 % of the slab's
+effect there). What is said above stands; a number for the vertical at
+$100\tau$ does not, until the walls know the slab or the box is laddered
+further. (The two boxes also differ in their far mesh, 83 and 133 km.)
+
+## 11. Open
+
+- **The box is a window only on what the reference solves.** Its walls
+  carry the far field of prescribed slip in a plate over a half-space
+  (section 8). A slip that is solved (section 9) and a body that is not
+  layered (section 10) radiate a part the walls do not know; the size of
+  the box is the parameter for that part, and it has not been laddered.
+  Folding a solved slip's far field into the solve is a rank-few coupling of
+  the walls to the fault's mean slip; not built.
+- **A plate that bends costs two meshes** (section 7), and on the dense
+  backend, where a creeping fault must be, the second mesh is small. The
+  compressed backend solves no slip.
+- **Time-stepping with memory on the boundary** (section 6): what nonlinear
+  fault behaviour needs, friction that is not linearized. Not built.
+- **A slab is elastic and welded.** Slip on the slab's face below the plate
+  is slip ON AN INTERFACE, a jump of displacement between two regions; the
+  rows are a prescribed displacement's and are not written. Nor is a slab
+  denser than the mantle around it, which wants the stratification rule of
+  section 7 read face by face.
+- **Uniform slip on a plane.** Slip that tapers, a fault that curves, a
+  rupture that stops short of the trench (a difference of two faults, by
+  linearity): none attempted. The reference of section 8 is one rectangle
+  from the surface.
+- **A plate with free sides floats** (below), and a region cannot run to
+  infinity. Neither matters to a window, and both remain for a box that is
+  not one.
 - Gravity beyond section 7: the coupling of gravity with COMPRESSION, of
   order $wL/K$, is a term in the volume; so is self-gravitation.
-- **The walls of the box, for a plate that slides.** Over a relaxed
-  substrate a plate moves horizontally from farther than any box here, and
-  a megathrust, which cuts the plate, moves it as two rigid halves. Clamped
-  sides hold it (the thrust's horizontal 9 % short at $100\tau$ after the
-  two-mesh limit; the megathrust's halves 0.69 of the way at $250\tau$) and
-  free sides release it too early and float it (section 7). What the plate
-  beyond a wall does is stiff early and slack late, so the candidate is a
-  wall that is a SPRING whose stiffness at each $s$ is the far-field
-  solution's; gravity already carries a traction proportional to
-  displacement on a patch. Not derived, not built.
-- **A plate that bends costs two meshes.** The relaxed vertical motion of a
-  dipping fault is short by an amount first order in the elements of the
-  plate's two faces and in the interface's $\varepsilon$, and the limit of
-  two meshes cancels it (section 7). The second mesh is the price: 205,026
-  unknowns for the thrust at 800 km, 373,224 for the megathrust. Higher
-  order on the faces would buy what halving them does, which is less.
-- The megathrust here is a plane through a layered box with uniform slip. A
-  slab; slip that tapers down dip (a patch that stops short of the trench is
-  a difference of two faults, by linearity; a taper is not); a rupture of
-  finite length against a reference in three dimensions, which the
-  plane-strain one is not; and slip that is solved rather than prescribed
-  while the substrate relaxes: none attempted.
-- The cycle is KINEMATIC: a locked patch measured from steady slip on the
-  same patch. What steady slip itself does (a megathrust slipping for ever
-  builds relief, $u(\infty)/T$ a year) is the term it is measured from, and
-  creep below the locked patch at a rate that varies through the cycle needs
-  a traction condition in time, which is the time-stepper of section 6.
-- A solved (traction) fault that crosses an interface.
+- The cycle of section 7 is a locked patch measured from steady slip on the
+  same patch. With section 9 the reach below it may creep, at a rate that
+  varies through the cycle; what steady slip itself builds ($u(\infty)/T$ a
+  year of relief) is still the term it is measured from.
 - Nonlinear rheology is out of scope: it needs the viscous strain in the
   volume.
+
+*The floating plate.* As $\tilde\mu(s)\to0$ only the shear of the substrate
+holds a plate with free sides against a rigid horizontal translation. A
+dislocation is self-equilibrated, but its discrete net force is small rather
+than zero, and the translation it causes is that force over $\tilde\mu(s)$.
+On the split fault box of B6 with a relaxing lower region, the net
+translation of the free surface (zero by symmetry) is 1 % of the deformation
+at $\tilde\mu/\mu=10^{-2}$, 11 % at $10^{-3}$ and as large as the
+deformation at $10^{-4}$, and the condition number grows as
+$\tilde\mu^{-2}$. It is the same with one $\varepsilon$ or per-element
+$\varepsilon$. Clamping the plate's sides removes it (0.3 % at $10^{-4}$,
+condition number as $\tilde\mu^{-1}$); `deflate` does not, because the mode
+is not a translation of every unknown. A window removes it too: its walls
+are prescribed.
 
 ## References
 
 Haskell (1935) Physics 6. Rizzo & Shippy (1971) SIAM J. Appl. Math. Freund &
 Barnett (1976) Bull. Seismol. Soc. Am. 66, 667 (dip slip in a half-space,
-plane strain). Kusama & Mitsui (1982) Appl.
+plane strain). Okada (1985) Bull. Seismol. Soc. Am. 75, 1135 (a rectangular
+fault in a half-space, at the surface). Marone, Scholz & Bilham (1991) J.
+Geophys. Res. 96, 8441 and Perfettini & Avouac (2004) J. Geophys. Res. 109,
+B02304 (afterslip as rate-strengthening creep). Kusama & Mitsui (1982) Appl.
 Math. Model. Sim & Kwak (1988) Comput. Struct. Schanz & Antes (1997)
 Comput. Mech. Gaul & Schanz (1999) Comput. Methods Appl. Mech. Eng. 179.
 Pan, Sassolas, Amadei & Pfeffer (1997) Comput. Mech. 19. Syngellakis & Wu

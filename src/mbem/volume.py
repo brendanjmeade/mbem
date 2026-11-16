@@ -155,6 +155,37 @@ def make_grid(model, spacing: float, pad: float = 0.0) -> Grid:
                 dims=tuple(dims), points=points)
 
 
+def section_grid(model, axis: str, at: float, spacing: float) -> Grid:
+    """One plane of points through the model: ``axis`` (``"x"``, ``"y"`` or
+    ``"z"``) held at ``at``, the other two as ``make_grid`` lays them out,
+    half-cell offset included and for the same reason.
+
+    A ``Grid`` with one point along ``axis``, so everything that takes a grid
+    takes a section, and it is written as the same ImageData. A plane lying
+    IN a face of the body is refused: every point of it would be on the
+    surface, where which side it is on is decided by rounding.
+    """
+    if axis not in ("x", "y", "z"):
+        raise ValueError(f"a section is across x, y or z, not {axis!r}")
+    k = "xyz".index(axis)
+    lo, hi = model_bounds(model)
+    if not lo[k] < at < hi[k]:
+        raise ValueError(f"the section {axis} = {at} is outside the model, "
+                         f"which spans {lo[k]:g} to {hi[k]:g} there")
+    axes = []
+    for d in range(3):
+        if d == k:
+            axes.append(np.array([float(at)]))
+            continue
+        o = lo[d] + 0.5 * spacing
+        axes.append(o + spacing * np.arange(
+            int(np.floor((hi[d] - o) / spacing)) + 1))
+    Z, Y, X = np.meshgrid(axes[2], axes[1], axes[0], indexing="ij")
+    return Grid(origin=tuple(float(a[0]) for a in axes),
+                spacing=(spacing,) * 3, dims=tuple(len(a) for a in axes),
+                points=np.column_stack([X.ravel(), Y.ravel(), Z.ravel()]))
+
+
 def classify(model, grid: Grid) -> np.ndarray:
     """``(N,) int8``: 0 outside every region, else 1-based region index.
 

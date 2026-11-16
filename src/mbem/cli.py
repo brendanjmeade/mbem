@@ -351,7 +351,12 @@ def cmd_sample(a) -> int:
             # difference well defined. Built from the first child's bounds and
             # padded by a cell, so a sibling whose boundary reaches further --
             # a warped top against a flat one -- is still covered.
-            grid = V.make_grid(model, a.spacing, pad=a.spacing)
+            if a.section:
+                axis, _, at = a.section.partition("=")
+                grid = V.section_grid(model, axis.strip(), float(at),
+                                      a.spacing)
+            else:
+                grid = V.make_grid(model, a.spacing, pad=a.spacing)
             nx, ny, nz = grid.dims
             print(f"  grid {nx} x {ny} x {nz} = {grid.points.shape[0]:,} "
                   f"points at {a.spacing} km (shared by every child)")
@@ -371,6 +376,20 @@ def cmd_sample(a) -> int:
               f"({100.0 * inside / grid.points.shape[0]:.1f}%)")
 
         states = [a.state] if a.state else sorted(run.fields)
+        if model.far_field is not None:
+            # A window's walls have their own data at every state. All of it
+            # in one call, as the runner does: the reference stacks states
+            # for the price of little more than one.
+            base = {r.name: r.material for r in model.regions}
+            over = cfg.state_overrides(run.resolved.get("states")
+                                       or run.resolved["spec"]["states"])
+            _, dt = V.timed(
+                f"{child.name}: far field",
+                lambda: model.far_field.prepare(
+                    model.far_field_patches(),
+                    [{**base, **{k: m.build() for k, m in over[st].items()}}
+                     for st in states if st in over]), log=print)
+            report["phases"][f"far_field:{child.name}"] = dt
         for st in states:
             if st not in run.fields:
                 print(f"  no state {st!r} in {child.name}; have "
@@ -418,7 +437,8 @@ def cmd_sample(a) -> int:
         "run": {"id": out.name, "name": f"volume:{src.name}", "kind": "volume"},
         "source_run": str(src),
         "grid": {"origin": list(grid.origin), "spacing": list(grid.spacing),
-                 "dims": list(grid.dims), "n_points": grid.points.shape[0]},
+                 "dims": list(grid.dims), "n_points": grid.points.shape[0],
+                 "section": a.section},
         "env": prov.environment()})
     runner._write_json(out / "report.json", report)
     (out / "STATUS").write_text(report["status"] + "\n")
@@ -499,6 +519,9 @@ def main(argv=None) -> int:
     p.add_argument("run_dir", help="a run directory, or a study (all children)")
     p.add_argument("--spacing", type=float, default=4.0,
                    help="grid spacing in km (default 4)")
+    p.add_argument("--section", default=None, metavar="AXIS=AT",
+                   help="one plane instead of the volume, e.g. y=0: a "
+                        "vertical section at mid-strike")
     p.add_argument("--state", default=None,
                    help="one state label; default every state in the run")
     p.add_argument("--no-eigenstress", action="store_true",

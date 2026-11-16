@@ -70,7 +70,7 @@ the tree again:
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 
-## Viscoelasticity (branch `ve1`)
+## Viscoelasticity
 
 Quasistatic linear viscoelasticity with no volume mesh; `docs/viscoelastic.md`
 is the derivation and rule 16 of `CLAUDE.md` the short form.
@@ -94,63 +94,72 @@ The two-mesh limit (`layered_box.two_mesh_limit`, `--sweep refine=1,2`),
 which cancels what P0 costs a plate that bends: with it the thrust's
 postseismic displacement within 120 km of the trace is off by 2.8 % / 2.0 % /
 5.7 % at 1 / 10 / 100 Maxwell times on an 800 km box (vertical 2.9 % at 100,
-from 14 % and 7.9 % on the two meshes). The earthquake cycle of a locked
+from 14 % and 7.9 % on the two meshes) against plane strain, and 4.0 % /
+2.5 % / 3.7 % against the fault as long as it is (`layered_space`). The earthquake cycle of a locked
 fault (`Prony.locked_rate_weights`, the `plate_cycle` figure), its reference
 a Fourier series on the imaginary axis that needs no fit: 2.3 % early in a
 cycle of 20 Maxwell times and 2.1 % late. A fault THROUGH the interface
 (`fault_lower`: a megathrust whose lower reach slips in the substrate), in
 the builder, the model and the reference, the reference's lower source held
-by three exact limits: 0.4 % / 1.4 % of the reference at the earthquake, and
-11 % to 22 % in relaxation, which is the box (next item but one).
+by three exact limits. With clamped walls 800 km away, against the reference
+in three dimensions: 0.2 % / 0.8 % at the earthquake and 8 % to 12 % in
+relaxation, the plate's two halves converging 0.81 of the reference's (1.11
+with free sides). Read against plane strain that was 11 % to 22 % and 0.69:
+a third of it was the reference, an infinitely long fault standing for one
+800 km long.
+
+The WALLS (2026-11-13). `model.FarField`: named walls carry the displacement
+the model's own prescribed slip produces in an unbounded reference medium,
+state by state (`RegionModel.value_of`, `equations.rhs_terms_at`), on both
+backends; `layered_box` `sides="window"` and `fault_box` `walls="window"`.
+Chosen by measurement on the elastic fault box against cutde: 22 % off
+beyond 128 km with the walls it had, 15-25 % with a spring wall at its best
+fitted stiffness, 1 % with the window (30 % and 1.5 % on the gate's box). The reference it is made of,
+`cases.layered_space`: a finite rectangular fault in the plate over the
+substrate, in three dimensions, at the surface and at depth, held to cutde,
+to the plane-strain reference and to the antiplane series
+(`verify_viscoelastic` [q]). A fault that CREEPS (`rheology.ViscousFault`,
+`Laplace.faults`): a solved fault that resists its slip rate is a fault
+with a stiffness at each s, exact against a penny crack whose slip stays
+Eshelby's ([o]); `layered_box` `lower="creep"` puts it on the megathrust's
+lower reach. A plate that SUBDUCTS (`slab_depth`): the footwall plate
+continued down dip as an elastic slab the interface wraps ([p]).
 
 OPEN, in the order they bite:
 
-* **The box is not a half-space.** Regions must close, so "plate over a
-  half-space" is a plate over a deep clamped channel with sides. The elastic
-  truncation is already -4 % to -39 % of surface displacement on the 200 km
-  box, and relaxation makes it worse with time. A region that runs to infinity
-  while touching an interface is theory not yet done; a candidate is closing
-  the truncated surface with Burgers' line integral on the truncation loop.
+* **A window knows only what its reference solves.** The walls carry the far
+  field of PRESCRIBED slip in a plate over a half-space. A solved slip (the
+  creeping reach) and a body that is not layered (the slab) radiate a part
+  they do not know. The box's size is the parameter for that part and has
+  not been laddered for either. For a solved slip the remedy is a coupling
+  of the walls to the fault's mean slip (rank two); not built.
+* **A plate that bends costs two meshes, and a creeping fault is dense.**
+  The two-mesh limit is the remedy for P0 on a bending plate and it costs
+  the finer mesh of the pair; a solved fault is on the dense backend, where
+  the finer mesh is ~35,000 unknowns and the plate's faces 10 km. A
+  FAULT_TRACTION fault on the compressed backend would lift that.
+* **Time-stepping with memory on the boundary** (the note's section 6): what
+  friction that is not linearized needs. Not built. Linear creep on a fault
+  no longer waits for it.
+* **Slip on an interface.** Below the plate a slab's upper face is an
+  interface, and slip there is a displacement jump between two regions:
+  the +n region sees `u_p + b`, which is the prescribed-displacement RHS
+  term restricted to that region. Not written, so a slab is welded below
+  the megathrust and deep slip on it cannot be prescribed or solved. A slab
+  DENSER than the mantle also waits: the Laplace route's stratification rule
+  refuses a light body under a heavy one and has no reading for the reverse
+  on a dipping face.
+* **Beyond one rectangle with uniform slip.** Slip that tapers down dip, a
+  rupture short of the trench (a difference of two faults, by linearity), a
+  curved megathrust. `layered_space` is one planar rectangle from the
+  surface. Published cases to compare with: Rundle (1982), Thatcher &
+  Rundle (1984), Pollitz (1997), Barbot & Fialko (2010, their Fig. 9), Wang,
+  Hu & He (2012).
 * **A plate with free sides floats** as the substrate relaxes: a net
   translation growing as 1/mu(s), 1 % of the deformation at mu(s)/mu = 1e-2
-  and 11 % at 1e-3 on the split fault box, absent with clamped sides. Read as
-  the fault's discrete net force over the only stiffness left; not isolated.
-* **Time-stepping with memory on the boundary** (the note's section 6): what
-  couples relaxation to stress-driven fault slip. Not built.
-* **A relaxed plate slides to the walls: now the largest error.** Clamped
-  sides hold a plate whose halves would approach from farther than the box.
-  The thrust's horizontal postseismic motion is 9 % short at 100 Maxwell
-  times after the two-mesh limit, on every box tried. A megathrust cuts the
-  plate, so its halves converge as rigid blocks, and there it is everything:
-  clamped, the two sides of the trench converge 0.99 / 0.90 / 0.71 / 0.69 of
-  the reference's at 1 / 10 / 100 / 250 Maxwell times; free, 1.11 / 1.09 /
-  0.98 / 0.95, plus a float of 0.035 of the slip. The two BRACKET the
-  reference at every time, which says what the missing wall is: the plate
-  beyond it is stiff early and slack late. Candidate: a wall that is a
-  spring whose stiffness at each s comes from the far-field solution (the
-  plane-strain reference has it); gravity already carries a traction
-  proportional to displacement on a patch (`BlockTerm.col_op`). Not derived.
-  The megathrust also feels the BASE: 800 km down, it lifts the elastic
-  surface by 0.016 of the slip everywhere.
-* **A plate that bends costs two meshes.** The remedy for P0 on a bending
-  plate is built (the two-mesh limit) and it costs the finer mesh of the
-  pair: 205,026 unknowns for the thrust at 800 km, 373,224 for the
-  megathrust (58 minutes). It cancels the first-order term and nothing
-  else: no gain at one Maxwell time, none on the megathrust, whose error is
-  the box. Higher order on the compressed backend is no longer the remedy:
-  a P1 top at 10 km is worth a P0 top at 5, which is less than the limit.
-* **Beyond a plane with uniform slip in a layered box:** a slab; slip that
-  tapers down dip (a patch short of the trench is a difference of two
-  faults by linearity, a taper is not); a rupture of finite length against a
-  reference in three dimensions, which `dip_slip_profile` is not (the same
-  layer system at two wavenumbers plus the SH part would be, or
-  PSGRN/PSCMP); and solved slip while the substrate relaxes. Published
-  cases to compare with: Rundle (1982), Thatcher & Rundle (1984), Pollitz
-  (1997), Barbot & Fialko (2010, their Fig. 9), Wang, Hu & He (2012).
-* **The cycle is kinematic.** `locked_rate_weights` is a locked patch
-  measured from steady slip on the same patch. Creep below the locked patch
-  at a rate that varies through the cycle is a traction condition in time,
-  i.e. the time-stepper.
+  and 11 % at 1e-3 on the split fault box, absent with clamped sides and
+  with a window. Read as the fault's discrete net force over the only
+  stiffness left; not isolated.
 * **Gravity's coupling with compression.** The treatment is exact for an
   incompressible body and off by `rho g L / K` otherwise (6 % per 100 km at
   K = 50 GPa). The missing term lives in the volume, as does self-gravitation.
@@ -162,7 +171,6 @@ OPEN, in the order they bite:
   not name (dense keeps the current material, compressed resets to the base).
   The runner passes the complete map, so no run depends on it; a direct caller
   chaining rebuilds over different regions would.
-* `mbem run --sweep ... --dry-run` ignores `--dry-run` and runs the study.
 * Complex s (a contour inversion in place of the real-axis fit) needs only
   complex linear algebra, the kernels staying real; not needed so far.
 
@@ -242,7 +250,11 @@ conditioning is far more fragile under grading (5.7e19 at beta = 3).
 3. Box truncation (decided: the 200-km box stays): surface displacement is
    −4 % (32–64 km), −19 % (64–128), −39 % (128–200) vs the half space; the
    manuscript's "ample box" sentence should be softened to a measured
-   statement (outward-facing, needs a go-ahead).
+   statement (outward-facing, needs a go-ahead). Since 2026-11-13 the box
+   has a remedy that is an OPTION, `fault_box.build_model(walls="window")`:
+   sides and base on the half-space's own displacement, 30 % beyond 128 km
+   becoming 1.5 % (`verify_solved_bvp` A6). The default is the box, because
+   every committed baseline is.
 4. Copy parity: `moss/mollified_kernel` and `medt_paper/mollified_kernel` are
    byte-identical today but ungated; `medt_paper/mhf` is a pre-correction fork
    of `moss/mhf`; `mode="basis"`/`"legacy"` of the dense backend are compared

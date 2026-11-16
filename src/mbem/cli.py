@@ -18,6 +18,7 @@ verb is one entry point and not a second implementation.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import pathlib
 import shutil
@@ -77,6 +78,16 @@ def cmd_run(a) -> int:
                 return 2
             kind = accepted.get(key, ("any", None))[0]
             axes[key] = [_coerce(v, kind) for v in csv.split(",") if v]
+        if a.dry_run:
+            # Every child validated and printed, no study made: a sweep that
+            # ignored --dry-run ran the study it was asked to check.
+            runs = [dict(params, **dict(zip(axes, combo)))
+                    for combo in itertools.product(*axes.values())]
+            print(json.dumps(prov.json_safe(
+                {"sweep": axes,
+                 "runs": [{"name": cfg.load(path, **kw).name, "params": kw}
+                          for kw in runs]}), indent=1, sort_keys=True))
+            return 0
         # The study's figures come from the first child's spec: a figure that
         # spans the sweep is declared by the study it belongs to, and every
         # child of one sweep declares the same ones.

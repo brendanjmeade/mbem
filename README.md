@@ -34,7 +34,8 @@ solver (region model + calibrated dense backend), and worked examples.  There is
 **no half-space / Mindlin code and no LaTeX** here.  Linear viscoelasticity
 (Maxwell, Burgers) is available by the Laplace route, and gravity as buoyancy
 on the boundary, both with no volume mesh; see "Viscoelastic relaxation" and
-"Gravity" below.
+"Gravity" below.  A box can be a WINDOW on a layered half-space, its walls
+carrying the far field ("The box as a window" below).
 
 Boundary patches and faults carry a piecewise-constant (P0) density by default
 or a Lagrange P1/P2 nodal density (`Patch(..., order=1|2)`): one code path,
@@ -174,7 +175,8 @@ closed boundary: with `eps="auto"` a nearly relaxed region loses its pressure
 response (9 % at mu(s)/K = 5e-4, 54 % at 5e-5 on the Eshelby sphere) and with
 one scalar it does not (0.2 % throughout), so the runner refuses the former.
 The box is part of the model: there is no half-space, and a plate with free
-sides floats as its substrate relaxes, which clamped sides prevent.  And a
+sides floats as its substrate relaxes, which clamped sides prevent (a box
+whose walls are a window, further down, is the way out of both).  And a
 fault in a fluid under a sustained traction creeps for ever, which the fit
 represents only with `Prony(secular=True)`.
 
@@ -264,6 +266,9 @@ to a contour inversion in time (3e-4).  Against it, on the 800 km box above,
 the postseismic displacement within 120 km of the trace is off by 2.8 % at
 one Maxwell time, 2.0 % at ten and 5.7 % at a hundred, and what is left at a
 hundred is horizontal (9 %, the walls of the box; the vertical is 2.9 %).
+The box's fault is 800 km long, not infinitely: against the same reference
+in three dimensions (below) those are 4.0 %, 2.5 % and 3.7 %, and the
+horizontal 6 %.
 
 One thing to know that the strike-slip plate never showed.  A plate that
 bends is only as good as its two faces: with piecewise-constant elements the
@@ -295,7 +300,7 @@ a mean of +0.11: it goes on the way the earthquake moved it and turns a sixth
 of the way through the cycle.  The reference for this needs no fit (a
 periodic response is a Fourier series, its coefficients the solution at
 imaginary `s`), and the model is within 2.3 % of it early in the cycle and
-2.1 % late.  Any dip-slip run of `configs/plate_substrate.py` draws it
+2.1 % late (4.0 % and 2.0 % against the fault as long as it is).  Any dip-slip run of `configs/plate_substrate.py` draws it
 (`plate_cycle`).
 
 **A megathrust.**  A fault deeper than the plate is thick goes through the
@@ -325,16 +330,106 @@ show: repeating every fifty Maxwell times, a point 200 km inland moves
 toward the trench at 0.56 of the slip rate just after an earthquake and away
 from it at 0.45 just before the next.
 
-The model is within 0.4 % (horizontal) and 1.4 % (vertical) of that
-reference at the earthquake, with a rigid base where the model's is.  In
-relaxation it is within 11 % at one Maxwell time and 22 % at 250, and here
-that is the box and not the mesh, the two-mesh limit moving nothing: clamped
-walls 800 km away hold the two halves at 0.69 of the reference's
-convergence.  Free sides (`--set sides=free`) let them go, to 0.95, and
-release them too early (1.11 at one Maxwell time), so the two bracket the
-reference at every time.  What a plate that continues beyond a wall does is
-stiff early and slack late, and a wall that knows it is the open problem
-this model points at (`BACKLOG.md`).
+That reference is an infinitely long megathrust, and the run's is 800 km
+long, which is not long enough: at mid-strike the two differ by 11 % in the
+vertical at the earthquake and by 5-10 % in the horizontal once the
+substrate relaxes.  So the model is read against the same layer system in
+three dimensions (`mbem.cases.layered_space`, a finite rectangular fault).
+With clamped walls 800 km away it is within 0.2 % (horizontal) and 0.8 %
+(vertical) at the earthquake, with a rigid base where the model's is, and
+within 8 % at one Maxwell time and 12 % at 250 in relaxation: the plate's
+two halves are held at 0.81 of the reference's convergence.  Free sides
+(`--set sides=free`) let them go too far, 1.11.  The two bracket the
+reference at every time, and neither is what a plate beyond a wall does.
+
+**The box as a window.**  Clamped or free, the walls of a box are wrong
+about a plate over a substrate that relaxes, at any size the box can have.
+`--set sides=window` gives every wall of the box the displacement the slip
+produces in a plate over a half-space instead, state by state
+(`mbem.model.FarField`), from that same reference in three dimensions.  The
+box then solves the near field, and its size stops being the model.
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+    --set rho_substrate=3300 --set edge_near=10 --set near_field_radius=200 \
+    --set fault_half_len=150 --set half_x=400 --set sides=window \
+    --set t_max=100 --sweep refine=1,2
+```
+
+It was chosen by measurement, on the elastic fault box against the
+half-space: 22 % off beyond 128 km with the walls it had, 15-25 % with
+spring walls at their best fitted stiffness, 1 % as a window
+(`configs/fault_box.py --set walls=window`).  On the megathrust above, same
+box and same mesh, the horizontal postseismic misfit goes from 14 % clamped
+and 16 % free to 2 %, and the plate's halves converge 0.99 of the
+reference's.  The box can then be small: a rupture 300 km long in a box 400
+km to its walls is 23 % off in the horizontal between clamped walls and
+2.6 % in a window.  What a window does not mend is the vertical, which was
+never the walls but the plate's two faces, and that is the two-mesh limit's:
+the pair this command runs is within 1.6 % of the reference at one, ten and
+a hundred Maxwell times (0.5 % horizontal, 3 % vertical) and within 0.5 %
+through the cycle.
+
+A window knows what its reference solves, prescribed slip in a plate over a
+half-space, and is blind to the far field of anything else: the next two
+sections each have something else in them.
+
+
+**Afterslip.**  A fault that resists its slip RATE is, at each `s`, a fault
+with a stiffness, so linear creep on a fault needs no time-stepper either
+(`mbem.rheology.ViscousFault`: a shear zone's Maxwell time and width;
+linearized rate-strengthening friction is the same law).  It is exact
+against a penny crack whose faces drag so that its slip stays Eshelby's
+(0.6 %, the crack's own, per `s` and in time).  `--set lower=creep` makes
+the megathrust's lower reach such a fault: locked at the earthquake, then
+loaded by the rupture above it and by the substrate as it relaxes.
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+    --set rho_substrate=3300 --set edge_near=15 --set edge_interface=22.5 \
+    --set eps_substrate=2.25 --set near_field_radius=120 --set sides=window \
+    --set half_x=300 --set depth_box=200 --set fault_half_len=100 \
+    --set t_max=100 --set backend=dense --set lower=creep \
+    --sweep creep_tau=1,1e6 --sweep refine=1,1.5
+```
+
+The reach slips by 0.22 of the rupture's slip on average (0.45 just under
+the rupture, 0.08 at its lower edge), all of it within ten Maxwell times,
+and at the surface it is an early signal: one Maxwell time after the
+earthquake the postseismic displacement is 34 % away from the reference
+without afterslip, at ten 11 %, and at a hundred the creeping and the held
+model are one.  A solved fault is on the dense backend, so these runs are
+31,179 unknowns at most and their vertical carries the plate's faces (14-23
+% of the postseismic part; the horizontal is within 1.4 %).
+
+
+**A slab.**  Layers are what that reference knows; a boundary method is for
+what it does not.  `slab_depth` lets the footwall plate go on down the dip
+as an elastic slab, in the mantle that relaxes around it:
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=30 --set rho_plate=3300 \
+    --set rho_substrate=3300 --set edge_near=10 --set near_field_radius=150 \
+    --set sides=window --set half_x=500 --set depth_box=300 \
+    --set fault_half_len=100 --set t_max=100 --sweep slab_depth=0,150
+```
+
+Plate and slab are one region and the interface wraps the slab; a slab of
+the mantle's own material is no slab, to 1 %, which is how the geometry is
+gated.  At the earthquake it is invisible (the surface within 0.8 % and
+1.4 % of the layered reference).  Afterwards it is the largest thing in the
+model: the uplift behind the trench, which halves in a hundred Maxwell times
+without a slab, stays (0.29 of the slip at the earthquake, 0.25 at a
+hundred), and the trough over the megathrust's lower edge deepens for ten
+Maxwell times where without a slab it fills.  The slab is an elastic strut
+through the mantle and goes on carrying what the mantle sheds.  The
+postseismic displacement with and without it differs by 61 % at one Maxwell
+time, 70 % at ten and 43 % at a hundred.  Plate and mantle have one density
+here: a slab of a lighter plate hanging in a heavier mantle is unstable once
+anything relaxes, and a Laplace run refuses it.
 
 ## Layout
 
@@ -349,10 +444,13 @@ src/mbem/                 region-model BEM solver: dense and block-compressed
   la/                     ACA, flat H-matrix, bbFMM, FGMRES, preconditioners
   cases/                  reference models the gates and studies share (the
                           fault box, the inclusion, topography, the penny
-                          crack, the plate over a substrate)
+                          crack, the plate over a substrate, and that plate
+                          in three dimensions: layered_space, a finite fault
+                          at the surface and at depth)
   rheology.py, laplace.py linear viscoelasticity by correspondence: Maxwell
-                          and Burgers shear moduli, and the fit that turns
-                          per-s elastic solves into a function of time
+                          and Burgers shear moduli, a fault that creeps, and
+                          the fit that turns per-s elastic solves into a
+                          function of time
   figures/                the figure makers, in a lazy registry
 src/mollified_kernel/     point-source kernel + analytic triangle integration
   mollified_elastic_kernels.py   regularized Kelvin point kernels

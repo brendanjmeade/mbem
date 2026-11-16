@@ -132,10 +132,41 @@ def _model_fingerprint(model, system) -> dict:
             # None is "no gravity", which is not gravity on a weightless body
             "gravity": (None if model.gravity is None
                         else dataclasses.asdict(model.gravity)),
+            # the walls that are a window, and what they look out on
+            "far_field": (None if model.far_field is None
+                          else {"patches": list(model.far_field.patches),
+                                "spec": dict(model.far_field.spec)}),
             "n_unknowns": int(system.layout.n_unknowns),
             "n_tris": int(sum(p["n_triangles"] for r in regions
                               for p in r["patches"])),
             "slots": [s.name for s in system.layout.slots]}
+
+
+def _creeping_faults(model, run: cfg.Run) -> dict:
+    """``{fault name: (law, unrelaxed mu of its region)}`` for
+    ``run.laplace.faults``, each of which must be a FAULT_TRACTION fault of
+    the model on the dense backend: a law on a prescribed slip would be
+    silently nothing, and the compressed backend solves no slip."""
+    from mbem import rheology
+    from mbem.model import BCType
+
+    laws = dict(run.laplace.faults)
+    if not laws:
+        return {}
+    if run.backend.kind != "dense":
+        raise ValueError(
+            f"laplace.faults gives {sorted(laws)} a law, and a fault that "
+            f"creeps is a SOLVED fault: dense backend only (got "
+            f"{run.backend.kind!r})")
+    solved = {f.name: r.material.mu for r in model.regions for f in r.faults
+              if f.bc is BCType.FAULT_TRACTION}
+    unknown = set(laws) - set(solved)
+    if unknown:
+        raise KeyError(
+            f"laplace.faults names {sorted(unknown)}, which are not "
+            f"FAULT_TRACTION faults of the model (those are {sorted(solved)})")
+    return {name: (rheology.from_spec(law), solved[name])
+            for name, law in laws.items()}
 
 
 def _write_json(path: pathlib.Path, payload: dict) -> None:
@@ -191,9 +222,10 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                            f"{sorted(known)})")
         rheology.require_one_eps(model, run.model.eps, relaxing)
         rheology.require_stable(model)
+        creeping = _creeping_faults(model, run)
         states = rheology.laplace_states(
             {r.name: (r.material.mu, r.material.lam) for r in model.regions},
-            relaxing, run.laplace.s)
+            relaxing, run.laplace.s, creeping)
     for st in states:
         unknown = set(st.materials) - known
         if unknown:
@@ -248,13 +280,25 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     # base -- and a partial map would make a run mean different things on them.
     base = {r.name: r.material for r in model.regions}
     overrides = cfg.state_overrides(states)
-    cur, held, ok, solutions = asm, {}, True, {}
+    if model.far_field is not None:
+        # every state's wall data in one call, where the reference can stack
+        t0 = time.perf_counter()
+        model.far_field.prepare(
+            model.far_field_patches(),
+            [{**base, **{k: m.build() for k, m in
+                         overrides[cfg.slug(st.label)].items()}}
+             for st in states])
+        phases["far_field"] = time.perf_counter() - t0
+    cur, held, held_drag, ok, solutions = asm, {}, {}, True, {}
     for st in states:
-        want = overrides[cfg.slug(st.label)]
-        if want != held:
-            cur = cur.rebuild_for_materials(
-                {**base, **{k: m.build() for k, m in want.items()}})
-            held = want
+        want, drag = overrides[cfg.slug(st.label)], dict(st.drag)
+        if want != held or drag != held_drag:
+            mats = {**base, **{k: m.build() for k, m in want.items()}}
+            # only a state that drags a fault says so: the compressed
+            # backend has no solved faults and takes no such keyword
+            cur = (cur.rebuild_for_materials(mats, fault_drag=drag)
+                   if drag or held_drag else cur.rebuild_for_materials(mats))
+            held, held_drag = want, drag
         t0 = time.perf_counter()
         sol = cur.solve(**run.solve.kwargs()) if run.backend.kind != "dense" \
             else cur.solve()

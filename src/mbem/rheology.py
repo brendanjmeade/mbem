@@ -72,7 +72,44 @@ class Burgers:
                       + 1.0 / (self.kelvin * (1.0 + self.tau_K * s)))
 
 
-KINDS = {"maxwell": Maxwell, "burgers": Burgers}
+@dataclass(frozen=True)
+class ViscousFault:
+    """A fault that resists its slip RATE: shear traction ``eta_f`` times the
+    rate, the +n side dragging the other along. Stated as the shear zone it
+    stands for -- ``width`` thick, of a material whose Maxwell time is
+    ``tau`` at the unrelaxed shear modulus ``mu`` of the region holding the
+    fault -- so ``eta_f = mu tau / width`` and, like the regions, it is a time
+    and a ratio and never a viscosity. Only ``tau / width`` matters.
+
+    In the Laplace domain the traction is ``drag(s)`` times the slip,
+    ``drag = eta_f s``: infinite at ``s = inf``, so the fault is LOCKED at the
+    instant of loading and slips afterwards, toward the slip that leaves it no
+    traction. A patch of size L unloads in about ``tau L / width``. Friction
+    that strengthens with rate, linearized about a steady rate ``V``, is the
+    same law with ``eta_f = (a - b) sigma_n / V``.
+
+    It is a law of a SOLVED fault (``BCType.FAULT_TRACTION``), whose slip is
+    then driven by whatever loads it: afterslip, and the creep below a locked
+    patch through its cycle. Dense backend only, as solved faults are.
+    """
+    tau: float
+    width: float
+    kind: str = field(default="viscous_fault", init=False)
+
+    def __post_init__(self):
+        for name in ("tau", "width"):
+            v = getattr(self, name)
+            if not (v > 0.0 and math.isfinite(v)):
+                raise ValueError(f"ViscousFault {name} {v} must be positive")
+
+    def drag(self, mu, s):
+        """``kappa(s)`` in GPa/km for a fault in a region of unrelaxed shear
+        modulus ``mu`` (GPa)."""
+        return math.inf if math.isinf(s) else mu * self.tau * s / self.width
+
+
+KINDS = {"maxwell": Maxwell, "burgers": Burgers,
+         "viscous_fault": ViscousFault}
 
 
 def from_spec(spec):
@@ -104,23 +141,33 @@ def g_of(mu, lam):
     return 2.0 * (lam + mu) / (lam + 2.0 * mu)
 
 
-def laplace_states(base, rheology, s) -> tuple:
+def laplace_states(base, rheology, s, faults=None) -> tuple:
     """The states of a Laplace run: the elastic one, then one per real ``s``.
 
     ``base`` maps every region to its unrelaxed ``(mu, lam)``, ``rheology`` the
     relaxing ones to their rheology. Largest ``s`` first, so each state is a
     small step in the moduli from the one before -- what lets the compressed
     backend keep its preconditioner along the chain.
+
+    ``faults`` maps a solved fault to ``(law, mu)``, its ``ViscousFault`` and
+    the unrelaxed shear modulus of its region: each state then carries the
+    fault's drag at its ``s``, infinite in the elastic state.
     """
     from mbem.config import Material, State
 
-    out = [State("elastic", {}, s=math.inf)]
+    faults = faults or {}
+
+    def drag(sv):
+        return {name: from_spec(law).drag(mu, sv)
+                for name, (law, mu) in faults.items()}
+
+    out = [State("elastic", {}, s=math.inf, drag=drag(math.inf))]
     for k, sv in enumerate(sorted((float(v) for v in s), reverse=True), 1):
         out.append(State(
             f"s{k:02d}",
             {name: Material(*moduli(from_spec(r), *base[name], sv))
              for name, r in rheology.items()},
-            s=sv))
+            s=sv, drag=drag(sv)))
     return tuple(out)
 
 

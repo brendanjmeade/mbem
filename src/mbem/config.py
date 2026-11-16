@@ -163,10 +163,16 @@ class State:
     Laplace parameter, ``inf`` being the unrelaxed (elastic) one. The runner
     sets it (``Run.laplace``); it is recorded so that a stored run says which
     state is which without parsing a label.
+
+    ``drag`` is the state's other number: for each solved fault that resists
+    its slip, the traction per unit slip (``rheology.ViscousFault.drag`` at
+    this ``s``; ``inf`` locks it). It enters the solve and nothing else -- the
+    slip it produced is in the solution -- so a readout needs no part of it.
     """
     label: str
     materials: Mapping[str, Material] = field(default_factory=dict)
     s: float | None = None
+    drag: Mapping[str, float] = field(default_factory=dict)
 
 
 def state_overrides(states) -> dict:
@@ -203,9 +209,17 @@ class Laplace:
     unrelaxed moduli are stated once -- by the builder. For data applied as a
     step, the solution of state ``s`` is ``s`` times the transform of the
     response, and ``mbem.laplace`` turns the stack into a function of time.
+
+    ``faults`` maps a SOLVED fault (``BCType.FAULT_TRACTION``) to the law by
+    which it resists its slip (``rheology.ViscousFault``): locked in the
+    elastic state, and at each ``s`` dragging with that state's stiffness, so
+    its slip in time is afterslip driven by whatever else the run prescribes.
+    Dense backend only. ``rheology`` may then be empty: creep on a fault in a
+    body that does not relax is a Laplace run too.
     """
     rheology: Mapping[str, Any]
     s: tuple[float, ...]
+    faults: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -262,9 +276,10 @@ class Run:
                     0.0 < v < float("inf") for v in s):
                 raise ValueError(f"laplace.s must be at least two distinct "
                                  f"finite positive values, got {s}")
-            if not self.laplace.rheology:
-                raise ValueError("laplace.rheology names no region: nothing "
-                                 "relaxes, which is an elastic run")
+            if not self.laplace.rheology and not self.laplace.faults:
+                raise ValueError("laplace.rheology names no region and "
+                                 "laplace.faults no fault: nothing relaxes, "
+                                 "which is an elastic run")
 
 
 # ---------------------------------------------------------------------

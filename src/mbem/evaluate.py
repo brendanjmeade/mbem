@@ -88,11 +88,14 @@ def _region(model: RegionModel, region: Region | str) -> Region:
                    f"(regions: {[r.name for r in model.regions]})")
 
 
-def _density(patch, kind: str, solution: dict) -> np.ndarray:
+def _density(model: RegionModel, patch, kind: str,
+             solution: dict) -> np.ndarray:
     """The element-major (K N,3) density of ``kind`` on a patch
     (``patch.order``): ``"u"`` / ``"t"`` is the prescribed value when the BC
-    fixes it, else the solved slot; ``"slip"`` is a fault's prescribed
-    density, or its solved ``"b:"`` slot expanded (FAULT_TRACTION)."""
+    fixes it (``RegionModel.value_of``: a far-field wall's datum belongs to
+    the model's material state), else the solved slot; ``"slip"`` is a
+    fault's prescribed density, or its solved ``"b:"`` slot expanded
+    (FAULT_TRACTION)."""
     if kind == "slip":
         if patch.bc is BCType.FAULT_TRACTION:
             return patch.expand(solution[f"b:{patch.name}"])
@@ -102,7 +105,7 @@ def _density(patch, kind: str, solution: dict) -> np.ndarray:
     if kind not in fixed:
         raise ValueError(f"unknown density kind {kind!r}")
     if patch.bc is fixed[kind]:
-        return patch.value_array()
+        return model.value_of(patch)
     return solution[f"{kind}:{patch.name}"]
 
 
@@ -111,11 +114,12 @@ def _traction(model: RegionModel, region: Region, patch,
     """The single-layer density ``region`` carries on ``patch``: the slot or
     datum ``t_p``, plus the buoyancy ``B u_p`` where gravity puts one
     (``RegionModel.buoyancy``, the same B the equations used)."""
-    t = _density(patch, "t", solution)
+    t = _density(model, patch, "t", solution)
     B = model.buoyancy(region, patch)
     if B is None:
         return t
-    return t + np.einsum("nij,nj->ni", B, _density(patch, "u", solution))
+    return t + np.einsum("nij,nj->ni", B,
+                         _density(model, patch, "u", solution))
 
 
 def _warn_near_boundary(points, region):
@@ -202,7 +206,7 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     mat = region.material
     for p in region.patches:
         sigma = float(model.orientation(region, p))
-        u_p = _density(p, "u", solution)
+        u_p = _density(model, p, "u", solution)
         if np.any(u_p):
             u -= sigma * _disp_from_source(points, p.mesh, u_p, KERNEL_T,
                                            mat, kb.resolve_patch_eps(eps, p),
@@ -218,7 +222,7 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     # accessor -- no second statement of the fault sign convention.
     for f in region.faults:
         sigma = float(model.orientation(region, f))
-        slip = _density(f, "slip", solution)
+        slip = _density(model, f, "slip", solution)
         if np.any(slip):
             u -= sigma * _disp_from_source(points, f.mesh, slip, KERNEL_T,
                                            mat, kb.resolve_patch_eps(eps, f),
@@ -483,7 +487,7 @@ class DisplacementEvaluator:
             coeffs = uc if kind == "t" else tc
             dens = np.asarray(
                 _traction(state, region, src, solution) if kind == "t"
-                else _density(src, kind, solution), float).ravel()
+                else _density(state, src, kind, solution), float).ravel()
             if np.any(dens):
                 u += sign * pair.matvec(coeffs, dens)
         return u.reshape(-1, 3)
@@ -554,7 +558,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
         sigma = float(model.orientation(region, p))
         # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
         # the boundary u_p is a jump exactly as a fault slip is.
-        u_p = _density(p, "u", solution)
+        u_p = _density(model, p, "u", solution)
         if np.any(u_p):
             sig += _add(p.mesh, u_p, sigma, kb.resolve_patch_eps(eps, p),
                         p.order)
@@ -570,7 +574,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     # double-layer helper, so the convention is never stated twice.
     for f in region.faults:
         sigma = float(model.orientation(region, f))
-        slip = _density(f, "slip", solution)
+        slip = _density(model, f, "slip", solution)
         if np.any(slip):
             sig += _add(f.mesh, slip, sigma, kb.resolve_patch_eps(eps, f),
                         f.order)

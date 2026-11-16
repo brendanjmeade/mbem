@@ -43,7 +43,8 @@ from ..kernels import basis as kb
 from ..model.core import BCType
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, apply_fault_rows,
-                               calibrated_diagonal, term_diagonal)
+                               calibrated_diagonal, rhs_terms_at,
+                               term_diagonal)
 
 
 class DenseBackend:
@@ -238,6 +239,19 @@ def warn_fault_rows_near_boundary(system: BlockSystem, eps):
             f"the row is not corrected")
 
 
+def _checked_drag(system: BlockSystem, drag) -> dict:
+    """``{fault name: kappa}`` naming only FAULT_TRACTION faults of the model:
+    a drag on a prescribed slip would be silently nothing."""
+    drag = dict(drag or {})
+    known = {f.name for _r, f in system.traction_faults()}
+    unknown = set(drag) - known
+    if unknown:
+        raise KeyError(f"fault_drag names {sorted(unknown)}, which are not "
+                       f"FAULT_TRACTION faults of the model "
+                       f"(those are {sorted(known)})")
+    return drag
+
+
 @dataclass
 class DenseSolveReport:
     """``asm.report`` of a dense solve: the 1-norm condition estimate
@@ -252,7 +266,8 @@ class DenseSolveReport:
 class AssembledDense:
     def __init__(self, system: BlockSystem, eps, mode: str,
                  jump: str = "calibrated", deflate: bool = False,
-                 _basis_cache: dict | None = None):
+                 _basis_cache: dict | None = None,
+                 fault_drag: dict | None = None):
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
         special = needs_direct_mode(system.model)
@@ -278,6 +293,9 @@ class AssembledDense:
         # representative).
         self.deflate = deflate
         self.materials = {r.name: r.material for r in system.model.regions}
+        # {fault name: kappa}: the drag of each FAULT_TRACTION fault that
+        # resists its slip (equations.py); a number of the state
+        self.fault_drag = _checked_drag(system, fault_drag)
         # basis cache: (id(field), id(source), kernel) -> UBasis | TBasis
         self._basis = _basis_cache if _basis_cache is not None else {}
         self._lu = None
@@ -398,15 +416,16 @@ class AssembledDense:
                                    t.field_patch.collocation_shape())
 
         b = np.zeros(n)
-        for rt in self.system.rhs_terms:
+        rhs_terms = rhs_terms_at(self.system, self.materials)
+        for rt in rhs_terms:
             blk = self._cached_block(block_cache, rt.field_patch,
                                      rt.source_patch, rt.kernel, rt.region)
             r0, r1 = rt.row.offset, rt.row.stop
             b[r0:r1] += rt.scale * (blk @ rt.vector)
         for rv in self.system.rhs_values:
             b[rv.row.offset:rv.row.stop] += rv.vector
-        add_jump_rhs(self.system, self.calib, b)
-        apply_fault_rows(A, b, self.system)
+        add_jump_rhs(self.system, self.calib, b, rhs_terms)
+        apply_fault_rows(A, b, self.system, self.fault_drag)
 
         self._arrays = None          # end of assembly scope
         self.A = A
@@ -460,13 +479,17 @@ class AssembledDense:
 
     # -- viscoelastic hook --------------------------------------------
 
-    def rebuild_for_materials(self, material_map: dict) -> "AssembledDense":
+    def rebuild_for_materials(self, material_map: dict,
+                              fault_drag: dict | None = None
+                              ) -> "AssembledDense":
         """New AssembledDense with updated region materials.
 
         ``material_map`` maps region name -> ElasticMaterial. In basis
         mode the cached geometry bases are reused, so the rebuild costs
         only recombination + refactorization; in direct mode the blocks
         are re-assembled with the numba kernels (no cache, still fast).
+        ``fault_drag`` REPLACES the faults' drag (``{}`` removes it); left
+        ``None`` the rebuild keeps this assembly's.
         """
         if self.mode == "legacy":
             raise ValueError("rebuild_for_materials requires mode='basis' "
@@ -483,6 +506,8 @@ class AssembledDense:
             if name not in new.materials:
                 raise KeyError(f"unknown region '{name}'")
             new.materials[name] = mat
+        new.fault_drag = (self.fault_drag if fault_drag is None
+                          else _checked_drag(self.system, fault_drag))
         new._basis = self._basis          # shared geometry cache
         new._lu = None
         new._deflate_n = None

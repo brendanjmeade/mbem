@@ -44,6 +44,7 @@ FIGURES: dict[str, str] = {
     "plate_substrate": "mbem.figures.plate:plate_substrate",
     "plate_thrust": "mbem.figures.plate:plate_thrust",
     "plate_cycle": "mbem.figures.plate:plate_cycle",
+    "plate_creep": "mbem.figures.plate:plate_creep",
     # model-free: no model, no backend, no solve -- the kernels alone
     "point_kernel": "mbem.figures.point_kernel:figure",
     "triangle_field": "mbem.figures.triangle_field:figure",
@@ -57,7 +58,7 @@ FIGURES: dict[str, str] = {
 STUDY_FIGURES = {"topo_inclusion_showcase", "topo_inclusion_contour",
                  "backend_agreement", "eps_convergence",
                  "onfault_stress", "plate_substrate", "plate_thrust",
-                 "plate_cycle"}
+                 "plate_cycle", "plate_creep"}
 # Which take no model at all: pure kernel figures, no solve.
 MODEL_FREE = {"point_kernel", "triangle_field", "triangle_eps_sweep",
               "anelastic_subtraction", "onfault_convergence",

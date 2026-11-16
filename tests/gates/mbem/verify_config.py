@@ -719,6 +719,37 @@ def n_window_run(tmp: pathlib.Path) -> None:
           max(_rel(got[k], direct[k]) for k in direct) < 1e-12,
           f"{max(_rel(got[k], direct[k]) for k in direct):.1e}")
 
+    # ... and READ BACK from the folder alone, on a section: `mbem sample`
+    # must give the state its moduli and its walls, as the solve had them.
+    from mbem import cli, vti, volume as V
+    from mbem.evaluate import evaluate_displacement
+    slug, out = cfg.slug(last["label"]), tmp / "window_section"
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = cli.main(["sample", str(d), "--section", "y=0", "--spacing",
+                         "25", "--state", slug, "--no-eigenstress",
+                         "--out", str(out)])
+    grid = V.section_grid(model, "y", 0.0, 25.0)
+    where = V.classify(model, grid)
+
+    def read(with_model):
+        u = np.full((grid.points.shape[0], 3), np.nan)
+        for i, r in enumerate(with_model.regions, start=1):
+            u[where == i] = evaluate_displacement(
+                with_model, r, direct, grid.points[where == i],
+                run.model.eps, warn_near=False)
+        return u
+
+    sampled = (vti.read(out / f"volume_{slug}.vti")["arrays"]["u"]
+               .reshape(-1, 3) if code == 0 else np.zeros((1, 3)))
+    check("mbem sample --section reads a state with its moduli and walls",
+          code == 0 and sampled.shape == read(state).shape
+          and _rel(sampled, read(state)) < 1e-5,
+          f"exit {code}, {grid.points.shape[0]} points, "
+          f"{_rel(sampled, read(state)) if code == 0 else float('nan'):.1e}")
+    check("the base model would read the same state wrongly",
+          _rel(read(model), read(state)) > 0.02,
+          f"{_rel(read(model), read(state)):.3f}")
+
 
 def l_sweep_dry_run(tmp: pathlib.Path) -> None:
     from mbem import cli

@@ -10,7 +10,8 @@ part of it fails quietly rather than loudly:
      is the only safe shape (rule 9: the contraction kernels are parallel=True
      and no *_contract_serial variants exist), and a chunked result that merely
      LOOKS right is the failure mode -- so it is compared bitwise against one
-     unchunked call.
+     unchunked call. A SECTION (``section_grid``, ``mbem sample --section``)
+     is one plane of the same lattice and must be that plane of the volume.
   b  region classification decides which material and which patch set a point
      is evaluated with. Ask for the host field inside the inclusion and the
      answer is wrong, plausible, and unremarked by anything in the evaluator.
@@ -191,6 +192,29 @@ def a_chunking(model, region, sol, eps) -> None:
     check("outside points are NaN, not 0",
           bool(np.all(np.isnan(one["u"][code == 0]))) if (code == 0).any()
           else True)
+
+    # A SECTION is one plane of the same lattice, sampled by the same code:
+    # at a plane the volume grid has, it must be that plane of the volume.
+    y0 = float(np.unique(grid.points[:, 1])[2])
+    sec = V.section_grid(model, "y", y0, 8.0)
+    on = np.flatnonzero(grid.points[:, 1] == y0)
+    check("a section is one plane of the volume's lattice",
+          sec.dims[1] == 1 and sec.points.shape[0] == on.size
+          and np.array_equal(sec.points, grid.points[on]),
+          f"{sec.dims}")
+    cut = V.sample(model, sol, eps, sec, V.classify(model, sec))
+    for key in ("u", "sigma"):
+        check(f"{key:12s} on the section == in the volume (bitwise)",
+              np.array_equal(cut[key], one[key][on], equal_nan=True))
+    lo, _hi = V.model_bounds(model)
+    refused = 0
+    for axis, at in (("y", float(lo[1])), ("w", 0.0)):
+        try:
+            V.section_grid(model, axis, at, 8.0)
+        except ValueError:
+            refused += 1
+    check("a section in a face of the body, or across no axis, is refused",
+          refused == 2)
 
 
 def b_classification() -> None:

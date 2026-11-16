@@ -302,7 +302,7 @@ def _in_space(study) -> bool:
     return _SPACE
 
 
-def _reference_stack(run, s, x, z_bottom=None):
+def in_plane_reference(run, s, x, z_bottom=None):
     """``(1 + len(s), n_x, 2)``: the reference of every state, the elastic
     one first, for the slip the run PRESCRIBES in a plate over a half-space
     (or over a layer clamped at ``z_bottom``).
@@ -394,7 +394,7 @@ def in_plane_in_time(run, t, x_ref=None, z_bottom=None, coarse=None):
     w = laplace.Prony(s).weights(np.maximum(t, 1e-300))
     w[t <= 0.0] = np.eye(1 + len(s))[0]
     return (x, np.tensordot(w, u, axes=1), x_ref,
-            np.tensordot(w, _reference_stack(run, s, x_ref, z_bottom), axes=1))
+            np.tensordot(w, in_plane_reference(run, s, x_ref, z_bottom), axes=1))
 
 
 def misfit(run, t, z_bottom=None, coarse=None):
@@ -576,7 +576,7 @@ def in_plane_locked(run, phase, period, x_ref=None, coarse=None):
     w = laplace.Prony(s).locked_rate_weights(
         np.atleast_1d(np.asarray(phase, float)) * period, period)
     return (x, np.tensordot(w, u, axes=1), x_ref,
-            np.tensordot(w, _reference_stack(run, s, x_ref), axes=1))
+            np.tensordot(w, in_plane_reference(run, s, x_ref), axes=1))
 
 
 def plate_cycle(study):

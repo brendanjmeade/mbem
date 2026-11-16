@@ -593,6 +593,17 @@ def i_time_payload() -> None:
     _n1, _t1, A1 = W.node_sheet(v, tri)
     check("without the fault the jump is averaged away",
           float(np.abs(A1 @ jump)[on].max()) < 0.5)
+    # the same sheet as two pieces that share no vertices along x = 0.5
+    left = cen[:, 0] < 0.5
+    order = np.r_[np.flatnonzero(left), np.flatnonzero(~left)]
+    piece = np.concatenate([tri[left], tri[~left] + v.shape[0]])
+    n3, _t3, A3 = W.node_sheet(np.vstack([v, v]), piece, [fault])
+    smooth = cen[:, 1] + 2.0 * jump          # any field, the jump included
+    check("pieces that only touch are one surface",
+          n3.shape[0] == nodes.shape[0]
+          and np.allclose(np.sort(A3 @ smooth[order]), np.sort(A @ smooth),
+                          atol=1e-12),
+          f"{2 * v.shape[0]} vertices -> {n3.shape[0]} nodes")
     seg = W.boundary_segments(fault.vertices, fault.triangles)
     check("a fault's outline is its four edges", seg.shape == (4, 2, 3))
 

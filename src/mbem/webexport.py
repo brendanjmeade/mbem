@@ -253,9 +253,12 @@ def node_sheet(vertices, triangles, faults=(), on_fault: float = None):
     nothing the elements do not; what it must not do is average across a
     fault, where the displacement jumps. A node lying on one of ``faults``
     (``TriMesh``) is therefore split, one copy per side, each averaging the
-    elements of its own side only.
+    elements of its own side only. Vertices that COINCIDE are one node: a
+    patch built of pieces that share no vertices (an interface that wraps a
+    slab) is still one surface, and would otherwise tear along its seams.
     """
     from scipy import sparse
+    from scipy.spatial import cKDTree
 
     from . import defaults
     from .geometry import distance_to_mesh
@@ -267,6 +270,12 @@ def node_sheet(vertices, triangles, faults=(), on_fault: float = None):
     cen = corners.mean(axis=1)
     edge = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
     tol = (defaults.WEB_ON_FAULT if on_fault is None else on_fault) * edge.min()
+    pairs = cKDTree(v).query_pairs(tol, output_type="ndarray")
+    if pairs.size:
+        _n, same = sparse.csgraph.connected_components(sparse.coo_matrix(
+            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+            shape=(v.shape[0],) * 2), directed=False)
+        tri = same[tri]                  # a label per group of coincident vertices
     side = np.zeros((nt, 3), np.int64)
     for f in faults:
         d, near = distance_to_mesh(v, f)
@@ -284,7 +293,7 @@ def node_sheet(vertices, triangles, faults=(), on_fault: float = None):
                              axis=0, return_inverse=True)
     index = np.asarray(index).ravel()
     nodes = np.empty((index.max() + 1, 3))
-    nodes[index] = v[tri.ravel()]
+    nodes[index] = corners.reshape(-1, 3)
     w = 1.0 / np.linalg.norm(cen[:, None, :] - corners, axis=2)
     A = sparse.csr_matrix((w.ravel(), (index, np.repeat(np.arange(nt), 3))),
                           shape=(nodes.shape[0], nt))
@@ -329,13 +338,12 @@ def decode_modes(modes, rows) -> np.ndarray:
                         np.asarray(modes, np.float64), axes=1)
 
 
-def time_tables(s, C, periods=(), per_decade: int = None,
-                phases: int = None) -> dict:
-    """``{quantity: {"axis", "at", "rows"}}``: every quantity of time a
-    viewer shows, as rows a reader multiplies into the modes.
+def time_weights(s, periods=(), per_decade: int = None,
+                 phases: int = None) -> dict:
+    """``{quantity: {"axis", "at", "w"}}``: every quantity of time a viewer
+    shows, as the weights ``(n, n_states)`` that take a stack to it.
 
-    ``s`` are the finite collocation points of the run and ``C`` the
-    coefficients ``encode_modes`` returned for its stack. The times are
+    ``s`` are the finite collocation points of the run. The times are
     log-spaced over the fit's own window (``laplace.window``), never beyond
     it:
 
@@ -357,12 +365,23 @@ def time_tables(s, C, periods=(), per_decade: int = None,
     elastic = np.eye(1 + len(pr.s))[0]
     w = np.vstack([elastic, pr.weights(t)])
     at = np.concatenate([[0.0], t])
-    out = {"total": {"axis": "time", "at": at, "rows": w @ C},
-           "since": {"axis": "time", "at": at, "rows": (w - elastic) @ C},
-           "rate": {"axis": "time", "at": t, "rows": pr.rate_weights(t) @ C}}
+    out = {"total": {"axis": "time", "at": at, "w": w},
+           "since": {"axis": "time", "at": at, "w": w - elastic},
+           "rate": {"axis": "time", "at": t, "w": pr.rate_weights(t)}}
     ph = (np.arange(phases) + 0.5) / phases
     for period in periods:
         out[f"locked:{period:g}"] = {
             "axis": "phase", "period": float(period), "at": ph,
-            "rows": pr.locked_rate_weights(ph * period, period) @ C}
+            "w": pr.locked_rate_weights(ph * period, period)}
     return out
+
+
+def time_tables(s, C, periods=(), per_decade: int = None,
+                phases: int = None) -> dict:
+    """``time_weights`` applied to the coefficients ``encode_modes`` returned
+    for a stack: ``rows = w @ C``, what a reader multiplies into the modes.
+    A stack too small to need modes is shipped whole and takes ``w`` itself.
+    """
+    return {name: {**{k: v for k, v in q.items() if k != "w"},
+                   "rows": q["w"] @ C}
+            for name, q in time_weights(s, periods, per_decade, phases).items()}

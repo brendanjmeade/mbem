@@ -125,6 +125,18 @@ Eshelby's ([o]); `layered_box` `lower="creep"` puts it on the megathrust's
 lower reach. A plate that SUBDUCTS (`slab_depth`): the footwall plate
 continued down dip as an elastic slab the interface wraps ([p]).
 
+SHOWN (2026-11-16). <https://brendanjmeade.github.io/ve/>, a sibling of the
+mbem site in its own repo (`brendanjmeade/ve`), moves the stored megathrust,
+afterslip, slab and Burgers-substrate runs through time: surface, plate
+base, creeping fault and a mid-strike section, drawn to scale, with the
+profile against the reference. What is
+here is its numerics: `mbem.webexport`'s fields in time (a stack as
+orthonormal modes, the weights of each time already applied;
+`verify_volume` [i]) and `mbem sample --section` (`verify_volume` [a],
+`verify_config` [n]). Not done there: a two-mesh limit of a 2-D field (the
+map is the fine mesh as solved), a reference in two dimensions to map the
+misfit, a recurrence interval that slides.
+
 OPEN, in the order they bite:
 
 * **A window knows only what its reference solves.** The walls carry the far

@@ -867,6 +867,26 @@ is not in the answer: 1.9 % / 1.6 % / 2.8 % at 800 km for 2.0 % / 1.4 % /
 2.6 % at 400, and with the vertical in, 5.3 / 5.1 / 8.5 % for 5.5 / 5.1 /
 8.6 %.
 
+*A Burgers substrate* (`--set t_min=0.02 --set refine=2 --sweep
+tau_K=0.1,0`: the finer mesh of that pair, with a Maxwell twin on the same
+states). The transient time is a tenth of the steady one and the Kelvin
+spring is the unrelaxed modulus; the window is carried down to $0.02\tau$ so
+that it holds the transient, which makes seventeen states. Such a modulus is
+two Maxwell branches (section 4), 0.525 of it with time $0.049\tau$ and
+0.475 with $2.05\tau$: held at a fixed strain it lets go sooner than a
+Maxwell body and then later, held at a fixed stress it is ahead throughout.
+The megathrust is much the nearer to the second. The elastic state is the
+Maxwell run's own, and the postseismic displacement at mid-strike is 9.2 /
+6.5 / 3.4 / 1.58 / 1.09 times the Maxwell run's at $0.03\tau$ / $0.1\tau$ /
+$0.3\tau$ / $\tau$ / $3\tau$, level with it at $6\tau$, 1.6 % behind near
+$11\tau$ and the same by $100\tau$; model and reference give those ratios
+alike to 0.2 %. In a cycle of $20\tau$ the locked fault's velocity differs by
+27 % at $0.05\,T$ and by 1 % from mid-cycle on. Against the reference with
+the same Burgers substrate the model's postseismic displacement is within
+2.5-2.8 % from $0.03\tau$ to $10\tau$ and 4.3 % at $100\tau$, and its
+Maxwell twin's is within 2.5-2.8 % and 4.3 %: the transient costs nothing.
+219,315 unknowns, seventeen states in 21 minutes, 38-51 iterations a state.
+
 **The elastic box** has the same option (`fault_box.build_model(walls=
 "window")`, `configs/fault_box.py --set walls=window`): its sides and base
 on a uniform half-space, which is `layered_space` with nothing layered. The

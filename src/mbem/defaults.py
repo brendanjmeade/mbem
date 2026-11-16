@@ -984,6 +984,24 @@ LAPLACE_PAD_DECADES = 0.5
 # grid from dividing by rounding.
 PRONY_RCOND = 1.0e-13
 
+# --- A Laplace run as a web payload (webexport.py, the fields in time) ---
+# A stack of state solutions is shipped as an orthonormal basis of its rows,
+# and the modes whose singular value is below this fraction of the largest
+# are dropped. A map to time multiplies a state by weights that sum to ~200
+# in magnitude (~800 for a rate), so a dropped mode costs up to that many
+# times this floor: 1e-7 keeps it under 1e-4 of the leading mode, and on the
+# stored megathrust that is 10 modes of 14, the rest being the solver's own
+# noise.
+WEB_MODE_FLOOR = 1.0e-7
+# Times tabulated per decade of the fit's window, and phases across a cycle.
+# The viewer interpolates the TABLES between them, which are sums of
+# exponentials: at 16 per decade the interpolation is below the fit's error.
+WEB_TIMES_PER_DECADE = 16
+WEB_CYCLE_PHASES = 49
+# A node of a sheet is on a fault -- and its values kept apart by side --
+# when it is within this fraction of the sheet's shortest edge of the fault.
+WEB_ON_FAULT = 1.0e-6
+
 # --- Gravity (model/core.py ``Gravity``; docs/viscoelastic.md section 7) ---
 # Standard gravity, m/s^2. A model overrides it by passing ``g``.
 GRAVITY = 9.8

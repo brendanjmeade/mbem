@@ -562,6 +562,7 @@ dragging into ParaView Glance or with desktop ParaView:
 python -m mbem sample <run-dir>                       # 4 km default
 python -m mbem sample <study-dir> --spacing 8 --difference
 python -m mbem sample <run-dir> --state het --no-eigenstress
+python -m mbem sample <run-dir> --section y=0         # one plane, not the volume
 ```
 
 Post-processing, not a re-solve: the model is rebuilt from the run's own spec
@@ -579,6 +580,13 @@ defined when the two runs have different meshes; a difference is written only
 where both bodies contain the point, and its scalars are recomputed from the
 differenced tensors rather than differenced (the von Mises of a perturbation is
 not a difference of von Mises values).
+
+A Laplace run is sampled state by state, each with its own moduli and, in a
+window, its own walls; time is then the same linear map as on the boundary.
+The site <https://brendanjmeade.github.io/ve/> is made this way: sections and
+boundary sheets as a few orthonormal modes of the states, with the weights of
+each time already applied (`mbem.webexport`, the fields in time), because the
+weights sum to ~200 and a browser cannot combine quantised states.
 
 Two arrays decide whether a value is trustworthy. `region` is 0 outside the
 body — points above the topography and outside the box are NaN, because 0 is a

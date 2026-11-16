@@ -64,6 +64,9 @@ python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set d
 python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 --set rho_substrate=3300 \
     --set edge_near=10 --set near_field_radius=200 --set fault_half_len=150 --set half_x=400 --set sides=window --set t_max=100 --sweep refine=1,2   # ... in a WINDOW: a finite rupture, a small box
 python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 --set rho_substrate=3300 \
+    --set edge_near=10 --set near_field_radius=200 --set fault_half_len=150 --set half_x=400 --set sides=window --set t_max=100 \
+    --set t_min=0.02 --set refine=2 --sweep tau_K=0.1,0   # ... on a BURGERS substrate, against its Maxwell twin: the window reaches below the transient
+python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 --set rho_substrate=3300 \
     --set edge_near=15 --set edge_interface=22.5 --set eps_substrate=2.25 --set near_field_radius=120 --set sides=window --set half_x=300 --set depth_box=200 \
     --set fault_half_len=100 --set t_max=100 --set backend=dense --set lower=creep --sweep creep_tau=1,1e6 --sweep refine=1,1.5   # ... its lower reach creeping: afterslip
 python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=30 --set rho_plate=3300 --set rho_substrate=3300 \

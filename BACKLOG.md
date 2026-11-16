@@ -127,8 +127,9 @@ continued down dip as an elastic slab the interface wraps ([p]).
 
 SHOWN (2026-11-16). <https://brendanjmeade.github.io/ve/>, a sibling of the
 mbem site in its own repo (`brendanjmeade/ve`), moves the stored megathrust,
-afterslip and slab runs through time: surface, plate base, creeping fault
-and a mid-strike section, with the profile against the reference. What is
+afterslip, slab and Burgers-substrate runs through time: surface, plate
+base, creeping fault and a mid-strike section, drawn to scale, with the
+profile against the reference. What is
 here is its numerics: `mbem.webexport`'s fields in time (a stack as
 orthonormal modes, the weights of each time already applied;
 `verify_volume` [i]) and `mbem sample --section` (`verify_volume` [a],

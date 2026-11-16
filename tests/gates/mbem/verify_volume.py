@@ -42,6 +42,14 @@ part of it fails quietly rather than loudly:
      u = A x is exact at ANY moduli: the state readout must return A x and
      C_state:A, the base-model readout of the same solution must MISS, and
      the function the CLI resolves a stored state's model with is pinned.
+  i  a Laplace run in TIME reaches a browser as modes and tables. Time is a
+     map whose weights sum to ~200 in magnitude, so what a reader may combine
+     is not the states: it is an orthonormal basis of them, with the weights
+     already applied here. The decode a reader does must reproduce
+     ``Prony``'s value, rate and locked-fault velocity; the obvious payload
+     -- each state quantised, combined in the page -- is shown losing it; and
+     the sheet a viewer warps must not average a displacement across the
+     fault it jumps on.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -91,6 +99,8 @@ TOL_MANU_S = 5.0e-2      # interior sigma vs C:A
 TOL_MANU_E = 5.0e-2      # strain vs A_sym, and dilatation vs tr A
 TOL_CLEAR = 1.0e-12      # clearance_h vs the evaluator's own d/h
 TOL_WEB_LOG = 3.0e-2     # log10-uint8 over 5 decades; measured 2.4 %
+TOL_WEB_MODES = 5.0e-3   # [i] decode vs Prony, of the quantity's peak; the
+#                          rate is the worst, 2.6e-3 on the stored megathrust
 # [h]: a second material for the same box, softer and at another nu, so that
 # both kernels move (the slip kernel sees nu only, the force kernel 1/mu).
 STATE_MU, STATE_NU = 12.0, 0.18
@@ -483,6 +493,110 @@ def g_webexport() -> None:
           "interpolating a region code invents regions")
 
 
+def i_time_payload() -> None:
+    """[i] a Laplace run through time, as a reader decodes it."""
+    print("\n[i] the web payload in time: modes and tables")
+    from mbem import TriMesh, laplace, webexport as W
+    rng = np.random.default_rng(20261116)
+
+    # A stack with the structure of a real one: a few relaxation times inside
+    # the window, amplitudes falling, and noise at the level a compressed
+    # solve leaves. u~(s) = a0 + sum_j a_j s / (s + 1/tau_j).
+    s = np.array(laplace.s_grid(0.1, 100.0))
+    rows = np.concatenate([[np.inf], s])
+    taus, amp = (0.4, 2.5, 17.0, 60.0), (1.0, 0.3, 0.1, 0.03, 0.01)
+    fields = rng.normal(size=(len(amp), 600, 3)) * np.array(amp)[:, None, None]
+    with np.errstate(invalid="ignore"):
+        basis = np.column_stack([np.ones(rows.size)] + [
+            1.0 / (1.0 + 1.0 / (rows * tau)) for tau in taus])
+    stack = np.tensordot(basis, fields, axes=1)
+    stack += 1.0e-8 * rng.normal(size=stack.shape)
+
+    modes, C = W.encode_modes(stack)
+    check("the stack is a few modes, stored as float32",
+          modes.dtype == np.float32 and modes.shape[0] < stack.shape[0]
+          and modes.shape[1:] == stack.shape[1:],
+          f"{modes.shape[0]} of {stack.shape[0]}")
+    flat = modes.reshape(modes.shape[0], -1).astype(float)
+    close("modes are orthonormal",
+          float(np.abs(flat @ flat.T - np.eye(flat.shape[0])).max()), 1.0e-6)
+
+    periods = (5.0, 20.0)
+    tables = W.time_tables(s, C, periods=periods)
+    pr = laplace.Prony(s)
+    elastic = np.eye(1 + s.size)[0]
+    check("the times stay inside the fit's window",
+          all(tb["at"][-1] <= laplace.window(s)[1] * (1.0 + 1e-12)
+              and tb["at"][tb["at"] > 0.0][0] >= laplace.window(s)[0]
+              * (1.0 - 1e-12)
+              for tb in tables.values() if tb["axis"] == "time"))
+    worst = {}
+    for name, tb in tables.items():
+        at = tb["at"]
+        if name in ("total", "since"):
+            w = np.vstack([elastic, pr.weights(at[1:])])
+            w = w - elastic if name == "since" else w
+            check(f"{name}: t = 0 is the elastic state", at[0] == 0.0)
+        elif name == "rate":
+            w = pr.rate_weights(at)
+        else:
+            w = pr.locked_rate_weights(at * tb["period"], tb["period"])
+        want = np.tensordot(w, stack, axes=1)
+        got = W.decode_modes(modes, tb["rows"])
+        worst[name] = float(np.abs(got - want).max() / np.abs(want).max())
+        close(f"decode == Prony: {name}", worst[name], TOL_WEB_MODES)
+    check("a table per period asked for",
+          {f"locked:{p:g}" for p in periods} <= set(tables))
+
+    # What would look reasonable and is not: quantise each STATE as the other
+    # payload does, and let the page apply the weights.
+    lo, hi = stack.min(), stack.max()
+    q = np.round((stack - lo) / (hi - lo) * 255.0) / 255.0 * (hi - lo) + lo
+    t = tables["since"]["at"][1:]
+    want = np.tensordot(pr.weights(t) - elastic, stack, axes=1)
+    bad = float(np.abs(np.tensordot(pr.weights(t) - elastic, q, axes=1)
+                       - want).max() / np.abs(want).max())
+    check("states quantised to uint8 and combined would lose it", bad > 0.3,
+          f"max err {bad * 100:.0f}% of the peak, weights sum to "
+          f"{np.abs(pr.weights(t)).sum(axis=1).max():.0f}")
+
+    # The sheet: a flat square of P0 elements, cut for half its length by a
+    # vertical fault under the line x = 0.
+    n = 8
+    g = np.linspace(-1.0, 1.0, 2 * n + 1)
+    X, Y = np.meshgrid(g, g, indexing="ij")
+    v = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
+    idx = np.arange(X.size).reshape(X.shape)
+    a, b, c, d = idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]
+    tri = np.concatenate([np.column_stack([a.ravel(), b.ravel(), c.ravel()]),
+                          np.column_stack([a.ravel(), c.ravel(), d.ravel()])])
+    fault = TriMesh(np.array([[0.0, -0.5, 0.0], [0.0, 0.5, 0.0],
+                              [0.0, 0.5, -1.0], [0.0, -0.5, -1.0]]),
+                    np.array([[0, 1, 2], [0, 2, 3]]))
+    cen = v[tri].mean(axis=1)
+    jump = np.sign(cen[:, 0])
+    on = (np.abs(v[:, 0]) < 1e-12) & (np.abs(v[:, 1]) <= 0.5 + 1e-12)
+
+    nodes, tri2, A = W.node_sheet(v, tri, [fault])
+    check("a node on the fault is split, and only there",
+          nodes.shape[0] == v.shape[0] + int(on.sum()),
+          f"{v.shape[0]} -> {nodes.shape[0]} nodes")
+    check("the sheet's triangles are the mesh's",
+          np.array_equal(nodes[tri2], v[tri]))
+    close("a constant stays constant",
+          float(np.abs(A @ np.ones(tri.shape[0]) - 1.0).max()), 1.0e-14)
+    val = A @ jump
+    split = (np.abs(nodes[:, 0]) < 1e-12) & (np.abs(nodes[:, 1]) <= 0.5 + 1e-12)
+    check("across the fault each side keeps its own value",
+          bool(np.all(np.abs(np.abs(val[split]) - 1.0) < 1e-14))
+          and int((val[split] > 0).sum()) == int((val[split] < 0).sum()))
+    _n1, _t1, A1 = W.node_sheet(v, tri)
+    check("without the fault the jump is averaged away",
+          float(np.abs(A1 @ jump)[on].max()) < 0.5)
+    seg = W.boundary_segments(fault.vertices, fault.triangles)
+    check("a fault's outline is its four edges", seg.shape == (4, 2, 3))
+
+
 def h_material_state(model, region, eps, asm) -> None:
     """[h] a state's solution is read with the state's moduli."""
     print("\n[h] MATERIAL STATE: densities and coefficients from ONE state")
@@ -559,6 +673,7 @@ def main() -> bool:
     f_clearance_is_the_solver_s(model, region, sol, eps)
     g_webexport()
     h_material_state(model, region, eps, asm)
+    i_time_payload()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

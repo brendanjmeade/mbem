@@ -1,4 +1,5 @@
-"""Quantise a sampled volume into a payload a browser can hold.
+"""Quantise a sampled volume into a payload a browser can hold; and, below,
+a Laplace run into fields a browser can move through time.
 
 Lives in the package rather than in ``website/`` so the encoder is importable
 and therefore gateable: it is the one piece of the website that can silently
@@ -220,3 +221,148 @@ def export(volume_dir, out_dir, fields=DEFAULT_FIELDS, model=None) -> dict:
         q.unlink()
     man["pruned"] = sorted(q.name for q in stale)
     return man
+
+
+# ---------------------------------------------------------------------
+# a Laplace run through time
+# ---------------------------------------------------------------------
+#
+# A run of the Laplace route stores one solution per state, and time is a
+# linear map of that stack (``laplace.Prony``). Its weights are large and of
+# both signs -- they sum to ~200 in magnitude, ~800 for a rate -- so the
+# states themselves cannot be quantised and combined by a reader: the error
+# of each is multiplied by the weights that cancel. But the stack has few
+# rows and its singular values fall by a decade apiece, so it is shipped as
+# an ORTHONORMAL BASIS of its rows, ``stack = C @ modes``, and every quantity
+# of time as a small table ``weights @ C`` made here, where the weights are.
+# A reader adds a handful of stored fields with one row of a table; the
+# coefficient of a mode is then bounded by the field it is a part of, and the
+# inversion is stated once, in ``laplace``.
+#
+# The modes are float32, not uint8: they go to a vertex buffer, never to a
+# texture, so nothing has to be filtered, and a stress keeps its five decades.
+
+
+def node_sheet(vertices, triangles, faults=(), on_fault: float = None):
+    """``(nodes (M, 3), triangles (T, 3), A)``: a P0 mesh as a sheet a viewer
+    can warp, ``A`` the sparse ``(M, T)`` map from a value per element to a
+    value per node.
+
+    A node takes the mean of the elements around it, weighted by the inverse
+    of the distance to their centroids. It is a DISPLAY smoothing and says
+    nothing the elements do not; what it must not do is average across a
+    fault, where the displacement jumps. A node lying on one of ``faults``
+    (``TriMesh``) is therefore split, one copy per side, each averaging the
+    elements of its own side only.
+    """
+    from scipy import sparse
+
+    from . import defaults
+    from .geometry import distance_to_mesh
+
+    v = np.asarray(vertices, float)
+    tri = np.asarray(triangles, np.int64)
+    nt = tri.shape[0]
+    corners = v[tri]
+    cen = corners.mean(axis=1)
+    edge = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+    tol = (defaults.WEB_ON_FAULT if on_fault is None else on_fault) * edge.min()
+    side = np.zeros((nt, 3), np.int64)
+    for f in faults:
+        d, near = distance_to_mesh(v, f)
+        on = d < tol
+        if not on.any():
+            continue
+        fv = np.asarray(f.vertices, float)[np.asarray(f.triangles)]
+        normal = np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0])
+        for c in range(3):
+            sel = on[tri[:, c]]
+            k = near[tri[sel, c]]
+            s = np.sign(np.einsum("ij,ij->i", cen[sel] - fv[k, 0], normal[k]))
+            side[sel, c] = 3 * side[sel, c] + s.astype(np.int64) + 2
+    _keys, index = np.unique(np.column_stack([tri.ravel(), side.ravel()]),
+                             axis=0, return_inverse=True)
+    index = np.asarray(index).ravel()
+    nodes = np.empty((index.max() + 1, 3))
+    nodes[index] = v[tri.ravel()]
+    w = 1.0 / np.linalg.norm(cen[:, None, :] - corners, axis=2)
+    A = sparse.csr_matrix((w.ravel(), (index, np.repeat(np.arange(nt), 3))),
+                          shape=(nodes.shape[0], nt))
+    A = sparse.diags(1.0 / np.asarray(A.sum(axis=1)).ravel()) @ A
+    return nodes, index.reshape(nt, 3), A
+
+
+def boundary_segments(vertices, triangles) -> np.ndarray:
+    """``(n, 2, 3)``: the edges of a mesh that belong to one triangle only --
+    a fault's outline, as the segments a viewer draws."""
+    tri = np.asarray(triangles, np.int64)
+    e = np.sort(np.concatenate([tri[:, [0, 1]], tri[:, [1, 2]],
+                                tri[:, [2, 0]]]), axis=1)
+    uniq, count = np.unique(e, axis=0, return_counts=True)
+    return np.asarray(vertices, float)[uniq[count == 1]]
+
+
+def encode_modes(stack, floor: float = None) -> tuple:
+    """``(modes, C)`` with ``stack = C @ modes`` up to the modes dropped.
+
+    ``stack`` is ``(n_states, ...)``; ``modes`` is float32 ``(r, ...)``,
+    orthonormal over everything but the first axis, and ``C`` is
+    ``(n_states, r)`` in float64. Modes below ``floor`` of the largest
+    singular value are dropped (``defaults.WEB_MODE_FLOOR``).
+    """
+    from . import defaults
+
+    a = np.asarray(stack, float)
+    if not np.isfinite(a).all():
+        raise ValueError("a stack to encode must be finite everywhere: drop "
+                         "the points outside the body first")
+    u, sv, vt = np.linalg.svd(a.reshape(a.shape[0], -1), full_matrices=False)
+    floor = defaults.WEB_MODE_FLOOR if floor is None else floor
+    r = max(1, int((sv > floor * sv[0]).sum()))
+    return (vt[:r].astype(np.float32).reshape((r,) + a.shape[1:]),
+            u[:, :r] * sv[:r])
+
+
+def decode_modes(modes, rows) -> np.ndarray:
+    """What a reader computes: ``rows @ modes``, ``(n_rows, ...)``."""
+    return np.tensordot(np.asarray(rows, float),
+                        np.asarray(modes, np.float64), axes=1)
+
+
+def time_tables(s, C, periods=(), per_decade: int = None,
+                phases: int = None) -> dict:
+    """``{quantity: {"axis", "at", "rows"}}``: every quantity of time a
+    viewer shows, as rows a reader multiplies into the modes.
+
+    ``s`` are the finite collocation points of the run and ``C`` the
+    coefficients ``encode_modes`` returned for its stack. The times are
+    log-spaced over the fit's own window (``laplace.window``), never beyond
+    it:
+
+    * ``total``: the response at ``t``, ``t = 0`` the elastic state;
+    * ``since``: the same less the elastic state -- what moved after it;
+    * ``rate``: its rate, inside the window only;
+    * ``locked:T``: the velocity of a fault locked between earthquakes that
+      repeat every ``T``, per unit slip rate (``Prony.locked_rate_weights``),
+      at phases of the cycle.
+    """
+    from . import defaults, laplace
+
+    per_decade = (defaults.WEB_TIMES_PER_DECADE if per_decade is None
+                  else per_decade)
+    phases = defaults.WEB_CYCLE_PHASES if phases is None else phases
+    pr = laplace.Prony(s)
+    t0, t1 = laplace.window(s)
+    t = np.geomspace(t0, t1, 1 + int(round(np.log10(t1 / t0) * per_decade)))
+    elastic = np.eye(1 + len(pr.s))[0]
+    w = np.vstack([elastic, pr.weights(t)])
+    at = np.concatenate([[0.0], t])
+    out = {"total": {"axis": "time", "at": at, "rows": w @ C},
+           "since": {"axis": "time", "at": at, "rows": (w - elastic) @ C},
+           "rate": {"axis": "time", "at": t, "rows": pr.rate_weights(t) @ C}}
+    ph = (np.arange(phases) + 0.5) / phases
+    for period in periods:
+        out[f"locked:{period:g}"] = {
+            "axis": "phase", "period": float(period), "at": ph,
+            "rows": pr.locked_rate_weights(ph * period, period) @ C}
+    return out

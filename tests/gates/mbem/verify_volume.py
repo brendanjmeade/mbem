@@ -847,16 +847,19 @@ def j_near_a_face() -> None:
           float(np.abs(eig).max()) > float(np.abs(el).max()),
           f"{np.abs(eig).max():.2e} against {np.abs(el).max():.2e}")
 
-    # a point in what is left of the mollified layer is read from just inside
-    gap = defaults.READOUT_STANDOFF_EPS * defaults.READOUT_EPS_FACTOR * eps
-    skin = plane(0.01 * gap)
+    # a point closer to a face than a tenth of an element is read from there
+    top = region.patches[0].mesh
+    sizes = kb.element_sizes(top)
+    skin = plane(1.0e-3)
+    _d, under = distance_to_mesh(skin, top)
+    gap = defaults.READOUT_STANDOFF_H * sizes[under]     # of its own element
     out = V.stand_off(model, region, skin, eps, near)
-    check("a point in the layer is moved to the stand-off, along the normal",
+    check("a point on the face is moved to the stand-off, along the normal",
           np.allclose(out[:, 2], -gap, atol=1e-12)
           and np.array_equal(out[:, :2], skin[:, :2]),
-          f"{gap:.3f} km below the top")
-    deep = plane(2.0 * gap)
-    check("a point outside the layer is not moved (bitwise)",
+          f"{gap.min():.2f}-{gap.max():.2f} km below the top")
+    deep = plane(2.0 * defaults.READOUT_STANDOFF_H * float(sizes.max()))
+    check("a point beyond the stand-off is not moved (bitwise)",
           np.array_equal(V.stand_off(model, region, deep, eps, near), deep))
     sk = V.Grid(origin=(0.0, 0.0, 0.0), spacing=(1.0, 1.0, 1.0),
                 dims=(skin.shape[0], 1, 1), points=skin)

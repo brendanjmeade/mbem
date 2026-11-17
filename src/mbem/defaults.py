@@ -881,12 +881,21 @@ READOUT_EPS_FACTOR = 0.02
 # as far again; the cost grows as the square (7 % of a megathrust section's
 # time at 2).
 READOUT_NEAR_RADIUS_H = 2.0
-# A point closer to a face than this many NARROWED widths is inside what is
-# left of the mollified layer: the sampler evaluates it that far inside its
-# region instead, along the face's normal (``volume.stand_off``). With exact
-# P2 data on the manufactured box the stress is 9 / 0.8 / 0.1 % off at 0.8 /
-# 2 / 4 narrowed widths; three is 0.006 h at the "auto" width.
-READOUT_STANDOFF_EPS = 3.0
+# A point closer to a recovered patch than this many of the nearest
+# element's h is read from that far inside its region instead, along the
+# element's normal (``volume.stand_off``). On the face the representation
+# returns half the interior limit at any width, and just off it the
+# recovered density's kinks and the steps of the traction left as solved are
+# log features the narrowed width no longer smooths: fine at a tenth of an
+# element, salt-and-pepper closer. Basis, the inclusion's base in the
+# topo-inclusion model (an interface: both densities solved, the traction
+# rough), read from the host; scatter of von Mises against its four
+# neighbours, median / 95th percentile / worst: 4.0 / 203 / 3515 % at
+# 0.006 h, 1.9 / 21 / 140 at 0.02 h, 0.83 / 3.3 / 14 at 0.05 h, 0.56 / 1.8 /
+# 4.2 at 0.1 h, 0.45 / 1.5 / 3.8 at 0.2 h. Between 0.1 and 0.2 h the value
+# itself moves 1.4 %, which is what reading there instead of on the face
+# costs.
+READOUT_STANDOFF_H = 0.1
 # The recovery fits a quadratic at a node to the elements two rings around
 # it, and never across a crease: an element whose normal makes a cosine
 # below this with the node's is left out.

@@ -67,8 +67,8 @@ point within half an element of a patch resolves is the element-constant
 displacement itself, every edge a small dislocation line: 19 % in stress at
 0.1 h with the exact value on every element. Read from a continuous
 displacement recovered from the same values, at a fiftieth of the mollification,
-the near pairs give 1 % there, and a point inside what is left of the layer
-is read at :func:`stand_off`. The clearances are still written: they say
+the near pairs give 1 % there, and a point within a tenth of an element of a
+face is read at :func:`stand_off`. The clearances are still written: they say
 where the recovered readout, not the solve, is what a value rests on.
 
 **``warn_near=False``, deliberately, and the clearance computed here instead.**
@@ -329,12 +329,13 @@ def _derived(u: np.ndarray, sig: np.ndarray, e: np.ndarray) -> dict:
 
 
 def stand_off(model, region, points: np.ndarray, eps, near) -> np.ndarray:
-    """``points`` of ``region``, those inside what is left of a recovered
-    patch's mollified layer moved out of it: to ``near.standoff_eps``
-    narrowed widths from the face, along the nearest element's normal, into
-    the region. On the face itself the representation returns HALF the
-    interior limit whatever the width, so a grid row lying on a face is read
-    one hair inside it instead of at a value that is nobody's.
+    """``points`` of ``region``, those closer to a recovered patch than
+    ``near.standoff_h`` of its nearest element's size moved to that distance,
+    along the element's normal, into the region. On the face itself the
+    representation returns HALF the interior limit whatever the width, and
+    just off it the readout is salt-and-pepper (``READOUT_STANDOFF_H``): a
+    grid row lying on a face is read a tenth of an element inside it instead
+    of at a value that is nobody's.
     """
     from scipy.spatial import cKDTree
 
@@ -344,11 +345,11 @@ def stand_off(model, region, points: np.ndarray, eps, near) -> np.ndarray:
     for p in region.patches:
         if not near.recovers(p):
             continue
-        gap_e = near.standoff_eps * near.eps_factor * np.broadcast_to(
-            np.atleast_1d(kb.resolve_patch_eps(eps, p)), (p.mesh.n_triangles,))
+        h = kb.element_sizes(p.mesh)
+        gap_e = near.standoff_h * h
         # only a point within an element's size and gap of a centroid can be
         # inside the gap of that patch: the exact distance is for those
-        reach = float((kb.element_sizes(p.mesh) + gap_e).max())
+        reach = float((h + gap_e).max())
         d0, _ = cKDTree(p.mesh.centroids()).query(pts, k=1)
         cand = np.flatnonzero(d0 <= reach)
         if cand.size == 0:

@@ -278,8 +278,10 @@ gates FAIL rather than skip without them.
     density** (element values read at a narrower width are worse than
     before). Only the pairs within two elements are read this way, so a
     section costs 7 % more, and the far field is the same sum, bitwise. A
-    point inside what is left of the mollified layer -- a grid row lying on
-    a face -- is read at a stand-off just inside its region, and WHICH region
+    point within a tenth of an element of a face -- a grid row lying on one
+    -- is read from that far inside its region (closer, the recovered
+    density's kinks and the traction's steps are salt-and-pepper at the
+    narrowed width), and WHICH region
     a point on a face is in is a rule, not the solid angle (0 or 4 pi there
     as rounding has it): the first region that owns the patch
     (`volume.classify`). Faults are untouched: a fault's width is the model's

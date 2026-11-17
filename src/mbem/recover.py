@@ -179,11 +179,11 @@ class NearField:
     """
 
     def __init__(self, model, eps_factor: float = None, radius_h: float = None,
-                 standoff_eps: float = None):
+                 standoff_h: float = None):
         pick = lambda v, d: d if v is None else float(v)
         self.eps_factor = pick(eps_factor, defaults.READOUT_EPS_FACTOR)
         self.radius_h = pick(radius_h, defaults.READOUT_NEAR_RADIUS_H)
-        self.standoff_eps = pick(standoff_eps, defaults.READOUT_STANDOFF_EPS)
+        self.standoff_h = pick(standoff_h, defaults.READOUT_STANDOFF_H)
         faults = [f.mesh for r in model.regions for f in r.faults]
         self._ops = {}
         self._patches = []

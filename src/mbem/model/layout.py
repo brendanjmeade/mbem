@@ -3,7 +3,9 @@
 Slot emission rule (reproduces the legacy orderings exactly):
 regions in model order; within a region, patches in declaration order,
 skipping patches already emitted; FREE_TRACTION emits its u-slot,
-PRESCRIBED_DISPLACEMENT emits its t-slot, INTERFACE emits u then t.
+PRESCRIBED_DISPLACEMENT emits its t-slot, INTERFACE emits u then t, and
+then b if its slip is solved (``Patch.slip``): the rows of that slot are the
+law the slip obeys, as a FAULT_TRACTION fault's are.
 
 A slot holds the patch's dof values, 3 * n_dofs entries: the element-major
 nodal density (K nodes per element) of a discontinuous patch, the shared-node
@@ -62,6 +64,8 @@ class UnknownLayout:
                     BCType.PRESCRIBED_DISPLACEMENT: ("t",),
                     BCType.INTERFACE: ("u", "t"),
                 }[patch.bc]
+                if patch.slip == "solved":
+                    kinds = kinds + ("b",)
                 for kind in kinds:
                     slot = Slot(patch, kind, offset, 3 * patch.n_dofs)
                     self.slots.append(slot)

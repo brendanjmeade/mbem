@@ -455,7 +455,11 @@ python -m mbem run configs/plate_substrate.py \
 
 Plate and slab are one region and the interface wraps the slab; a slab of
 the mantle's own material is no slab, to 1 %, which is how the geometry is
-gated.  At the earthquake it is invisible (the surface within 0.8 % and
+gated.  Below the plate's base the megathrust runs down the slab's upper
+face, where slip is two regions moving past each other along an interface
+and not a fault inside one (`depth` greater than `thickness`, with
+`lower=slip` or `lower=creep`): afterslip between slab and mantle wedge,
+under the linear law or a non-linear one.  At the earthquake it is invisible (the surface within 0.8 % and
 1.4 % of the layered reference).  Afterwards it is the largest thing in the
 model: the uplift behind the trench, which halves in a hundred Maxwell times
 without a slab, stays (0.29 of the slip at the earthquake, 0.25 at a
@@ -502,7 +506,7 @@ src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
 configs/                  nine studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 48 gates (print PASS/FAIL)
+tests/                    run_all.py + test_gates.py; 49 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -563,7 +567,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 48 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 49 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 

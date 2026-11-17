@@ -111,10 +111,26 @@ large the earthquake was, so ``slip`` (m) matters here and nowhere else:
 ``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
 footwall plate continues down the dip as an elastic slab to that depth, in
 the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
-(the rupture's half-length by default). The megathrust then ends at the
-plate's base at the deepest (``depth`` no greater than ``thickness``). A
-layered reference knows no slab, so the window's walls carry the slabless
-far field and the comparison with it is the slab's effect, not an error.
+(the rupture's half-length by default). The megathrust is then the plate's
+own down to the plate's base. With ``depth`` greater than ``thickness`` it
+goes on DOWN THE SLAB'S UPPER FACE, which is an interface between slab and
+mantle and not a fault: that reach (``fault_lower`` again) is a part of the
+interface that slips, prescribed or, with ``lower=creep``, solved under
+either route's law -- afterslip between a slab and the mantle wedge. Its
+elements are ``edge_lower`` km (the fault's by default); it lies on the
+substrate's closed boundary and so carries ``eps_substrate``, and wants
+elements several of those across. A layered reference knows no slab, so the
+window's walls carry the slabless far field and the comparison with it is
+the slab's effect, not an error.
+
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=20 --set rake=90 --set depth=50 --set rho_plate=3300 \
+        --set rho_substrate=3300 --set edge_near=15 --set edge_interface=20 \
+        --set near_field_radius=150 --set sides=window --set half_x=500 \
+        --set depth_box=300 --set fault_half_len=100 --set slab_depth=150 \
+        --set edge_lower=7.5 --set tau_K=0.1 --set t_min=0.02 --set t_max=100 \
+        --set backend=dense --set lower=creep \
+        --sweep creep_tau=1,1e6                # a slab, Burgers, afterslip
 
     python -m mbem run configs/plate_substrate.py \
         --set dip=20 --set rake=90 --set depth=30 --set rho_plate=2700 \
@@ -145,7 +161,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              slab_depth: float = 0.0, slab_half_len: float = 0.0,
              route: str = "laplace", creep_law: str = "viscous",
              creep_stress: float = 1.0e-3, creep_n: float = 3.0,
-             slip: float = 1.0, times_per_decade: int = 8) -> Run:
+             slip: float = 1.0, times_per_decade: int = 8,
+             edge_lower: float = 0.0) -> Run:
     if route not in ("laplace", "step"):
         raise ValueError(f"route {route!r}: 'laplace' or 'step'")
     if creep_law not in ("viscous", "power", "friction"):
@@ -168,8 +185,10 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     eps = dict(top="auto", sides_upper="auto", fault="auto",
                interface=eps_substrate, sides_lower=eps_substrate,
                base=eps_substrate)
-    if depth > thickness:                   # the fault goes on in the substrate
-        eps["fault_lower"] = "auto"
+    if depth > thickness:
+        # the fault goes on in the substrate, with a fault's own width; or
+        # down a slab's face, which is the substrate's boundary and has its
+        eps["fault_lower"] = eps_substrate if slab_depth > 0.0 else "auto"
     law = rheology.ViscousFault(tau=creep_tau, width=creep_width)
     if creep_law == "power":
         law = rheology.PowerLawFault(tau=creep_tau, width=creep_width,
@@ -180,8 +199,10 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
             v0=creep_stress * creep_width / (mu_substrate * creep_tau),
             a_sigma=creep_stress, rake=rake)
     step = route == "step"
+    # the earthquake itself, then the window
     n_t = max(1, round(math.log10(t_max / t_min) * times_per_decade))
-    times = tuple(t_min * (t_max / t_min) ** (i / n_t) for i in range(n_t + 1))
+    times = (0.0,) + tuple(t_min * (t_max / t_min) ** (i / n_t)
+                           for i in range(n_t + 1))
     return Run(
         name=f"plate_substrate_{sides}_{backend}",
         model=Model(
@@ -196,6 +217,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                                           edge_interface=edge_interface,
                                           slab_depth=slab_depth,
                                           slab_half_len=slab_half_len,
+                                          **({"edge_lower": edge_lower}
+                                             if edge_lower else {}),
                                           # the far field coarsens WITH the
                                           # box, or a ladder in half_x is a
                                           # ladder in cost and nothing else

@@ -118,7 +118,7 @@ def _same_model(label: str, direct, via) -> None:
     def describe(m):
         return [(r.name, r.material.mu, r.material.lam,
                  tuple((p.name, str(p.bc), p.order, p.layout, p.n_dofs, p.n_triangles,
-                        float(m.orientation(r, p))) for p in r.patches),
+                        float(m.orientation(r, p)), p.slip) for p in r.patches),
                  tuple((f.name, str(f.bc), f.order, f.layout, f.n_dofs, f.allow_opening,
                         f.n_triangles) for f in r.faults))
                 for r in m.regions]
@@ -195,6 +195,23 @@ def a_same_model() -> None:
     _same_model("layered_box, a plate that subducts", direct,
                 layered_box_model(layered_box_meshes(**kw), sides="clamped",
                                   rake=90.0))
+    # ... the megathrust taken down the slab's face, where it creeps
+    kw.update(fault_depth=45.0, slab_half_len=kw["fault_half_len"],
+              edge_lower=7.5)
+    direct = layered_box.build_model(layered_box.build_layered_box(**kw), 1e-3,
+                                     mat, mat, sides="clamped", rake=90.0,
+                                     lower="creep")
+    _same_model("layered_box, the megathrust down the slab's face", direct,
+                layered_box_model(layered_box_meshes(**kw), sides="clamped",
+                                  rake=90.0, lower="creep"))
+    reach = [p for p in direct.regions[0].patches if p.name == "fault_lower"]
+    check("... its reach there an interface that slips, of both regions, "
+          "and no fault",
+          len(reach) == 1 and reach[0].slip == "solved"
+          and any(p is reach[0] for p in direct.regions[1].patches)
+          and [len(r.faults) for r in direct.regions] == [1, 0]
+          and "b:fault_lower" in [s.name for s in
+                                  generate_system(direct).layout.slots])
 
 
 def b_defaults_untouched(run_dir: pathlib.Path) -> dict:

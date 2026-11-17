@@ -1184,6 +1184,50 @@ the trench, rises at $0.41\,V$ just after an earthquake without the slab
 (the reference: 0.39) and sinks at $0.18\,V$ with it. A layered reference
 is not a stand-in for a subduction zone.
 
+**The megathrust down the slab's face.** Below the plate's base the
+megathrust's plane is the slab's upper face, an interface between slab and
+mantle wedge, and slip there is not a fault's: two regions move past each
+other along the patch they share (`Patch.slip`). The traction on it stays
+one unknown and the displacement jumps by the Burgers vector, so the region
+the patch's normal points into sees $\mathbf u+\mathbf b$ wherever it saw
+$\mathbf u$: one more column block, or one more right-hand side, with the
+coefficients $\mathbf u$ already has there, and no new kernel. A SOLVED
+slip's own rows are algebraic,
+
+$$ \mathbf t-\kappa\,\mathbf b=\Delta\mathbf t\ \ \text{in the plane},
+   \qquad \mathbf n\cdot\mathbf b=0 , $$
+
+because the traction on an interface is an unknown already, where a
+fault's is a hypersingular integral over every source: no eigenstress to
+remove, no mollified row. In everything else it is section 9's fault: a
+drag at each $s$, a place in section 6's reduction, a law in the stepper.
+`layered_box` takes the megathrust deeper than the plate under a slab and
+makes that reach (`fault_lower`, as before) the part of the slab's top it
+runs down.
+
+It is exact where there is something exact to ask (`verify_interface_slip`):
+two blocks of different materials, one on the other, slip on the plane
+between them a rigid motion of the upper one (5e-15); a top face dragged by
+$U$ over a plane let go, which slips by $U$ and carries nothing (1e-14); an
+infinite drag the welded interface; a finite one whose slip, prescribed,
+returns the solution it came from; the stepper on it the matrix exponential
+of the reduced operator (1e-7). And against the other formulation: a slab
+of the mantle's own material is no slab, so slip prescribed on its face
+must be the fault through a flat interface, and the free surface says so to
+0.9 % where the reach itself is 36 % of it.
+
+*What a freed reach does is set by the mollification width.* Uniform slip
+ends in a line where its traction is unbounded (section 9), and the reach
+begins on that line. Let go entirely, with slab and mantle one material,
+the reach on the face slips by 0.23 / 0.30 / 0.34 of the rupture's slip at
+an interface width of 3 / 1.5 / 0.75 km -- whatever its elements: 10, 7.5
+and 5 km agree to 3 % -- and the solved fault of section 9 by 0.28 / 0.33
+/ 0.39 at fault widths of 0.35 / 1.5 / 3 km, the opposite way. The two
+approach one answer from either side, their surfaces agree to 2 %, and a
+number for the afterslip of a model carries its width with it. The reach is
+on the substrate's closed boundary, so its width is the substrate's one
+$\varepsilon$ (section 3); it wants elements several of those across.
+
 *The walls do not know the slab.* They carry the slabless far field, and
 the slab's tip is 88 km from one of them. The same model in a window 800 km
 to its walls (67,182 unknowns) differs from this one by 0.1 % at the
@@ -1214,11 +1258,13 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
   the body behind it is on the dense backend.
 - **A stepped run's field in the volume** is a readout per state AND time
   (section 6); `mbem sample` refuses one.
-- **A slab is elastic and welded.** Slip on the slab's face below the plate
-  is slip ON AN INTERFACE, a jump of displacement between two regions; the
-  rows are a prescribed displacement's and are not written. Nor is a slab
-  denser than the mantle around it, which wants the stratification rule of
-  section 7 read face by face.
+- **A slab is of the mantle's density.** Slip on its face is built
+  (section 10), between regions of ONE density: under a contrast the
+  buoyancy of an interface that slips is a load on how far the interface
+  has risen, its two sides have risen differently, and the run is refused.
+  Nor is a slab denser than the mantle around it written, which wants the
+  stratification rule of section 7 read face by face. And an interface
+  that slips is on the dense backend only.
 - **Uniform slip on a plane.** Slip that tapers, a fault that curves, a
   rupture that stops short of the trench (a difference of two faults, by
   linearity): none attempted. The reference of section 8 is one rectangle

@@ -477,9 +477,10 @@ def g_refusals(P, body_m, reach):
                    laplace=cfg.Laplace(faults={"fault_lower": visc}, **lap),
                    stepper=cfg.Stepper(faults={"fault_lower": visc}, t=(1.0,)),
                    **spec), ValueError))
-    model = types.SimpleNamespace(regions=[types.SimpleNamespace(
-        material=types.SimpleNamespace(mu=MU), faults=[types.SimpleNamespace(
-            name="fault_lower", bc=BCType.FAULT_TRACTION)])])
+    # all the two checks ask of a model: its solved faults and their regions
+    model = types.SimpleNamespace(solved_faults=lambda: [(
+        types.SimpleNamespace(material=types.SimpleNamespace(mu=MU)),
+        types.SimpleNamespace(name="fault_lower"))])
     run = cfg.Run(laplace=cfg.Laplace(faults={"fault_lower": power}, **lap),
                   **spec)
     check_bool("a law that is not linear, on the Laplace route",

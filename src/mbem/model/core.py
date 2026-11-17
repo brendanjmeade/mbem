@@ -150,6 +150,19 @@ class Patch:
     body locks; a trace on the free surface stays free), and nothing at P0.
     Allowed: order 0 discontinuous (centroid collocation, the P0 control) and
     order 2 continuous.
+
+    ``slip``: an INTERFACE patch may SLIP -- the two regions it joins move
+    past each other along it, where a fault is slip inside one region. The
+    displacement then jumps by the Burgers vector ``b = u(+n side) -
+    u(-n side)`` (the fault convention, ``n`` the stored normal) and the
+    traction stays one. ``slip="prescribed"``: ``value`` is ``b``.
+    ``slip="solved"``: ``b`` is an unknown (slot ``"b"``), tangential, and
+    ``value`` the traction change it must leave on the patch, as on a
+    FAULT_TRACTION fault, which it is in every way but the equations
+    (``equations.py``): a law, a drag, a place in ``mbem.stepper``. The
+    slot ``"u"`` is then the displacement of the -n side; the region the
+    normal points INTO sees ``u + b`` (``RegionModel.slip_side``). Order 0
+    only, which is what is gated.
     """
     name: str
     mesh: object              # TriMesh-compatible (vertices, triangles, ...)
@@ -159,6 +172,7 @@ class Patch:
     layout: str = "discontinuous"
     allow_opening: bool = False
     locked: object = None
+    slip: object = None       # None | "prescribed" | "solved" (INTERFACE only)
 
     def __post_init__(self):
         if self.order != int(self.order):       # 1.5 must not truncate to P1
@@ -196,6 +210,17 @@ class Patch:
         elif self.allow_opening or self.locked is not None:
             raise ValueError(f"patch '{self.name}': allow_opening and locked "
                              f"apply to a FAULT_TRACTION fault only")
+        if self.slip is not None:
+            if self.slip not in ("prescribed", "solved"):
+                raise ValueError(f"patch '{self.name}': slip must be "
+                                 f"'prescribed' or 'solved' (got {self.slip!r})")
+            if self.bc is not BCType.INTERFACE:
+                raise ValueError(
+                    f"patch '{self.name}': slip is of an INTERFACE patch "
+                    f"(bc {self.bc.value}); slip inside a region is a FAULT")
+            if self.order != 0:
+                raise ValueError(f"patch '{self.name}': an interface that "
+                                 f"slips is order 0 (got {self.order})")
         self._shared = None
         self._refuse_degenerate()
 
@@ -241,6 +266,12 @@ class Patch:
     @property
     def continuous(self) -> bool:
         return self.layout == "continuous"
+
+    @property
+    def solves_slip(self) -> bool:
+        """True where the slip is an unknown of the solve (slot ``"b"``): a
+        FAULT_TRACTION fault, or an interface with ``slip="solved"``."""
+        return self.bc is BCType.FAULT_TRACTION or self.slip == "solved"
 
     @property
     def shared(self):
@@ -434,9 +465,9 @@ class Patch:
         at zero (docstring). ``patches`` are the boundary patches of the
         owning region, which the default rule needs to tell a crack front
         from a trace."""
-        if self.bc is not BCType.FAULT_TRACTION:
+        if not self.solves_slip:
             raise ValueError(f"patch '{self.name}': locked nodes are a "
-                             f"FAULT_TRACTION notion")
+                             f"notion of a solved slip")
         n = self.n_dofs
         if self.locked is None:
             if not self.continuous:
@@ -1004,6 +1035,30 @@ class RegionModel:
     def interface_regions(self, patch: Patch) -> list[Region]:
         """Regions incident to a patch, in model region order."""
         return [r for r in self.regions if any(q is patch for q in r.patches)]
+
+    def slip_side(self, patch: Patch):
+        """The region that sees ``u + b`` on an interface that slips
+        (``Patch.slip``): the one its stored normal points INTO, so that
+        ``b = u(+n side) - u(-n side)`` as on a fault. None for a patch that
+        does not slip."""
+        if patch.slip is None:
+            return None
+        return next(r for r in self.interface_regions(patch)
+                    if self.orientation(r, patch) < 0)
+
+    def solved_faults(self) -> list:
+        """``[(region, patch)]`` for every slip that is an unknown: the
+        FAULT_TRACTION faults, each with the region holding it, and the
+        interfaces with ``slip="solved"``, each with its ``slip_side``."""
+        out = [(r, f) for r in self.regions for f in r.faults
+               if f.bc is BCType.FAULT_TRACTION]
+        seen: set = set()
+        for r in self.regions:
+            for q in r.patches:
+                if q.slip == "solved" and id(q) not in seen:
+                    seen.add(id(q))
+                    out.append((self.slip_side(q), q))
+        return out
 
     def sigma_table(self) -> dict[tuple[str, str], int]:
         return dict(self._sigma)

@@ -158,8 +158,7 @@ def _creeping_faults(model, run: cfg.Run) -> dict:
             f"laplace.faults gives {sorted(laws)} a law, and a fault that "
             f"creeps is a SOLVED fault: dense backend only (got "
             f"{run.backend.kind!r})")
-    solved = {f.name: r.material.mu for r in model.regions for f in r.faults
-              if f.bc is BCType.FAULT_TRACTION}
+    solved = {f.name: r.material.mu for r, f in model.solved_faults()}
     unknown = set(laws) - set(solved)
     if unknown:
         raise KeyError(
@@ -188,8 +187,7 @@ def _stepped_faults(model, run: cfg.Run) -> dict:
         raise ValueError(
             f"a stepped run reduces the body to its SOLVED faults: dense "
             f"backend only (got {run.backend.kind!r})")
-    solved = {f.name: r.material.mu for r in model.regions for f in r.faults
-              if f.bc is BCType.FAULT_TRACTION}
+    solved = {f.name: r.material.mu for r, f in model.solved_faults()}
     if set(laws) != set(solved):
         raise KeyError(
             f"stepper.faults names {sorted(laws)}; the model's "

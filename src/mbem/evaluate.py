@@ -89,13 +89,18 @@ def _region(model: RegionModel, region: Region | str) -> Region:
 
 
 def _density(model: RegionModel, patch, kind: str,
-             solution: dict) -> np.ndarray:
+             solution: dict, region=None) -> np.ndarray:
     """The element-major (K N,3) density of ``kind`` on a patch
     (``patch.order``): ``"u"`` / ``"t"`` is the prescribed value when the BC
     fixes it (``RegionModel.value_of``: a far-field wall's datum belongs to
     the model's material state), else the solved slot; ``"slip"`` is a
     fault's prescribed density, or its solved ``"b:"`` slot expanded
-    (FAULT_TRACTION)."""
+    (FAULT_TRACTION).
+
+    ``"u"`` is the displacement AS ``region`` SEES IT: on an interface that
+    slips (``Patch.slip``) the slot is the -n side's, and the region the
+    normal points into sees it plus the slip. Every readout of a region
+    passes its region; one that did not would read the wrong side."""
     if kind == "slip":
         if patch.bc is BCType.FAULT_TRACTION:
             return patch.expand(solution[f"b:{patch.name}"])
@@ -106,7 +111,12 @@ def _density(model: RegionModel, patch, kind: str,
         raise ValueError(f"unknown density kind {kind!r}")
     if patch.bc is fixed[kind]:
         return model.value_of(patch)
-    return solution[f"{kind}:{patch.name}"]
+    out = solution[f"{kind}:{patch.name}"]
+    if (kind == "u" and patch.slip is not None and region is not None
+            and model.slip_side(patch) is region):
+        out = out + (solution[f"b:{patch.name}"] if patch.slip == "solved"
+                     else patch.density())
+    return out
 
 
 def _traction(model: RegionModel, region: Region, patch,
@@ -119,7 +129,7 @@ def _traction(model: RegionModel, region: Region, patch,
     if B is None:
         return t
     return t + np.einsum("nij,nj->ni", B,
-                         _density(model, patch, "u", solution))
+                         _density(model, patch, "u", solution, region))
 
 
 def _warn_near_boundary(points, region):
@@ -213,7 +223,7 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     mat = region.material
     for p in region.patches:
         sigma = float(model.orientation(region, p))
-        u_p = _density(model, p, "u", solution)
+        u_p = _density(model, p, "u", solution, region)
         if np.any(u_p):
             u -= sigma * _disp_from_source(points, p.mesh, u_p, KERNEL_T,
                                            mat, kb.resolve_patch_eps(eps, p),
@@ -575,7 +585,8 @@ class DisplacementEvaluator:
             coeffs = uc if kind == "t" else tc
             dens = np.asarray(
                 _traction(state, region, src, solution) if kind == "t"
-                else _density(state, src, kind, solution), float).ravel()
+                else _density(state, src, kind, solution, region),
+                float).ravel()
             if np.any(dens):
                 u += sign * pair.matvec(coeffs, dens)
         return u.reshape(-1, 3)
@@ -650,7 +661,7 @@ def evaluate_stress(model: RegionModel, region: Region | str,
         sigma = float(model.orientation(region, p))
         # u_p term (double layer): - sigma * SH @ u_p, minus its eigenstress;
         # the boundary u_p is a jump exactly as a fault slip is.
-        u_p = _density(model, p, "u", solution)
+        u_p = _density(model, p, "u", solution, region)
         if np.any(u_p):
             sig += _add(p.mesh, u_p, sigma, kb.resolve_patch_eps(eps, p),
                         p.order)

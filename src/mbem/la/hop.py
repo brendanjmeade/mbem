@@ -70,6 +70,10 @@ def require_compressible(model) -> None:
                 raise NotImplementedError(
                     "compressed backend: a FAULT_TRACTION or continuous fault "
                     f"needs DenseBackend(mode='direct') (fault '{p.name}')")
+            if p.slip is not None:
+                raise NotImplementedError(
+                    "compressed backend: an interface that slips is on the "
+                    f"dense backend only, where it is gated (patch '{p.name}')")
 
 
 require_order0 = require_compressible          # the former name

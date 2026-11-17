@@ -88,7 +88,8 @@ def layered_box_meshes(*, scale: float = 1.0, half_x: float = 400.0,
                        edge_far: float = 80.0, edge_side: float = 80.0,
                        edge_interface: float = 15.0,
                        dip: float = 90.0, slab_depth: float = 0.0,
-                       slab_half_len: float = 0.0) -> MeshBundle:
+                       slab_half_len: float = 0.0,
+                       edge_lower: float = 0.0) -> MeshBundle:
     """An elastic plate over a substrate with a fault in the plate, at
     ``scale``. As for the fault box, only the EDGES are divided by
     scale: the box does not shrink, it refines."""
@@ -102,7 +103,8 @@ def layered_box_meshes(*, scale: float = 1.0, half_x: float = 400.0,
                           edge_far=edge_far / scale,
                           edge_side=edge_side / scale,
                           edge_interface=edge_interface / scale, dip=dip,
-                          slab_depth=slab_depth, slab_half_len=slab_half_len)
+                          slab_depth=slab_depth, slab_half_len=slab_half_len,
+                          edge_lower=edge_lower / scale)
     meshes = {k: v for k, v in d.items() if hasattr(v, "triangles")}
     arrays = {k: v for k, v in d.items()
               if isinstance(v, np.ndarray) and k not in meshes}

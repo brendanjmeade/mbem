@@ -90,7 +90,7 @@ def needs_direct_mode(model) -> str | None:
     table) and refused by every compressed path."""
     for r in model.regions:
         for p in list(r.patches) + list(r.faults):
-            if p.bc is BCType.FAULT_TRACTION or p.continuous:
+            if p.solves_slip or p.continuous:
                 return p.name
     return None
 
@@ -217,6 +217,8 @@ def warn_fault_rows_near_boundary(system: BlockSystem, eps):
     limit = defaults.COLLOCATION_FAULT_CLEARANCE_EPS
     n_close, worst, names = 0, np.inf, []
     for r, f in system.traction_faults():
+        if f.slip is not None:
+            continue          # an interface's rows read no kernel: no blob
         x = f.collocation_points()
         for q in r.patches:
             try:

@@ -4,7 +4,7 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 48 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 49 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
@@ -188,14 +188,20 @@ OPEN, in the order they bite:
   steps (`events`) and nothing draws them: the creep below a locked patch
   at a rate that varies through the cycle (the last item below) is now a
   run away, with a window of several periods.
-* **Slip on an interface.** Below the plate a slab's upper face is an
-  interface, and slip there is a displacement jump between two regions:
-  the +n region sees `u_p + b`, which is the prescribed-displacement RHS
-  term restricted to that region. Not written, so a slab is welded below
-  the megathrust and deep slip on it cannot be prescribed or solved. A slab
-  DENSER than the mantle also waits: the Laplace route's stratification rule
-  refuses a light body under a heavy one and has no reading for the reverse
-  on a dipping face.
+* **A slab of another density, and slip on one.** Slip on an interface is
+  built (`Patch.slip`, `verify_interface_slip`: prescribed or solved, the
+  megathrust down a slab's upper face), between regions of ONE density and
+  on the dense backend. Under a contrast the buoyancy of an interface that
+  slips is not written (its two sides rise differently) and the run is
+  refused. A slab DENSER than the mantle also waits: the Laplace route's
+  stratification rule refuses a light body under a heavy one and has no
+  reading for the reverse on a dipping face.
+* **What a freed reach does against the rupture's edge is the mollification
+  width's.** Uniform slip ends in a line of unbounded traction; let go, the
+  reach on a slab's face slips 0.23 / 0.30 / 0.34 of the slip at interface
+  widths 3 / 1.5 / 0.75 km (element size does not matter), the solved fault
+  0.28 / 0.33 / 0.39 at fault widths 0.35 / 1.5 / 3 km. Slip that TAPERS to
+  its edge would end it (next item).
 * **Beyond one rectangle with uniform slip.** Slip that tapers down dip, a
   rupture short of the trench (a difference of two faults, by linearity), a
   curved megathrust. `layered_space` is one planar rectangle from the

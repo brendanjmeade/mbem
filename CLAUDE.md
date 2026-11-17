@@ -19,13 +19,13 @@ is the bug.
 | path | what it is |
 |---|---|
 | `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults (slip prescribed, or solved from a traction condition: `BCType.FAULT_TRACTION`), the continuous P2 shared-node fault layout (`model/shared_nodes.py`), dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
-| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a fault from the surface -- vertical strike-slip in the plate unless `dip` and `rake` say otherwise, and THROUGH the interface if `fault_depth` exceeds the plate, its lower reach a second fault, `fault_lower`, in the substrate -- and what it is compared with: the antiplane closed forms, and for dip slip `dip_slip_profile`, a plane-strain reference under gravity that shares nothing with the boundary elements; plus `two_mesh_limit`, what a plate that bends needs; `sides="window"` makes every wall of the box carry the far field of the prescribed slip, `lower="creep"` makes the megathrust's lower reach a solved fault that creeps, `slab_depth` lets the plate subduct as an elastic slab the interface wraps). `layered_space` is the same layer system in THREE dimensions, for a finite rectangular fault at the surface and at depth: the reference a finite rupture is compared with, and what a window's walls are made of. `fault_box` takes `walls="window"` too. Library code, because the gates and the studies both build from them. |
+| `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a fault from the surface -- vertical strike-slip in the plate unless `dip` and `rake` say otherwise, and THROUGH the interface if `fault_depth` exceeds the plate, its lower reach a second fault, `fault_lower`, in the substrate -- and what it is compared with: the antiplane closed forms, and for dip slip `dip_slip_profile`, a plane-strain reference under gravity that shares nothing with the boundary elements; plus `two_mesh_limit`, what a plate that bends needs; `sides="window"` makes every wall of the box carry the far field of the prescribed slip, `lower="creep"` makes the megathrust's lower reach a solved fault that creeps, `slab_depth` lets the plate subduct as an elastic slab the interface wraps, and a fault deeper than the plate then runs down the slab's upper face: `fault_lower` is there a part of the interface that SLIPS, rule 21). `layered_space` is the same layer system in THREE dimensions, for a finite rectangular fault at the surface and at depth: the reference a finite rupture is compared with, and what a window's walls are made of. `fault_box` takes `walls="window"` too. Library code, because the gates and the studies both build from them. |
 | `src/mbem/rheology.py`, `src/mbem/laplace.py` | **Linear viscoelasticity, the Laplace route.** `rheology`: `Maxwell`, `Burgers` as operational shear moduli, stated in relaxation TIMES and modulus ratios (never viscosities), bulk modulus elastic; the states of a Laplace run; the one-eps rule. `laplace`: the collocation points for a window of times, and `Prony`, the fixed-pole fit that turns the stack of per-s elastic solutions into value, rate, periodic-cycle sums and the velocity of a fault locked between repeating earthquakes, each as one linear map. No kernel work: an operator at any s is the elastic one at `(mu(s), lam(s))`. Also `rheology.ViscousFault`: a solved fault that resists its slip rate is, at each s, a fault with a stiffness (`Laplace.faults`, `State.drag`), so afterslip needs no time-stepper either. `PowerLawFault` and `RateStrengtheningFault` are not linear: they have a `rate` and no `drag`, and a fault with one is stepped (rule 20). |
 | `src/mbem/stepper.py` | **A solved fault through time, under a law that need not be linear** (rule 20). The body is linear, so each state is REDUCED TO THE FAULT (`AssembledDense.condense`: traction = `S slip + L`), the body's relaxation is carried as the Laplace fit's own exponentials (`Prony.coefficients`), and the faults alone are integrated (`march`, `scipy`'s `RK45`). `Body` holds the states and makes the fit's relaxed limit passive; `law_rate` turns `rheology` laws into a rate. `Run.stepper` is how a run asks for it; the result is `history.npz`. The Laplace route is untouched: its states are this one's precompute. |
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
-| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 48 gates in `gates/{mbem,clq,moss_kernel}`. |
+| `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 49 gates in `gates/{mbem,clq,moss_kernel}`. |
 | `configs/` | Nine studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, every uppercase `defaults` constant, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
 | `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid, or with `--section y=0` on one plane of it, and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the band near a patch is FLAGGED, never blanked: there a value rests on the readout near a face (rule 19), not on the solve alone. |
@@ -89,7 +89,7 @@ python -m mbem sample <run-dir> --plain          # the element-constant readout 
 python -m mbem publish <run-dir>                 # figures -> docs/figures, with provenance
 python -m mbem verify [-k fmm] [--fast]          # the gates
 
-python tests/run_all.py               # all 48 gates, exit 1 on any FAIL
+python tests/run_all.py               # all 49 gates, exit 1 on any FAIL
 python tests/run_all.py --suite clq -k eigenstress   # one suite, substring filter (--list, --fast)
 python tests/gates/mbem/verify_penny_crack.py        # one gate, by path, as run_all spawns it
 pytest -k penny_crack                 # one gate in-process, with a traceback
@@ -117,7 +117,7 @@ gates FAIL rather than skip without them.
    `verify_oracle_provenance` pins every oracle by resolved path AND sha256, so
    a deliberate edit must update `oracle_manifest.json` in the same commit.
 2. **Every gate is `main() -> bool`, prints `PASS:`/`FAIL:` at column 0 as its
-   last such line, and exits on it.** One convention, all 48: the return value
+   last such line, and exits on it.** One convention, all 49: the return value
    is the authority and the printed line cross-checks it, so a gate whose two
    disagree is reported as MISMATCH rather than trusted. Do not write a
    POSIX-style `return 0` for success — under `assert main()` that is exactly
@@ -226,10 +226,11 @@ gates FAIL rather than skip without them.
     locked), handed to `equations.apply_fault_rows` by the dense backend,
     which is the only one that solves a slip. Its pairs of meshes are too
     close for a two-mesh limit.
-    **A slab** (`slab_depth`) is the plate's own region continued down dip,
-    welded below the megathrust. Give plate and mantle one density: a slab
-    of a lighter plate hanging in a heavier mantle is unstable once anything
-    relaxes, and the run is refused.
+    **A slab** (`slab_depth`) is the plate's own region continued down dip.
+    Give plate and mantle one density: a slab of a lighter plate hanging in
+    a heavier mantle is unstable once anything relaxes, and the run is
+    refused. Below the plate's base the megathrust runs down the slab's
+    upper face, an interface that slips (rule 21).
     **A state is the base model with its own materials**, never cumulative,
     and is read back through `RegionModel.with_materials`.
 17. **Gravity is a condition on the boundary** (`model.Gravity`, held as
@@ -312,3 +313,24 @@ gates FAIL rather than skip without them.
     slip. A law is a `rate` for a traction in the fault's row frame, with no
     state variable yet; its result is `history.npz`, every slot at every
     time, and no state to `mbem sample`.
+21. **Slip between two regions is slip ON AN INTERFACE, not a fault**
+    (`Patch.slip` on an INTERFACE patch, `"prescribed"` or `"solved"`;
+    `model/equations.py`; `verify_interface_slip`). The traction stays one
+    unknown and the displacement jumps by `b = u(+n side) - u(-n side)`,
+    the fault convention: the slot `u` is the -n side's, and the region the
+    stored normal points INTO (`RegionModel.slip_side`) sees `u + b`, in its
+    boundary rows and in **every readout, which therefore asks for a
+    patch's displacement AS A REGION SEES IT** (`evaluate._density(...,
+    region)`): one that read the slot alone would read the wrong side and
+    still look smooth. A solved slip's rows are algebraic, `t - kappa b =
+    dt` in the plane and `b . n = 0`, with no kernel and no eigenstress,
+    and otherwise it is a FAULT_TRACTION fault (`RegionModel.solved_faults`,
+    `BlockSystem.traction_faults`: a drag, the reduction, the stepper).
+    Order 0, dense backend, and ONE density across it (a buoyant slipping
+    interface is refused). `layered_box` uses it where the megathrust
+    leaves the plate under a slab: `fault_lower` is then a part of the
+    slab's upper face, with the megathrust's normal (its orientation is
+    STATED, the plate with its slab not being convex) and the substrate's
+    one eps. **What a freed reach slips against the rupture's edge is set
+    by that eps** (0.23 / 0.30 / 0.34 of the slip at 3 / 1.5 / 0.75 km),
+    not by its elements: quote the width with the number.

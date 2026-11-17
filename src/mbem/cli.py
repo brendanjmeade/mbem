@@ -330,7 +330,8 @@ def cmd_sample(a) -> int:
 
     grid = None
     report = {"source": str(src), "spacing": a.spacing, "volumes": [],
-              "phases": {}, "status": "OK"}
+              "phases": {}, "status": "OK",
+              "readout": "plain" if a.plain else "near"}
     saved = {}
     for child in children:
         run = F.load_run(child)
@@ -374,6 +375,14 @@ def cmd_sample(a) -> int:
         inside = int((code > 0).sum())
         print(f"  inside: {inside:,} of {grid.points.shape[0]:,} "
               f"({100.0 * inside / grid.points.shape[0]:.1f}%)")
+        # The readout near a face, built on the geometry alone: one serves
+        # every state, whose models share the base model's patches.
+        near = None
+        if not a.plain:
+            from mbem.recover import NearField
+            near, dt = V.timed(f"{child.name}: recovery",
+                               lambda: NearField(model), log=print)
+            report["phases"][f"recovery:{child.name}"] = dt
 
         states = [a.state] if a.state else sorted(run.fields)
         if model.far_field is not None:
@@ -402,7 +411,8 @@ def cmd_sample(a) -> int:
             fields, dt = V.timed(
                 f"sample {tag}",
                 lambda: V.sample(st_model, run.fields[st], eps, grid, code,
-                                 eigenstress=not a.no_eigenstress), log=print)
+                                 eigenstress=not a.no_eigenstress, near=near),
+                log=print)
             report["phases"][f"sample:{tag}"] = dt
             saved[tag] = (fields, code)
             arrays = V.as_vti_arrays(grid, fields, code, c_h, c_eps,
@@ -526,6 +536,9 @@ def main(argv=None) -> int:
                    help="one state label; default every state in the run")
     p.add_argument("--no-eigenstress", action="store_true",
                    help="skip C:eps*, halving the stress work")
+    p.add_argument("--plain", action="store_true",
+                   help="the element-constant readout everywhere: no "
+                        "recovered displacement near a face")
     p.add_argument("--difference", action="store_true",
                    help="also write each volume minus the first, on the "
                         "shared grid")

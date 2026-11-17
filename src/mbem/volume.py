@@ -61,6 +61,16 @@ says about the remedy: at fixed eps, refining h 4x improved the near-boundary
 residual only 1.27x, while moving from clearance_h 0.2 to 2 improved it 13x.
 Standing off works; refining the patch barely does.
 
+**That third limit is the READOUT's, and ``near=`` removes most of it**
+(``recover.NearField``; ``mbem sample`` passes one unless ``--plain``). What a
+point within half an element of a patch resolves is the element-constant
+displacement itself, every edge a small dislocation line: 19 % in stress at
+0.1 h with the exact value on every element. Read from a continuous
+displacement recovered from the same values, at a fifth of the mollification,
+the near pairs give 1 % there, and a point inside what is left of the layer
+is read at :func:`stand_off`. The clearances are still written: they say
+where the recovered readout, not the solve, is what a value rests on.
+
 **``warn_near=False``, deliberately, and the clearance computed here instead.**
 The evaluator's near-boundary warning runs a k=32 exact point-to-triangle
 distance whose temporaries are (N, 32, 3) -- ~8-12 KB per point against ~400 B
@@ -276,10 +286,53 @@ def _derived(u: np.ndarray, sig: np.ndarray, e: np.ndarray) -> dict:
     }
 
 
+def stand_off(model, region, points: np.ndarray, eps, near) -> np.ndarray:
+    """``points`` of ``region``, those inside what is left of a recovered
+    patch's mollified layer moved out of it: to ``near.standoff_eps``
+    narrowed widths from the face, along the nearest element's normal, into
+    the region. On the face itself the representation returns HALF the
+    interior limit whatever the width, so a grid row lying on a face is read
+    one hair inside it instead of at a value that is nobody's.
+    """
+    from scipy.spatial import cKDTree
+
+    pts = np.array(points, float)
+    best = np.ones(pts.shape[0])                 # distance over gap; < 1 moves
+    shift = np.zeros_like(pts)
+    for p in region.patches:
+        if not near.recovers(p):
+            continue
+        gap_e = near.standoff_eps * near.eps_factor * np.broadcast_to(
+            np.atleast_1d(kb.resolve_patch_eps(eps, p)), (p.mesh.n_triangles,))
+        # only a point within an element's size and gap of a centroid can be
+        # inside the gap of that patch: the exact distance is for those
+        reach = float((kb.element_sizes(p.mesh) + gap_e).max())
+        d0, _ = cKDTree(p.mesh.centroids()).query(pts, k=1)
+        cand = np.flatnonzero(d0 <= reach)
+        if cand.size == 0:
+            continue
+        d, idx = distance_to_mesh(pts[cand], p.mesh)
+        ratio = d / gap_e[idx]
+        take = ratio < best[cand]
+        if not take.any():
+            continue
+        normals, _ = p.mesh.normals_and_areas()
+        inward = -float(model.orientation(region, p)) * np.asarray(normals, float)
+        who = cand[take]
+        best[who] = ratio[take]
+        shift[who] = (gap_e[idx] - d)[take, None] * inward[idx[take]]
+    return pts + shift
+
+
 def sample(model, solution: dict, eps, grid: Grid, code: np.ndarray,
            chunk: int = None, eigenstress: bool = True,
-           progress=None) -> dict:
+           progress=None, near=None) -> dict:
     """Evaluate one solved state on ``grid``. Returns ``(N, ...)`` arrays.
+
+    ``near`` (``recover.NearField``, built once for the model) is the readout
+    near a face: the pairs close to a boundary patch read from a continuous
+    displacement, and a point inside the thinned mollified layer read at
+    :func:`stand_off` from the face.
 
     ``code`` comes from :func:`classify` and decides which region's material
     and patch set each point is evaluated with. Points outside every region are
@@ -295,6 +348,13 @@ def sample(model, solution: dict, eps, grid: Grid, code: np.ndarray,
     """
     chunk = chunk or defaults.VOLUME_CHUNK
     n = grid.points.shape[0]
+    if near is not None and not any(near.recovers(p) for r in model.regions
+                                    for p in r.patches):
+        # patches are known to it by identity: handed another model's, it
+        # would recover nothing and the plain readout would come back unmarked
+        raise ValueError("this NearField recovers no patch of the model: it "
+                         "was built for another model, or the model has no "
+                         "boundary patch of order 0")
     out = {
         "u": np.full((n, 3), np.nan),
         "sigma": np.full((n, 3, 3), np.nan),
@@ -311,11 +371,13 @@ def sample(model, solution: dict, eps, grid: Grid, code: np.ndarray,
         for s in range(0, where.size, chunk):
             sel = where[s:s + chunk]
             pts = grid.points[sel]
+            if near is not None:
+                pts = stand_off(model, r, pts, eps, near)
             out["u"][sel] = evaluate_displacement(
-                model, r, solution, pts, eps, warn_near=False)
+                model, r, solution, pts, eps, warn_near=False, near=near)
             got = evaluate_stress(model, r, solution, pts, eps,
                                   subtract_anelastic=True, warn_near=False,
-                                  parts=eigenstress)
+                                  parts=eigenstress, near=near)
             sig = got[0] if eigenstress else got
             out["sigma"][sel] = sig
             out["strain"][sel] = _strain(sig, mu, lam)

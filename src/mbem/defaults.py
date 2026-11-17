@@ -844,6 +844,49 @@ VOLUME_CHUNK = 50_000
 # 0 / 0. 20 is the smallest rung under 1e-8 everywhere (~100x on the grid;
 # 10 fails on the sphere) at ~pi (20 (eps + h))^2 / A_tri pairs per point.
 EIGEN_NEAR_RADIUS_EPS = 20.0
+# --- The readout near a face (recover.py, evaluate.py ``near=``) ---------
+# Within about half an element of a boundary patch the readout resolves the
+# element-constant displacement it integrates: every element edge is a small
+# dislocation line. ``recover.NearField`` reads the near pairs from a
+# CONTINUOUS P2 displacement recovered from the same values instead.
+#
+# A node of a surface is on a fault -- and its values kept apart by side --
+# when it is within this fraction of the surface's shortest edge of the fault
+# (``shared_nodes.split_nodes``: the recovery, and the sheets of a web
+# payload).
+ON_FAULT_OVER_EDGE = 1.0e-6
+# The mollification of a recovered patch at readout, as a fraction of the
+# width it was solved with. The mollified layer (the field falls to half its
+# value on the face) is about two widths deep, so this thins it fivefold.
+# ONLY with the recovered density: element-constant values read with a
+# narrower width expose their edges and are worse (0.25 against 0.19 rms in
+# stress at 0.1 h on the manufactured box; ``verify_volume`` [j]).
+READOUT_EPS_FACTOR = 0.2
+# An element is read from the recovered density by the observation points
+# within this many of its own h of its centroid; beyond that it is the
+# element-constant value at the solve's width, as everywhere before. Basis
+# (the manufactured box under a point force 2.5 h above its top, stress at
+# 0.5 and 0.75 h below it): 1 h leaves 7.6 / 8.1 %, a seam; 2, 3 and 5 h
+# leave 4.7 / 4.2, 4.9 / 4.3 and 4.8 / 4.2 %, and under uniform strain the
+# three agree to 0.1 % at every depth. A chunk of elements shares one ball
+# (``evaluate._near_blocks``), so the pairs read this way reach up to half
+# as far again; the cost grows as the square (7 % of a megathrust section's
+# time at 2).
+READOUT_NEAR_RADIUS_H = 2.0
+# A point closer to a face than this many NARROWED widths is inside what is
+# left of the mollified layer: the sampler evaluates it that far inside its
+# region instead, along the face's normal (``volume.stand_off``). With exact
+# P2 data on the manufactured box the stress is 9 / 0.8 / 0.1 % off at 0.8 /
+# 2 / 4 narrowed widths; three is 0.06 h at the "auto" width.
+READOUT_STANDOFF_EPS = 3.0
+# The recovery fits a quadratic at a node to the elements two rings around
+# it, and never across a crease: an element whose normal makes a cosine
+# below this with the node's is left out.
+READOUT_CREASE_COS = 0.7
+# Elements a quadratic and a linear fit need (6 and 3 coefficients, with
+# room): with fewer the fit is linear, then the mean.
+READOUT_MIN_QUADRATIC = 10
+READOUT_MIN_LINEAR = 4
 
 # --- Nodal (P1/P2) triangle kernels, kernels/tri_nodal.py --------------
 # The divergence-theorem closed form loses digits roughly like (R/L)^4-5 for
@@ -998,9 +1041,6 @@ WEB_MODE_FLOOR = 1.0e-7
 # exponentials: at 16 per decade the interpolation is below the fit's error.
 WEB_TIMES_PER_DECADE = 16
 WEB_CYCLE_PHASES = 49
-# A node of a sheet is on a fault -- and its values kept apart by side --
-# when it is within this fraction of the sheet's shortest edge of the fault.
-WEB_ON_FAULT = 1.0e-6
 
 # --- Gravity (model/core.py ``Gravity``; docs/viscoelastic.md section 7) ---
 # Standard gravity, m/s^2. A model overrides it by passing ``g``.

@@ -720,35 +720,43 @@ def n_window_run(tmp: pathlib.Path) -> None:
           f"{max(_rel(got[k], direct[k]) for k in direct):.1e}")
 
     # ... and READ BACK from the folder alone, on a section: `mbem sample`
-    # must give the state its moduli and its walls, as the solve had them.
+    # must give the state its moduli and its walls, as the solve had them,
+    # and read it near a face from the recovered displacement
+    # (``recover.NearField``) unless asked for the element values.
     from mbem import cli, vti, volume as V
-    from mbem.evaluate import evaluate_displacement
-    slug, out = cfg.slug(last["label"]), tmp / "window_section"
-    with contextlib.redirect_stdout(io.StringIO()):
-        code = cli.main(["sample", str(d), "--section", "y=0", "--spacing",
-                         "25", "--state", slug, "--no-eigenstress",
-                         "--out", str(out)])
+    from mbem.recover import NearField
+    slug = cfg.slug(last["label"])
     grid = V.section_grid(model, "y", 0.0, 25.0)
     where = V.classify(model, grid)
 
-    def read(with_model):
-        u = np.full((grid.points.shape[0], 3), np.nan)
-        for i, r in enumerate(with_model.regions, start=1):
-            u[where == i] = evaluate_displacement(
-                with_model, r, direct, grid.points[where == i],
-                run.model.eps, warn_near=False)
-        return u
+    def sampled(*flags):
+        out = tmp / ("window_section" + "".join(flags))
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["sample", str(d), "--section", "y=0",
+                             "--spacing", "25", "--state", slug,
+                             "--no-eigenstress", "--out", str(out), *flags])
+        return (vti.read(out / f"volume_{slug}.vti")["arrays"]["u"]
+                .reshape(-1, 3) if code == 0 else np.zeros((1, 3)))
 
-    sampled = (vti.read(out / f"volume_{slug}.vti")["arrays"]["u"]
-               .reshape(-1, 3) if code == 0 else np.zeros((1, 3)))
+    def read(with_model, near=None):
+        return V.sample(with_model, direct, run.model.eps, grid, where,
+                        eigenstress=False, near=near)["u"]
+
+    near = NearField(model)
+    got, want = sampled(), read(state, near)
     check("mbem sample --section reads a state with its moduli and walls",
-          code == 0 and sampled.shape == read(state).shape
-          and _rel(sampled, read(state)) < 1e-5,
-          f"exit {code}, {grid.points.shape[0]} points, "
-          f"{_rel(sampled, read(state)) if code == 0 else float('nan'):.1e}")
+          got.shape == want.shape and _rel(got, want) < 1e-5,
+          f"{grid.points.shape[0]} points, "
+          f"{_rel(got, want) if got.shape == want.shape else float('nan'):.1e}")
+    check("... near a face from the recovered displacement, by default",
+          _rel(want, read(state)) > 1e-3, f"{_rel(want, read(state)):.3f}")
+    plain = sampled("--plain")
+    check("... and from the element values with --plain",
+          plain.shape == want.shape and _rel(plain, read(state)) < 1e-5,
+          f"{_rel(plain, read(state)) if plain.shape == want.shape else float('nan'):.1e}")
     check("the base model would read the same state wrongly",
-          _rel(read(model), read(state)) > 0.02,
-          f"{_rel(read(model), read(state)):.3f}")
+          _rel(read(model, near), want) > 0.02,
+          f"{_rel(read(model, near), want):.3f}")
 
 
 def l_sweep_dry_run(tmp: pathlib.Path) -> None:

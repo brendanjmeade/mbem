@@ -39,6 +39,59 @@ from ..kernels.basis import n_nodes
 WELD_TOL_OVER_H = 1e-9
 
 
+def split_nodes(vertices, triangles, faults=(), on_fault: float = None):
+    """``(nodes (M, 3), index (T, 3))``: the nodes of a triangulated surface
+    on which a field that is continuous EXCEPT ACROSS A FAULT has one value
+    each, and the node of every element corner.
+
+    Vertices that COINCIDE are one node: a patch built of pieces that share
+    no vertices (an interface that wraps a slab) is still one surface. A node
+    lying on one of ``faults`` (``TriMesh``) is split, one copy per side,
+    because the displacement jumps there and nothing may be averaged or
+    fitted across it. "On" is within ``defaults.ON_FAULT_OVER_EDGE`` of the
+    surface's shortest edge; the side of an element is the side of the fault
+    its centroid is on.
+    """
+    from scipy import sparse
+    from scipy.spatial import cKDTree
+
+    from .. import defaults
+    from ..geometry import distance_to_mesh
+
+    v = np.asarray(vertices, float)
+    tri = np.asarray(triangles, np.int64)
+    corners = v[tri]
+    cen = corners.mean(axis=1)
+    edge = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
+    tol = (defaults.ON_FAULT_OVER_EDGE if on_fault is None
+           else on_fault) * edge.min()
+    pairs = cKDTree(v).query_pairs(tol, output_type="ndarray")
+    if pairs.size:
+        _n, same = sparse.csgraph.connected_components(sparse.coo_matrix(
+            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+            shape=(v.shape[0],) * 2), directed=False)
+        tri = same[tri]                  # a label per group of coincident vertices
+    side = np.zeros(tri.shape, np.int64)
+    for f in faults:
+        d, near = distance_to_mesh(v, f)
+        on = d < tol
+        if not on.any():
+            continue
+        fv = np.asarray(f.vertices, float)[np.asarray(f.triangles)]
+        normal = np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0])
+        for c in range(3):
+            sel = on[tri[:, c]]
+            k = near[tri[sel, c]]
+            s = np.sign(np.einsum("ij,ij->i", cen[sel] - fv[k, 0], normal[k]))
+            side[sel, c] = 3 * side[sel, c] + s.astype(np.int64) + 2
+    _keys, index = np.unique(np.column_stack([tri.ravel(), side.ravel()]),
+                             axis=0, return_inverse=True)
+    index = np.asarray(index).ravel()
+    nodes = np.empty((index.max() + 1, 3))
+    nodes[index] = corners.reshape(-1, 3)
+    return nodes, index.reshape(tri.shape[0], 3)
+
+
 @dataclass(eq=False)
 class SharedNodes:
     coords: np.ndarray        # (n, 3): welded vertices, then edge nodes

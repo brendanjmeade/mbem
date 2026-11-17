@@ -26,7 +26,8 @@ is the bug.
 | `tests/` | `run_all.py` (the authoritative runner) and `test_gates.py` (pytest over the same set). 47 gates in `gates/{mbem,clq,moss_kernel}`. |
 | `configs/` | Nine studies. A study is a Python module declaring `RUN` or `run_spec(**kwargs) -> Run`. It NAMES a builder rather than describing patches, so it cannot restate the fault sign or the eps rule; `verify_config` proves the config path and the gates build the same model, fault Burgers vector included. |
 | `runs/` | One self-describing folder per run (gitignored): `resolved.json` (spec, effective kwargs, resolved eps per patch, every uppercase `defaults` constant, environment), `report.json`, `fields_<state>.npz`, `STATUS`, `MANIFEST`. |
-| `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid, or with `--section y=0` on one plane of it, and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the mollification band is FLAGGED, never blanked, because on this model it overstates the topography effect 33x. |
+| `src/mbem/volume.py`, `src/mbem/vti.py` | **Volumetric readout.** `mbem sample <run>` re-evaluates a stored solution on a 3-D grid, or with `--section y=0` on one plane of it, and writes `.vti` (VTK ImageData, hand-rolled: meshio cannot write it and `vtk` is a 100 MB wheel). Post-processing only -- it rebuilds the model from the run's spec and skips the assembly and the solve. Each point is classified by `RegionModel.point_in_region` (the Gauss closure identity, so topography is handled by the warped mesh itself) and carries `clearance_h` / `clearance_eps`: the band near a patch is FLAGGED, never blanked: there a value rests on the readout near a face (rule 19), not on the solve alone. |
+| `src/mbem/recover.py` | **The readout near a face** (rule 19). `recovery_operator`: a value per element -> a continuous P2 density, by a quadratic fitted over two rings of elements, never across a fault (`shared_nodes.split_nodes`) or a crease. `NearField`: what `evaluate_displacement`, `evaluate_stress` and `volume.sample` take as `near=`, built once for a model's geometry and good for every state. Post-processing: no solve, no stored run and no backend changes. |
 | `src/mbem/figures/` | The figure makers, named in a lazy registry so importing `mbem` never imports matplotlib. Three kinds, and the CLI dispatches on which: **model-free** (the kernels alone, `mbem figure KEY`), **run** (one solve), **study** (several runs, because the quantity is a difference between operators). `save_figure` is the one statement of the png+pdf convention the demos each carried a copy of. |
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
 | `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. A SIBLING site, <https://brendanjmeade.github.io/ve/>, shows the Laplace runs through time; its source is its own repo (`brendanjmeade/ve`), and only its numerics are here: the second half of `mbem.webexport` (`encode_modes`, `time_weights`, `time_tables`, `node_sheet`), gated by `verify_volume` [i]. Time is a map whose weights sum to ~200, so a state is never quantised and combined in a page: a stack is shipped as orthonormal modes with the weights already applied. |
@@ -79,6 +80,7 @@ python -m mbem show <run-dir> --section effective
 python -m mbem sample <run-dir> [--spacing 4]    # a 3-D grid -> .vti volumes
 python -m mbem sample <study-dir> --difference   # every child on ONE grid, plus differences
 python -m mbem sample <run-dir> --section y=0    # one plane: a vertical section at mid-strike
+python -m mbem sample <run-dir> --plain          # the element-constant readout everywhere (rule 19)
 python -m mbem publish <run-dir>                 # figures -> docs/figures, with provenance
 python -m mbem verify [-k fmm] [--fast]          # the gates
 
@@ -259,3 +261,22 @@ gates FAIL rather than skip without them.
     fault is as long as it is:** a study with a window among its runs is
     compared with the reference in three dimensions, not with plane strain,
     which an 800 km megathrust misses by 5-10 % once the substrate relaxes.
+19. **Near a face the field is read from a continuous displacement**
+    (`recover.NearField`, the `near=` of the evaluators and of
+    `volume.sample`; `mbem sample` uses it unless `--plain`). Within half an
+    element of a boundary patch the readout resolves the element-constant
+    displacement it integrates, each edge a small dislocation line: 19 % in
+    stress at 0.1 h with the EXACT value on every element, so no solver that
+    returns a value per element removes it and none is changed. Three parts,
+    and each is needed: the DISPLACEMENT of every order-0 boundary patch is
+    recovered as a continuous P2 density (not across a fault, where it
+    jumps); **the traction is left as solved** -- where a fault cuts an
+    interface each region's traction has a real spike, and smoothing it moved
+    the megathrust's interior 7-9 %; and the mollification of the recovered
+    patches is narrowed to a fifth, which is **safe only with the recovered
+    density** (element values read at a narrower width are worse than
+    before). Only the pairs within two elements are read this way, so a
+    section costs 7 % more, and the far field is the same sum, bitwise. A
+    point inside what is left of the mollified layer -- a grid row lying on
+    a face -- is read at a stand-off just inside its region. Faults are
+    untouched: a fault's width is the model's own.

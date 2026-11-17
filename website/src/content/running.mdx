@@ -135,6 +135,7 @@ python -m mbem list                         # runs, newest first
 python -m mbem show <run-dir> --section effective
 python -m mbem run configs/fault_box.py --dry-run    # validate, build nothing
 python -m mbem sample <run-dir> --spacing 8          # a 3-D grid -> .vti
+python -m mbem sample <run-dir> --plain              # ... from the elements' values near a boundary too
 python -m mbem verify --fast                         # the gates
 ```
 

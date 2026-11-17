@@ -51,6 +51,17 @@ part of it fails quietly rather than loudly:
      -- each state quantised, combined in the page -- is shown losing it; and
      the sheet a viewer warps must not average a displacement across the
      fault it jumps on.
+  j  NEAR A FACE the readout resolves the element-constant displacement it
+     integrates: every element edge is a small dislocation line, and within
+     half an element the stress is tens of per cent wrong with nothing to say
+     so. ``recover.NearField`` reads the near pairs from a continuous
+     displacement recovered from the same values, at a narrowed width, and
+     leaves the traction and the solve alone. Each of the three is held to
+     the exact field of the manufactured box, with what it replaces shown
+     missing: the element values, the narrowed width WITHOUT the recovery
+     (worse than doing nothing), a fit ACROSS a fault. And the bookkeeping:
+     far pairs untouched bitwise, chunks transparent, a point in what is left
+     of the mollified layer read from just inside it.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -102,6 +113,15 @@ TOL_CLEAR = 1.0e-12      # clearance_h vs the evaluator's own d/h
 TOL_WEB_LOG = 3.0e-2     # log10-uint8 over 5 decades; measured 2.4 %
 TOL_WEB_MODES = 5.0e-3   # [i] decode vs Prony, of the quantity's peak; the
 #                          rate is the worst, 2.6e-3 on the stored megathrust
+# [j] depths below the free top, in elements, and what is asked there.
+# Measured: with the recovered readout the worst point is 1.2e-2 in stress
+# and 1.3e-2 in displacement (the solve's own floor); the element-constant
+# readout is 0.19 / 0.11 / 0.033 rms in stress at these depths.
+NEAR_DEPTHS = (0.1, 0.2, 0.5)
+TOL_NEAR_S = 3.0e-2      # stress vs C:A, worst point, recovered readout
+TOL_NEAR_U = 2.5e-2      # displacement vs A x, of the plane's peak
+MISS_NEAR_S = 0.10       # the element-constant readout at 0.1 h must miss
+TOL_RECOVER = 1.0e-10    # a quadratic through the recovery
 # [h]: a second material for the same box, softer and at another nu, so that
 # both kernels move (the slip kernel sees nu only, the force kernel 1/mu).
 STATE_MU, STATE_NU = 12.0, 0.18
@@ -141,6 +161,45 @@ def _closed_box(edge=BOX_EDGE):
             make_vertical_panel_eq("y", xr[0], xr, (-BOX_H, 0.0), edge, -1),
         ]),
     }
+
+
+def _cut_sheet():
+    """``(vertices, triangles, fault)``: a flat square of P0 elements, cut
+    for half its length by a vertical fault under the line x = 0."""
+    from mbem import TriMesh
+    n = 8
+    g = np.linspace(-1.0, 1.0, 2 * n + 1)
+    X, Y = np.meshgrid(g, g, indexing="ij")
+    v = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
+    idx = np.arange(X.size).reshape(X.shape)
+    a, b, c, d = idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]
+    tri = np.concatenate([np.column_stack([a.ravel(), b.ravel(), c.ravel()]),
+                          np.column_stack([a.ravel(), c.ravel(), d.ravel()])])
+    fault = TriMesh(np.array([[0.0, -0.5, 0.0], [0.0, 0.5, 0.0],
+                              [0.0, 0.5, -1.0], [0.0, -0.5, -1.0]]),
+                    np.array([[0, 1, 2], [0, 2, 3]]))
+    return v, tri, fault
+
+
+def _free_top():
+    """The manufactured box with its top FREE under the exact traction of
+    u = A x, so that the top's displacement is SOLVED: the density the
+    readout near a face recovers. Returns (model, region, sol)."""
+    box = _closed_box()
+    mat = ElasticMaterial(mu=30.0, lam=2.0 * 30.0 * NU / (1.0 - 2.0 * NU))
+    sig = mat.lam * np.trace(STRAIN_A) * np.eye(3) \
+        + mat.mu * (STRAIN_A + STRAIN_A.T)
+    patches = [Patch("top", box["top"], BCType.FREE_TRACTION,
+                     value=sig[:, 2])]                 # C:A on the normal +z
+    patches += [Patch(k, box[k], BCType.PRESCRIBED_DISPLACEMENT,
+                      value=np.asarray(box[k].centroids(), float) @ STRAIN_A.T)
+                for k in ("sides", "base")]
+    region = Region("block", mat, patches,
+                    probe_point=np.array([1.0, 2.0, -0.5 * BOX_H]))
+    model = RegionModel([region])
+    sol = AssembledDense(generate_system(model), EPS_BOX, "direct",
+                         jump="calibrated").solve()
+    return model, region, sol
 
 
 def _manufactured():
@@ -584,19 +643,7 @@ def i_time_payload() -> None:
           f"max err {bad * 100:.0f}% of the peak, weights sum to "
           f"{np.abs(pr.weights(t)).sum(axis=1).max():.0f}")
 
-    # The sheet: a flat square of P0 elements, cut for half its length by a
-    # vertical fault under the line x = 0.
-    n = 8
-    g = np.linspace(-1.0, 1.0, 2 * n + 1)
-    X, Y = np.meshgrid(g, g, indexing="ij")
-    v = np.column_stack([X.ravel(), Y.ravel(), np.zeros(X.size)])
-    idx = np.arange(X.size).reshape(X.shape)
-    a, b, c, d = idx[:-1, :-1], idx[1:, :-1], idx[1:, 1:], idx[:-1, 1:]
-    tri = np.concatenate([np.column_stack([a.ravel(), b.ravel(), c.ravel()]),
-                          np.column_stack([a.ravel(), c.ravel(), d.ravel()])])
-    fault = TriMesh(np.array([[0.0, -0.5, 0.0], [0.0, 0.5, 0.0],
-                              [0.0, 0.5, -1.0], [0.0, -0.5, -1.0]]),
-                    np.array([[0, 1, 2], [0, 2, 3]]))
+    v, tri, fault = _cut_sheet()
     cen = v[tri].mean(axis=1)
     jump = np.sign(cen[:, 0])
     on = (np.abs(v[:, 0]) < 1e-12) & (np.abs(v[:, 1]) <= 0.5 + 1e-12)
@@ -630,6 +677,159 @@ def i_time_payload() -> None:
           f"{2 * v.shape[0]} vertices -> {n3.shape[0]} nodes")
     seg = W.boundary_segments(fault.vertices, fault.triangles)
     check("a fault's outline is its four edges", seg.shape == (4, 2, 3))
+
+
+def j_near_a_face() -> None:
+    """[j] the readout near a face: a continuous displacement, the traction
+    and the solve untouched."""
+    print("\n[j] the readout NEAR A FACE")
+    from mbem import TriMesh
+    from mbem.recover import NearField, recovery_operator
+
+    # -- the recovery, on a sheet a fault cuts ---------------------------------
+    v, tri, fault = _cut_sheet()
+    mesh = TriMesh(v, tri)
+    tv = v[tri]
+    cen = tv.mean(axis=1)
+    # the P2 nodes, element-major: v1 v2 v3 m12 m23 m31
+    x = np.concatenate([tv, 0.5 * (tv + tv[:, [1, 2, 0]])], axis=1)
+    side = np.repeat(np.sign(cen[:, 0]), 6)
+    x = x.reshape(-1, 3)
+
+    def quad(y):
+        return (1.0 + 0.3 * y[:, 0] - 0.2 * y[:, 1] + 0.5 * y[:, 0] ** 2
+                - 0.4 * y[:, 0] * y[:, 1] + 0.7 * y[:, 1] ** 2)
+
+    R = recovery_operator(mesh, [fault])
+    check("one row per P2 node of every element", R.shape == (6 * len(tri),
+                                                             len(tri)))
+    close("a constant stays constant",
+          float(np.abs(R @ np.ones(len(tri)) - 1.0).max()), 1.0e-12)
+    close("a quadratic field comes back exactly",
+          float(np.abs(R @ quad(cen) - quad(x)).max()), TOL_RECOVER)
+    # two rings from a node this far inside the trace never reach its ends
+    on = (np.abs(x[:, 0]) < 1e-12) & (np.abs(x[:, 1]) <= 0.25 + 1e-12)
+    jumped = R @ (quad(cen) + 2.0 * np.sign(cen[:, 0]))
+    close("on the fault each side keeps its own field: nothing is fitted "
+          "across", float(np.abs(jumped - quad(x) - 2.0 * side)[on].max()),
+          TOL_RECOVER)
+    plain = recovery_operator(mesh) @ (quad(cen) + 2.0 * np.sign(cen[:, 0]))
+    check("without the fault the jump is fitted away",
+          float(np.abs(plain - quad(x) - 2.0 * side)[on].min()) > 0.5,
+          f"{float(np.abs(plain - quad(x) - 2.0 * side)[on].min()):.2f} of 2")
+    wavy = R @ np.sin(3.0 * cen[:, 0] + 2.0 * cen[:, 1])
+    _u, inv = np.unique(np.round(np.column_stack([x, side]) * 1e9)
+                        .astype(np.int64), axis=0, return_inverse=True)
+    inv = np.asarray(inv).ravel()
+    lo = np.full(inv.max() + 1, np.inf)
+    hi = np.full(inv.max() + 1, -np.inf)
+    np.minimum.at(lo, inv, wavy)
+    np.maximum.at(hi, inv, wavy)
+    off = np.ones(inv.max() + 1, bool)
+    off[inv[np.abs(x[:, 0]) < 1e-12]] = False       # the line x = 0 apart
+    check("continuous: elements that share a node read one value there",
+          float((hi - lo)[off].max()) == 0.0, f"{(hi - lo)[off].max():.1e}")
+
+    # -- the box, read near its free top ----------------------------------------
+    model, region, sol = _free_top()
+    mat = region.material
+    eps, h = EPS_BOX, BOX_EDGE
+    near = NearField(model)
+    check("every boundary patch of order 0 is recovered",
+          all(near.recovers(q) for q in region.patches))
+    sig_ex = mat.lam * np.trace(STRAIN_A) * np.eye(3) \
+        + mat.mu * (STRAIN_A + STRAIN_A.T)
+    g = np.arange(-25.0, 25.0 + 1e-9, 2.5)
+    X, Y = np.meshgrid(g, g, indexing="ij")
+
+    def plane(depth):
+        return np.column_stack([X.ravel(), Y.ravel(),
+                                np.full(X.size, -depth)])
+
+    def miss(pts, near=None, eps=eps):
+        """(stress rms, stress worst, displacement worst) against the exact
+        field, the stress relative to C:A and u to the plane's peak."""
+        s = evaluate_stress(model, region, sol, pts, eps, warn_near=False,
+                            near=near)
+        u = evaluate_displacement(model, region, sol, pts, eps,
+                                  warn_near=False, near=near)
+        es = np.linalg.norm((s - sig_ex).reshape(-1, 9), axis=1) \
+            / np.linalg.norm(sig_ex)
+        ue = pts @ STRAIN_A.T
+        eu = np.linalg.norm(u - ue, axis=1) / np.abs(ue).max()
+        return float(np.sqrt((es ** 2).mean())), float(es.max()), \
+            float(eu.max())
+
+    for d in NEAR_DEPTHS:
+        _rms, worst, worst_u = miss(plane(d * h), near)
+        close(f"{d:.1f} h below the top: sigma == C:A", worst, TOL_NEAR_S)
+        close(f"{d:.1f} h below the top: u == A x", worst_u, TOL_NEAR_U)
+    at = plane(NEAR_DEPTHS[0] * h)
+    as_now = miss(at)
+    check("the element-constant readout MISSES there", as_now[0] > MISS_NEAR_S,
+          f"rms {as_now[0]:.3f}, worst {as_now[1]:.3f}")
+    narrow = miss(at, eps=defaults.READOUT_EPS_FACTOR * eps)
+    check("the narrowed width WITHOUT the recovery is worse than neither",
+          narrow[0] > as_now[0], f"rms {narrow[0]:.3f} > {as_now[0]:.3f}")
+
+    # -- the bookkeeping ----------------------------------------------------------
+    # with a radius that cannot reach it, a point is read as before, bitwise
+    mid = np.array([[2.0, -3.0, -0.5 * BOX_H]])
+    short = NearField(model, radius_h=0.5)
+    same = all(np.array_equal(f(model, region, sol, mid, eps, warn_near=False),
+                              f(model, region, sol, mid, eps, warn_near=False,
+                                near=short))
+               for f in (evaluate_displacement, evaluate_stress))
+    check("a pair beyond the radius is read as before (bitwise)", same)
+    moved = relerr(evaluate_stress(model, region, sol, mid, eps,
+                                   warn_near=False, near=near),
+                   evaluate_stress(model, region, sol, mid, eps,
+                                   warn_near=False))
+    close("two elements from every face the readout barely moves", moved,
+          1.0e-2)
+
+    grid = V.make_grid(model, 8.0)
+    code = V.classify(model, grid)
+    inside = np.flatnonzero(code > 0)
+    one = V.sample(model, sol, eps, grid, code, chunk=10 ** 9, near=near)
+    many = V.sample(model, sol, eps, grid, code, chunk=137, near=near)
+    for key in ("u", "sigma", "eigenstress"):
+        check(f"{key:12s} chunked == unchunked with the near readout "
+              f"(bitwise)", np.array_equal(one[key][inside],
+                                           many[key][inside]))
+    el = evaluate_stress(model, region, sol, at, eps, True, False, near=near)
+    tot = evaluate_stress(model, region, sol, at, eps, False, False,
+                          near=near)
+    el2, eig = evaluate_stress(model, region, sol, at, eps, True, False,
+                               parts=True, near=near)
+    check("parts=True leaves the near field bitwise unchanged",
+          np.array_equal(el, el2))
+    close("the eigenstress returned is the one removed, near pairs included",
+          relerr(eig, el - tot), TOL_PARTS)
+
+    # a point in what is left of the mollified layer is read from just inside
+    gap = defaults.READOUT_STANDOFF_EPS * defaults.READOUT_EPS_FACTOR * eps
+    skin = plane(0.01 * gap)
+    out = V.stand_off(model, region, skin, eps, near)
+    check("a point in the layer is moved to the stand-off, along the normal",
+          np.allclose(out[:, 2], -gap, atol=1e-12)
+          and np.array_equal(out[:, :2], skin[:, :2]),
+          f"{gap:.3f} km below the top")
+    deep = plane(2.0 * gap)
+    check("a point outside the layer is not moved (bitwise)",
+          np.array_equal(V.stand_off(model, region, deep, eps, near), deep))
+    sk = V.Grid(origin=(0.0, 0.0, 0.0), spacing=(1.0, 1.0, 1.0),
+                dims=(skin.shape[0], 1, 1), points=skin)
+    f = V.sample(model, sol, eps, sk, np.ones(skin.shape[0], np.int8),
+                 near=near)
+    es = np.linalg.norm((f["sigma"] - sig_ex).reshape(-1, 9), axis=1) \
+        / np.linalg.norm(sig_ex)
+    close("sampled ON the top: sigma == C:A", float(es.max()), TOL_NEAR_S)
+    f0 = V.sample(model, sol, eps, sk, np.ones(skin.shape[0], np.int8))
+    es0 = np.linalg.norm((f0["sigma"] - sig_ex).reshape(-1, 9), axis=1) \
+        / np.linalg.norm(sig_ex)
+    check("... where the plain sampler reads half of it",
+          float(np.median(es0)) > 0.3, f"median {np.median(es0):.2f}")
 
 
 def h_material_state(model, region, eps, asm) -> None:
@@ -709,6 +909,7 @@ def main() -> bool:
     g_webexport()
     h_material_state(model, region, eps, asm)
     i_time_payload()
+    j_near_a_face()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)
     print(f"  wall time: {time.time() - t0:.1f} s")

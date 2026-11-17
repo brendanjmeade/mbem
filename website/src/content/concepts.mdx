@@ -164,6 +164,22 @@ a boundary whose density was **solved for**, the piecewise-constant
 representation of that density limits the readout and the error rises by a
 further factor of three to thirteen.
 
+**That third effect belongs to the reading, and the volumes on this site are
+no longer read that way.** What a point close to a boundary resolves is the
+displacement itself, one value to an element: each step between neighbours is
+a small dislocation line. With the *exact* value on every element of the box
+above, and nothing solved, the stress a tenth of an element below a face is
+19 % off, so no solver that returns one value per element could mend it and
+none was changed. Close to a boundary the displacement is first made
+continuous — at every node the quadratic that best fits the surrounding
+elements, never across a fault — the traction is left as it was solved, and
+with no steps left to expose, the width $\varepsilon$ of those boundaries is
+narrowed to a fifth for the reading. On the box that leaves 1 %. On the
+volumes shown here, the von Mises stress at neighbouring points within a
+quarter of an element of a boundary differs by 1.9 % for the worst twentieth
+of them, where it differed by 7.6 %; further than two elements from every
+boundary the stress is the same to a few parts in a thousand.
+
 **A fault is exempt, and for a stronger reason than it being prescribed data.**
 Because the regularization is applied to the source, the fault's slip is spread
 over $\varepsilon$ — and that spreading *is* the finite-width fault zone the
@@ -181,8 +197,8 @@ spread across $(h, \varepsilon)$ and on $d/\varepsilon$ a 3.8× spread — so bo
 are reported per voxel rather than combined into one score. One practical
 consequence, measured: at fixed $\varepsilon$, refining $h$ by four improved the
 near-boundary error by only 1.27×, while standing off from $d/h = 0.2$ to $2$
-improved it thirteenfold. **Evaluate deeper; refining the patch alone barely
-helps.**
+improved it thirteenfold. **Evaluate deeper, or read the boundary's
+displacement as a continuous one; refining the patch alone barely helps.**
 
 ### Exactly on a boundary, you get exactly half
 

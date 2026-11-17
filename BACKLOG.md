@@ -162,6 +162,16 @@ gives 0.20 / 0.21 / 0.29 of the rupture's slip as afterslip under 1 cm /
 1 m / 10 m, eight times as much by a tenth of a Maxwell time under the
 largest. A run is the linear study's cost plus two minutes.
 
+ON A SLAB'S FACE (2026-11-17). Slip between two regions (`Patch.slip`,
+`verify_interface_slip`), and with it the megathrust below the plate under
+a slab. The three together, slab to 150 km, Burgers mantle, the face from
+30 to 50 km creeping (42,078 unknowns dense, seventeen states): the face
+slips 0.08 / 0.23 / 0.31 of the rupture's slip at 1 / 10 / 100 Maxwell
+times and has not finished, a slab on one side of it not relaxing; under
+friction after 5 m it has 0.032 by 0.02 where the linear law has 0.003.
+Both are the fifth and sixth models of the ve site, the stepped one shipped
+as its own history (modes and a table whose rows are the times).
+
 OPEN, in the order they bite:
 
 * **A window knows only what its reference solves.** The walls carry the far

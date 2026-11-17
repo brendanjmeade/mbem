@@ -256,15 +256,15 @@ def signed_bins(run) -> np.ndarray:
                            np.arange(-60.0, fine + 0.5, 6.0), beyond(fine)])
 
 
-def _in_plane(run):
-    from mbem import laplace
-
-    s, stack = laplace.run_stack(run.run_dir)
+def _binned(run, top):
+    """``(x, u)``: the free surface's displacement ``(n_rows, n_elements,
+    3)`` as the mid-strike profile of each row, horizontal and vertical per
+    unit slip, binned in SIGNED distance from the trace (``signed_bins``)."""
     gp = run.resolved["spec"]["model"]["geometry"]["params"]
     slip = run.resolved["spec"]["model"]["params"].get("slip_mag", 1.0e-3)
     cen = run.meshes["top__v"][run.meshes["top__t"]].mean(axis=1)
     strip = np.abs(cen[:, 1]) < STRIP * gp["fault_half_len"]
-    moved = stack["u:top"][:, :, [0, 2]] / slip
+    moved = top[:, :, [0, 2]] / slip
     x, u = [], []
     edges = signed_bins(run)
     for a, b in zip(edges[:-1], edges[1:]):
@@ -272,7 +272,20 @@ def _in_plane(run):
         if sel.any() and a * b > 0.0:               # not the bin on the trace
             x.append(cen[sel, 0].mean())
             u.append(moved[:, sel].mean(axis=1))
-    return s, np.array(x), np.array(u).transpose(1, 0, 2)
+    return np.array(x), np.array(u).transpose(1, 0, 2)
+
+
+def _in_plane(run):
+    from mbem import laplace
+
+    s, stack = laplace.run_stack(run.run_dir)
+    return (s, *_binned(run, stack["u:top"]))
+
+
+def in_plane_stepped(run):
+    """``(t, x, u)``: ``in_plane`` for a STEPPED run (``Run.stepper``), its
+    rows the times of the history instead of the states of a fit."""
+    return (run.history["t"], *_binned(run, run.history["u:top"]))
 
 
 def weights(run) -> tuple:

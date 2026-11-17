@@ -1228,6 +1228,31 @@ number for the afterslip of a model carries its width with it. The reach is
 on the substrate's closed boundary, so its width is the substrate's one
 $\varepsilon$ (section 3); it wants elements several of those across.
 
+**The three together** (`--set slab_depth=150 --set depth=50 --set
+tau_K=0.1 --set t_min=0.02 --set lower=creep`): the slab of the study above
+in a Burgers mantle, the megathrust running from the plate's base down the
+slab's face to 50 km. A solved slip, so dense: 42,078 unknowns on plate
+faces of 15 and 20 km, the reach's elements 7.5 km and $\varepsilon=1.5$ km,
+seventeen states in 25 minutes. Under section 9's linear law the face slips
+by 0.08 / 0.23 / 0.31 of the rupture's slip on average at $\tau$ / $10\tau$
+/ $100\tau$ (0.42 just under the plate and 0.18 at its lower edge, at the
+last), and it has NOT finished by then, where the reach of section 9 has by
+ten: that one lies inside the mantle, which takes its stress away, and this
+one has a slab on one side that does not relax. At the surface it is 9 / 28
+/ 25 / 5 % of the postseismic displacement of the same model with the face
+held, at $0.1$ / $1$ / $10$ / $100\,\tau$.
+
+Under friction instead (section 6: `--set route=step --set
+creep_law=friction --set slip=5`, $a\sigma=1$ MPa, the traction on the face
+0.7 MPa at the median and 27 at the rupture's edge): 0.032 of the slip by
+$0.02\,\tau$ where the linear law has 0.003, 0.054 against 0.013 by
+$0.1\,\tau$, and 0.33 against 0.31 at a hundred. The surface's postseismic
+displacement departs from the linear law's by 32 % at $0.1\,\tau$, 18 % at
+$\tau$ and 2 % at $10\,\tau$: friction moves the afterslip early. Its
+run is 32 minutes, 6 of them the march (32,750 evaluations of the law on
+1,276 slip unknowns; the stiff start costs five times the linear law's).
+Both are on <https://brendanjmeade.github.io/ve/>.
+
 *The walls do not know the slab.* They carry the slabless far field, and
 the slab's tip is 88 km from one of them. The same model in a window 800 km
 to its walls (67,182 unknowns) differs from this one by 0.1 % at the

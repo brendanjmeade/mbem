@@ -20,8 +20,8 @@ import {
   BufferGeometry, Color, Data3DTexture, DataTexture, DoubleSide,
   Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh,
   NearestFilter, LinearFilter, PerspectiveCamera, PlaneGeometry, RedFormat,
-  RGBAFormat, Scene, ShaderMaterial, UnsignedByteType, Vector3, WebGLRenderer,
-  ClampToEdgeWrapping, GLSL3,
+  RGBAFormat, Scene, ShaderMaterial, UnsignedByteType, Vector2, Vector3,
+  WebGLRenderer, ClampToEdgeWrapping, GLSL3,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { lut, type MapName } from "./colormaps";
@@ -114,6 +114,10 @@ function tex3d(data: Uint8Array, d: [number, number, number], smooth: boolean) {
 
 export interface SliceState { x: number; y: number; z: number; }
 
+// The view the pages open on, and how much of it the model's box takes.
+export const AZIMUTH = -1.07, ELEVATION = 0.39;
+const FILL = 0.92;
+
 export class VolumeScene {
   readonly scene = new Scene();
   readonly camera: PerspectiveCamera;
@@ -125,6 +129,18 @@ export class VolumeScene {
   private p: Payload;
   private el: HTMLElement;
   private raf = 0;
+  // The canvas is as large as its box and no larger: the box (.stage) is
+  // sized by CSS, the drawing buffer is that size times the pixel ratio, and
+  // the canvas is told its CSS size by the stylesheet. A canvas left to its
+  // drawing buffer's size is twice too wide on a 2x display.
+  private w = 0;
+  private h = 0;
+  private dpr = 0;
+  private azimuth = AZIMUTH;
+  private elevation = ELEVATION;
+  private shift = new Vector2();
+  private framed = true;       // until the visitor takes the camera
+  private extent: Vector3;
 
   constructor(el: HTMLElement, p: Payload) {
     this.el = el;
@@ -139,21 +155,14 @@ export class VolumeScene {
     // vertically. OrbitControls reads this, so it must be set before them.
     this.camera.up.set(0, 0, 1);
     this.renderer = new WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     el.appendChild(this.renderer.domElement);
+    this.extent = new Vector3(ex, ey, ez);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.target.set(o[0] + ex / 2, o[1] + ey / 2, o[2] + ez / 2);
-    this.camera.position.set(o[0] + ex * 1.35, o[1] - ey * 1.05,
-                            o[2] + ez * 1.9);
-    // Orient the camera at the target NOW. OrbitControls only recomputes the
-    // camera from its spherical state inside update(), and update() runs in
-    // the rAF loop, which only starts on interaction -- so without this the
-    // first frame is drawn with the camera's default orientation, pointing
-    // away from the box, and the canvas is simply blank until you drag it.
-    this.controls.update();
+    this.controls.addEventListener("start", () => { this.framed = false; });
 
     const lutTex = new DataTexture(lut("viridis"), 256, 1, RGBAFormat);
     lutTex.minFilter = lutTex.magFilter = LinearFilter;
@@ -180,8 +189,56 @@ export class VolumeScene {
     this.scene.add(this.overlays);
     this.buildOverlays();
     this.setSlices({ x: 0.5, y: 0.5, z: 0.72 });
+    // resize() places the camera, which also orients it at the target: the
+    // first frame is drawn before OrbitControls has ever run update().
     this.resize();
+    new ResizeObserver(() => this.resize()).observe(el);
     addEventListener("resize", () => this.resize());
+  }
+
+  /** Look at the model from a direction, from as far as makes its box fill
+   *  the view: the eight corners are projected, the distance corrected until
+   *  their bounding rectangle takes `FILL` of the frame, and the frame then
+   *  shifted so that rectangle is centred. A tall box and a wide one, a
+   *  desktop and a phone, all come out filled and whole. */
+  place(azimuth: number, elevation: number) {
+    this.azimuth = azimuth; this.elevation = elevation;
+    const c = this.controls.target, e = this.extent, cam = this.camera;
+    const dir = new Vector3(Math.cos(elevation) * Math.cos(azimuth),
+                            Math.cos(elevation) * Math.sin(azimuth),
+                            Math.sin(elevation));
+    cam.aspect = (this.w || 1) / (this.h || 1);
+    cam.clearViewOffset();               // measured without the shift
+    const corner = new Vector3();
+    const box = { cx: 0, cy: 0, reach: 1 };
+    const measure = (d: number) => {
+      cam.position.copy(c).addScaledVector(dir, d);
+      cam.lookAt(c);
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld();
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) {
+        corner.set(c.x + sx * e.x, c.y + sy * e.y, c.z + sz * e.z).project(cam);
+        x0 = Math.min(x0, corner.x); x1 = Math.max(x1, corner.x);
+        y0 = Math.min(y0, corner.y); y1 = Math.max(y1, corner.y);
+      }
+      box.cx = (x0 + x1) / 2; box.cy = (y0 + y1) / 2;
+      box.reach = Math.max(x1 - x0, y1 - y0) / 2;
+    };
+    let d = e.length();
+    for (let pass = 0; pass < 4; pass++) {
+      measure(d);
+      d *= box.reach / FILL;
+    }
+    measure(d);
+    this.shift.set(box.cx, box.cy);
+    this.applyShift();
+  }
+
+  private applyShift() {
+    const w = this.w || 1, h = this.h || 1;
+    this.camera.aspect = w / h;
+    this.camera.setViewOffset(w, h, this.shift.x * w / 2, -this.shift.y * h / 2, w, h);
   }
 
   /** Box edges, the fault outline and the inclusion rim, from geometry.json. */
@@ -256,11 +313,15 @@ export class VolumeScene {
   }
 
   resize() {
-    const w = this.el.clientWidth || 640;
-    const h = this.el.clientHeight || Math.round(w * 0.62);
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    const w = Math.max(1, this.el.clientWidth);
+    const h = Math.max(1, this.el.clientHeight);
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    if (w === this.w && h === this.h && dpr === this.dpr) return;
+    this.w = w; this.h = h; this.dpr = dpr;
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(w, h, false);    // the stylesheet sizes the canvas
+    if (this.framed) this.place(this.azimuth, this.elevation);
+    else this.applyShift();
     this.render();
   }
 

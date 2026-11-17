@@ -596,14 +596,15 @@ dislocation line: 19 % in stress at a tenth of an element, with the exact
 value on every element. So the sampler recovers a continuous (P2)
 displacement from the same values -- a quadratic fitted over two rings of
 elements at every node, never across a fault -- and reads the pairs within
-two elements from it, at a fifth of the mollification; the traction is left
-as solved. A point within three of those narrowed widths of a face, a grid row
-lying on one included, is read that far inside its region. On the manufactured
+two elements from it, at a fiftieth of the mollification; the traction is left
+as solved. A point within a tenth of an element of a face, a grid row lying on
+one included, is read from that far inside its region; a point exactly on
+a face belongs to the first region that owns the face. On the manufactured
 box the stress a tenth of an element below a free face goes from 19 % off to
 1 %, and on the stored megathrust the row-to-row scatter of the mean stress
-within a quarter element of the top or the plate's base from 4 % to 0.2 % at
-the median and from over 100 % to 3-4 % at the 95th percentile, for 7 % more
-time. `--plain` gives the element values everywhere, as before.
+within a quarter element of the top or the plate's base from 4 % to 0.1 % at
+the median and from over 100 % to under 2 % at the 95th percentile, for an
+eighth more time. `--plain` gives the element values everywhere, as before.
 
 Two arrays say what a value rests on. `region` is 0 outside the
 body — points above the topography and outside the box are NaN, because 0 is a

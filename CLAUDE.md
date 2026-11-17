@@ -273,10 +273,14 @@ gates FAIL rather than skip without them.
     jumps); **the traction is left as solved** -- where a fault cuts an
     interface each region's traction has a real spike, and smoothing it moved
     the megathrust's interior 7-9 %; and the mollification of the recovered
-    patches is narrowed to a fifth, which is **safe only with the recovered
+    patches is narrowed to a fiftieth (the blob's tail costs (eps/d)^2 well
+    beyond the layer itself), which is **safe only with the recovered
     density** (element values read at a narrower width are worse than
     before). Only the pairs within two elements are read this way, so a
     section costs 7 % more, and the far field is the same sum, bitwise. A
     point inside what is left of the mollified layer -- a grid row lying on
-    a face -- is read at a stand-off just inside its region. Faults are
-    untouched: a fault's width is the model's own.
+    a face -- is read at a stand-off just inside its region, and WHICH region
+    a point on a face is in is a rule, not the solid angle (0 or 4 pi there
+    as rounding has it): the first region that owns the patch
+    (`volume.classify`). Faults are untouched: a fault's width is the model's
+    own.

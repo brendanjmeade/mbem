@@ -71,7 +71,8 @@ the tree again:
   (`recover.NearField`, `near=`; `mbem sample` unless `--plain`; CLAUDE.md
   rule 19): the displacement of every order-0 boundary patch recovered as
   P2, the traction left as solved, the mollification of those patches
-  narrowed to a fifth, and only for the pairs within two elements.
+  narrowed to a fiftieth, and only for the pairs within two elements. A
+  point ON a face is the first region's that owns it (`volume.classify`).
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 

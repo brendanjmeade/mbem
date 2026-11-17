@@ -18,6 +18,8 @@ part of it fails quietly rather than loudly:
      Gated against the solid-angle closure identity, against the analytic
      cylinder of the topo_inclusion model, and -- because the classifier reads
      the WARPED top mesh -- against points above and below a topographic hill.
+     A point ON a patch has no solid angle to go by, and is the first
+     region's that owns the patch, by rule.
   c  MANUFACTURED: u = A x prescribed on a closed box has a known interior
      field, a known CONSTANT stress C:A, and a known constant strain A_sym. So
      the whole volume path is checked against arithmetic rather than against
@@ -343,6 +345,36 @@ def b_classification() -> None:
             worst = min(worst, float(dd.min()))
     check("no grid sample lies ON a patch", worst > 1e-6,
           f"closest {worst:.4f} km")
+
+    # ... AND ONE THAT DOES IS SETTLED BY RULE. The half cell keeps samples
+    # off the OUTER faces; it cannot keep them off an interior one, and at
+    # 4 km -- the website's own spacing -- a whole plane of samples lies on
+    # the inclusion's base. The closure sum there is 0 or 4 pi as rounding
+    # has it, point by point: the site drew the patchwork as a speckled
+    # disk. ``classify`` gives such a point to the first region that owns
+    # the patch, and an outer face keeps its own points.
+    fine = V.make_grid(model, 4.0, pad=4.0)
+    code = V.classify(model, fine)
+    base = next(p for p in model.regions[1].patches
+                if p.name == "interface_bot")
+    on = V.on_patch(fine.points, base)
+    check("at 4 km a plane of samples lies ON the inclusion's base",
+          int(on.sum()) > 100, f"{int(on.sum())} samples")
+    alone = model.point_in_region("host", fine.points[on])
+    check("every one of them is the host's: the first region that owns it",
+          bool(np.all(code[on] == 1)),
+          f"the closure identity alone calls {int(alone.sum())} of "
+          f"{int(on.sum())} the host's")
+    for name, want in (("host_top", 1), ("interface_side", 1),
+                       ("inclusion_top", 2)):
+        pp = next(p for r in model.regions for p in r.patches
+                  if p.name == name)
+        cen = np.asarray(pp.mesh.centroids(), float)   # ON their elements
+        got = V.classify(model, V.Grid(origin=(0.0,) * 3, spacing=(1.0,) * 3,
+                                       dims=(cen.shape[0], 1, 1), points=cen))
+        check(f"a point ON {name} is region {want}, every one",
+              bool(np.all(got == want)),
+              f"{int((got != want).sum())} of {cen.shape[0]} otherwise")
     # On an axis-aligned body the interior mask must be a clean rectangle: a
     # ragged row width is the tie above, showing up as geometry.
     code2 = V.classify(model, grid)
@@ -797,15 +829,23 @@ def j_near_a_face() -> None:
         check(f"{key:12s} chunked == unchunked with the near readout "
               f"(bitwise)", np.array_equal(one[key][inside],
                                            many[key][inside]))
-    el = evaluate_stress(model, region, sol, at, eps, True, False, near=near)
-    tot = evaluate_stress(model, region, sol, at, eps, False, False,
+    # where the eigenstress of the NARROWED layer is large: one width deep.
+    # Held as elastic == total + eigenstress, relative to the stress: the
+    # difference total - elastic is the weak side ([d]) and weaker here.
+    thin = plane(defaults.READOUT_EPS_FACTOR * eps)
+    el = evaluate_stress(model, region, sol, thin, eps, True, False,
+                         near=near)
+    tot = evaluate_stress(model, region, sol, thin, eps, False, False,
                           near=near)
-    el2, eig = evaluate_stress(model, region, sol, at, eps, True, False,
+    el2, eig = evaluate_stress(model, region, sol, thin, eps, True, False,
                                parts=True, near=near)
     check("parts=True leaves the near field bitwise unchanged",
           np.array_equal(el, el2))
     close("the eigenstress returned is the one removed, near pairs included",
-          relerr(eig, el - tot), TOL_PARTS)
+          relerr(el, tot + eig), 1.0e-12)
+    check("... and it is the narrowed layer's: larger than the stress there",
+          float(np.abs(eig).max()) > float(np.abs(el).max()),
+          f"{np.abs(eig).max():.2e} against {np.abs(el).max():.2e}")
 
     # a point in what is left of the mollified layer is read from just inside
     gap = defaults.READOUT_STANDOFF_EPS * defaults.READOUT_EPS_FACTOR * eps

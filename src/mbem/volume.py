@@ -66,7 +66,7 @@ Standing off works; refining the patch barely does.
 point within half an element of a patch resolves is the element-constant
 displacement itself, every edge a small dislocation line: 19 % in stress at
 0.1 h with the exact value on every element. Read from a continuous
-displacement recovered from the same values, at a fifth of the mollification,
+displacement recovered from the same values, at a fiftieth of the mollification,
 the near pairs give 1 % there, and a point inside what is left of the layer
 is read at :func:`stand_off`. The clearances are still written: they say
 where the recovered readout, not the solve, is what a value rests on.
@@ -196,17 +196,59 @@ def section_grid(model, axis: str, at: float, spacing: float) -> Grid:
                 points=np.column_stack([X.ravel(), Y.ravel(), Z.ravel()]))
 
 
+def on_patch(points: np.ndarray, patch) -> np.ndarray:
+    """``(N,) bool``: the points lying ON ``patch`` -- within
+    ``core._ON_PATCH_TOL`` of an element's size of it, the model's own
+    statement of "on" (``RegionModel.validate``)."""
+    from scipy.spatial import cKDTree
+
+    from mbem.model.core import _ON_PATCH_TOL
+
+    mesh = patch.mesh
+    tv = np.asarray(mesh.vertices, float)[np.asarray(mesh.triangles)]
+    normals, _ = mesh.normals_and_areas()
+    normals = np.asarray(normals, float)
+    tol = _ON_PATCH_TOL * kb.element_sizes(mesh)
+    pts = np.asarray(points, float)
+    on = np.zeros(pts.shape[0], bool)
+    k = min(8, tv.shape[0])
+    for s in range(0, pts.shape[0], defaults.VOLUME_CHUNK):
+        p = pts[s:s + defaults.VOLUME_CHUNK]
+        # in the plane of one of the nearest elements, first: the exact
+        # distance is for the few that are
+        _, idx = cKDTree(tv.mean(axis=1)).query(p, k=k)
+        idx = np.asarray(idx).reshape(p.shape[0], k)
+        off = np.abs(np.einsum("nki,nki->nk", p[:, None, :] - tv[idx, 0],
+                               normals[idx]))
+        cand = np.flatnonzero((off < tol[idx]).any(axis=1))
+        if cand.size:
+            d, j = distance_to_mesh(p[cand], mesh)
+            on[s + cand[d < tol[j]]] = True
+    return on
+
+
 def classify(model, grid: Grid) -> np.ndarray:
     """``(N,) int8``: 0 outside every region, else 1-based region index.
 
     A point inside two regions cannot happen for a valid model (the regions
-    partition the body), but a point ON an interface is ambiguous by solid
-    angle; first match wins and ``clearance_h`` is what flags it.
+    partition the body). A point ON a patch has no solid angle to be
+    classified by: the closure sum there is 0 or 4 pi as rounding has it,
+    point by point, so a grid plane lying on an interface would come back a
+    patchwork of its two regions, and one on an outer face part in and part
+    out. Such a point is given to the FIRST region that owns the patch, by
+    rule; the sampler reads it from just inside that region
+    (:func:`stand_off`), and ``clearance_h`` is what flags it.
     """
     code = np.zeros(grid.points.shape[0], np.int8)
     for i, r in enumerate(model.regions, start=1):
         hit = model.point_in_region(r, grid.points) & (code == 0)
         code[hit] = i
+    settled = np.zeros(code.shape[0], bool)
+    for i, r in enumerate(model.regions, start=1):
+        for p in r.patches:
+            on = on_patch(grid.points, p) & ~settled
+            code[on] = i
+            settled |= on
     return code
 
 

@@ -857,11 +857,19 @@ EIGEN_NEAR_RADIUS_EPS = 20.0
 ON_FAULT_OVER_EDGE = 1.0e-6
 # The mollification of a recovered patch at readout, as a fraction of the
 # width it was solved with. The mollified layer (the field falls to half its
-# value on the face) is about two widths deep, so this thins it fivefold.
+# value on the face) is about two widths deep, and beyond it the blob's tail
+# still costs (eps/d)^2, element by element where the width is per element:
+# so the narrower the better, until nothing changes. Basis: on the
+# manufactured box (free top, exact traction) the stress 0.005 / 0.02 / 0.05
+# h below the top is 36 / 9 / 1.0 % off at 0.2, 9 / 0.6 / 0.6 % at 0.05, 1.0
+# / 0.6 / 0.6 % at 0.02 and the same at 0.01, and no depth is worse at any of
+# them; 2 km under the topo-inclusion model's free surface, where the
+# elements are 5-23 km, the scatter of von Mises against its neighbours is
+# 0.57 / 5.6 % (median / 95th percentile) at 0.2, 0.26 / 2.0 at 0.1, 0.17 /
+# 1.1 at 0.05 and 0.15 / 1.1 at 0.02.
 # ONLY with the recovered density: element-constant values read with a
-# narrower width expose their edges and are worse (0.25 against 0.19 rms in
-# stress at 0.1 h on the manufactured box; ``verify_volume`` [j]).
-READOUT_EPS_FACTOR = 0.2
+# narrower width expose their edges and are worse (``verify_volume`` [j]).
+READOUT_EPS_FACTOR = 0.02
 # An element is read from the recovered density by the observation points
 # within this many of its own h of its centroid; beyond that it is the
 # element-constant value at the solve's width, as everywhere before. Basis
@@ -877,7 +885,7 @@ READOUT_NEAR_RADIUS_H = 2.0
 # left of the mollified layer: the sampler evaluates it that far inside its
 # region instead, along the face's normal (``volume.stand_off``). With exact
 # P2 data on the manufactured box the stress is 9 / 0.8 / 0.1 % off at 0.8 /
-# 2 / 4 narrowed widths; three is 0.06 h at the "auto" width.
+# 2 / 4 narrowed widths; three is 0.006 h at the "auto" width.
 READOUT_STANDOFF_EPS = 3.0
 # The recovery fits a quadratic at a node to the elements two rings around
 # it, and never across a crease: an element whose normal makes a cosine

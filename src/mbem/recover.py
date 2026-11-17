@@ -18,9 +18,10 @@ What changes is what the near pairs are read from:
   it carries real concentrations -- where a fault cuts an interface, each
   region's traction has a spike -- so smoothing it moves the force it carries
   and with it the whole interior (7-9 % on the megathrust).
-* **the mollification is narrowed** on the recovered patches, which thins
-  the layer where the field falls to half its value on the face. Safe only
-  with the continuous density.
+* **the mollification is narrowed** on the recovered patches
+  (``READOUT_EPS_FACTOR``, with its basis), which thins the layer where the
+  field falls to half its value on the face and the tail beyond it. Safe
+  only with the continuous density.
 
 A patch takes part if it is a boundary patch of order 0, whatever gives its
 displacement (a solved slot, a prescribed datum, a window's far field).

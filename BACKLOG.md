@@ -67,6 +67,11 @@ the tree again:
   shared nodes, collocated at the nodes): convergent on-fault stress where P0
   centroids are floored, two unknowns per element; continuous P1 is too
   stiff.
+* Near a face the field is read from a CONTINUOUS displacement
+  (`recover.NearField`, `near=`; `mbem sample` unless `--plain`; CLAUDE.md
+  rule 19): the displacement of every order-0 boundary patch recovered as
+  P2, the traction left as solved, the mollification of those patches
+  narrowed to a fifth, and only for the pairs within two elements.
 * Lean: docstrings state the rule; no dates or review numbers in code; no probe
   scripts in the tree; extend a gate before adding one; no new documents.
 
@@ -275,6 +280,25 @@ conditioning is far more fragile under grading (5.7e19 at beta = 3).
 6. Thin triangles: P1/P2 lose (L/height)^2 digits; refused below
    height/L = 1e-3 (`NODAL_MIN_HEIGHT_OVER_L`); the far-field switch keys on
    the longest edge, so a needle observed along its axis stays closed-form.
+7. The readout near a face (2026-11-16, `verify_volume` [j],
+   `verify_config` [n]). The speckle within half an element of a boundary
+   patch was the readout resolving the element-constant displacement, not
+   the solve: with the exact value on every element the stress is 19 / 10 /
+   3 / 0.5 % off at 0.1 / 0.2 / 0.5 / 1 h. Read from the recovered
+   displacement it is 1 % on the manufactured box, and on the stored
+   megathrust the scatter along a row of the mean stress within a quarter
+   element of the top or the plate's base falls from 4 % to 0.2 % (median)
+   and from over 100 % to 3-4 % (95th percentile), for 7 % more time; more
+   than two elements from every face nothing moves (0.3 % at the 95th
+   percentile). What it does NOT mend, measured: (a) the solved TRACTION is
+   rough -- 6 % rms on a problem whose exact traction is constant, not
+   improving from h = 10 to 5 km, growing with eps/h (4 / 6 / 11 % at 0.05 /
+   0.125 / 0.3) -- which costs about 1.5 % of the interior stress and is what
+   a Galerkin test side or another treatment of the traction would address;
+   (b) a field that varies on the scale of the elements: a point force 2.5
+   elements away leaves 9 % at 0.1 h where the element values leave 54 %;
+   (c) where a fault meets a face the stress concentration is the model's.
+   The two sites' data predate it and are to be regenerated.
 
 ## Scale program (approved 2026-09-20; the plan file has the details)
 

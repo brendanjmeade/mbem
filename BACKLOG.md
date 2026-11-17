@@ -298,7 +298,12 @@ conditioning is far more fragile under grading (5.7e19 at beta = 3).
    (b) a field that varies on the scale of the elements: a point force 2.5
    elements away leaves 9 % at 0.1 h where the element values leave 54 %;
    (c) where a fault meets a face the stress concentration is the model's.
-   The two sites' data predate it and are to be regenerated.
+   Both sites' data are made with it: the ve site's four sections, and the
+   mbem site's volumes (551,412 points; within a quarter element of a patch
+   the von Mises stress against its six neighbours 0.77 -> 0.19 % at the
+   median and 7.6 -> 1.9 % at the 95th percentile; further than two
+   elements from every patch the mean stress moves by 0.01 % of the local
+   von Mises stress at the median and 0.3 % at most).
 
 ## Scale program (approved 2026-09-20; the plan file has the details)
 

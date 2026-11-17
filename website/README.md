@@ -34,9 +34,13 @@ Nothing is computed in the browser; the solve is Python. `public/data/` holds a
 quantised readout of one stored run, regenerated with
 
 ```sh
-python -m mbem sample runs/<study-dir> --spacing 8 --difference
+python -m mbem sample runs/<study-dir> --difference    # 4 km, the default
 python website/scripts/make_payload.py runs/<the-volume-dir>
 ```
+
+Close to a boundary `mbem sample` reads the field from a continuous
+displacement recovered from the elements' values (`mbem.recover`, CLAUDE.md
+rule 19); the data here were made that way.
 
 The encoder is `mbem.webexport`, in the package rather than here, so it is
 importable and gated (`tests/gates/mbem/verify_volume.py` clause [g]).

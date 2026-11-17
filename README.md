@@ -609,9 +609,10 @@ Two arrays say what a value rests on. `region` is 0 outside the
 body — points above the topography and outside the box are NaN, because 0 is a
 value. `clearance_h` and `clearance_eps` give each point's distance to the
 nearest element in units of that element's size and of its own eps. **Both are
-flagged, never blanked**, and it matters: on the showcase model the topography
-effect reads 1287 mm at a point lying on the surface and 96 mm once
-`clearance_h > 0.5`.
+flagged, never blanked**: on the showcase model the topography effect is
+largest, 108 mm, at a point a quarter of an element from the surface, and
+84 mm among the points with `clearance_h > 0.5` (126 mm and 84 mm read from
+the element values).
 
 ### What the eigenstress subtraction does and does not buy
 

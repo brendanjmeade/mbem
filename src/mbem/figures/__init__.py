@@ -45,6 +45,7 @@ FIGURES: dict[str, str] = {
     "plate_thrust": "mbem.figures.plate:plate_thrust",
     "plate_cycle": "mbem.figures.plate:plate_cycle",
     "plate_creep": "mbem.figures.plate:plate_creep",
+    "plate_afterslip": "mbem.figures.plate:plate_afterslip",
     # model-free: no model, no backend, no solve -- the kernels alone
     "point_kernel": "mbem.figures.point_kernel:figure",
     "triangle_field": "mbem.figures.triangle_field:figure",
@@ -58,7 +59,7 @@ FIGURES: dict[str, str] = {
 STUDY_FIGURES = {"topo_inclusion_showcase", "topo_inclusion_contour",
                  "backend_agreement", "eps_convergence",
                  "onfault_stress", "plate_substrate", "plate_thrust",
-                 "plate_cycle", "plate_creep"}
+                 "plate_cycle", "plate_creep", "plate_afterslip"}
 # Which take no model at all: pure kernel figures, no solve.
 MODEL_FREE = {"point_kernel", "triangle_field", "triangle_eps_sweep",
               "anelastic_subtraction", "onfault_convergence",
@@ -109,6 +110,8 @@ class RunData:
     meshes: dict = field(default_factory=dict)      # name -> vertices/triangles
     resolved: dict = field(default_factory=dict)
     report: dict = field(default_factory=dict)
+    # a stepped run (``Run.stepper``): ``t`` and every slot at every time
+    history: dict = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -128,10 +131,10 @@ def load_run(run_dir: str | pathlib.Path) -> RunData:
     for p in sorted(d.glob("fields_*.npz")):
         with np.load(p) as z:
             out.fields[p.stem.removeprefix("fields_")] = {k: z[k] for k in z.files}
-    mp = d / "meshes.npz"
-    if mp.exists():
-        with np.load(mp) as z:
-            out.meshes = {k: z[k] for k in z.files}
+    for name, attr in (("meshes.npz", "meshes"), ("history.npz", "history")):
+        if (d / name).exists():
+            with np.load(d / name) as z:
+                setattr(out, attr, {k: z[k] for k in z.files})
     for name, attr in (("resolved.json", "resolved"), ("report.json", "report")):
         p = d / name
         if p.exists():
@@ -162,6 +165,8 @@ class RunContext:
     # backend's figures, which have no block structure to show.
     asm: Any = None
     system: Any = None
+    # ``stepper.History`` of a stepped run (``Run.stepper``), else None
+    history: Any = None
 
     @property
     def base(self) -> dict:

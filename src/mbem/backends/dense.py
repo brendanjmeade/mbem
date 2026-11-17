@@ -44,7 +44,7 @@ from ..model.core import BCType
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, apply_fault_rows,
                                calibrated_diagonal, rhs_terms_at,
-                               term_diagonal)
+                               term_diagonal, traction_row_frame)
 
 
 class DenseBackend:
@@ -263,6 +263,90 @@ class DenseSolveReport:
         return f"dense LU: cond ~ {self.cond_estimate:.2e}"
 
 
+@dataclass
+class FaultCoordinates:
+    """Where one solved fault sits in a ``Condensed`` vector: ``start:stop``
+    holds, node by node over the ``free`` (unlocked) dof nodes, the
+    components along the rows of ``frame`` -- the rows of
+    ``equations.traction_row_frame`` that carry a traction equation, strike
+    and dip, or all three with ``allow_opening``."""
+    name: str
+    free: np.ndarray            # (n_free,) dof nodes
+    frame: np.ndarray           # (n_free, n_comp, 3)
+    start: int
+    stop: int
+    n_dofs: int
+
+    def cartesian(self, v) -> np.ndarray:
+        """Coordinates ``(stop - start,)`` -> Cartesian vectors at the dof
+        nodes ``(n_dofs, 3)``, zero at a locked node."""
+        out = np.zeros((self.n_dofs, 3))
+        out[self.free] = np.einsum(
+            "fi,fij->fj", np.asarray(v, float).reshape(self.frame.shape[:2]),
+            self.frame)
+        return out
+
+    def coordinates(self, vectors) -> np.ndarray:
+        """The inverse: Cartesian vectors at the dof nodes -> coordinates,
+        which keeps only what lies along the frame's rows at a free node."""
+        return np.einsum("fij,fj->fi", self.frame,
+                         np.asarray(vectors, float)[self.free]).ravel()
+
+
+@dataclass
+class Condensed:
+    """One state's body as its solved faults see it
+    (``AssembledDense.condense``): every other unknown eliminated.
+
+    ``beta`` is the faults' slip in coordinates (``faults``, in slot order),
+    and in the same coordinates
+
+        traction = S @ beta + L          x = x0 + X @ beta
+
+    ``traction`` is what a fault's rows hold to zero: the elastic traction
+    of every source, eigenstress removed (rule 4), LESS the fault's
+    prescribed traction change. So ``S`` is the faults' stiffness in this
+    body, ``L`` what the prescribed data load them with while they are held,
+    and a fault that drags with ``kappa`` solves ``(kappa - S) beta = L``.
+    ``x`` is the whole unknown vector in the layout's order, the faults'
+    Cartesian slip in their own slots.
+    """
+    S: np.ndarray
+    L: np.ndarray
+    X: np.ndarray
+    x0: np.ndarray
+    faults: tuple
+    layout: object
+    cond_estimate: float
+
+    @property
+    def n(self) -> int:
+        return self.S.shape[0]
+
+    def dragged(self, kappa) -> np.ndarray:
+        """The slip, in coordinates, of faults that drag with ``kappa`` (a
+        number or one per coordinate): what ``solve`` returns for an operator
+        built with that ``fault_drag``, from this one."""
+        k = np.broadcast_to(np.asarray(kappa, float), (self.n,))
+        return np.linalg.solve(np.diag(k) - self.S, self.L)
+
+    def split(self, v) -> dict:
+        """``{fault name: (n_free, n_comp)}`` of a vector in coordinates."""
+        return {f.name: np.asarray(v)[f.start:f.stop].reshape(
+            f.frame.shape[:2]) for f in self.faults}
+
+    def cartesian(self, v) -> dict:
+        """``{fault name: (n_dofs, 3)}``: slip or traction in coordinates as
+        Cartesian vectors at each fault's dof nodes."""
+        return {f.name: f.cartesian(np.asarray(v)[f.start:f.stop])
+                for f in self.faults}
+
+    def slots(self, x) -> dict:
+        """An unknown vector as ``solve()`` returns one."""
+        return {s.name: x[s.offset:s.stop].reshape(-1, 3)
+                for s in self.layout.slots}
+
+
 class AssembledDense:
     def __init__(self, system: BlockSystem, eps, mode: str,
                  jump: str = "calibrated", deflate: bool = False,
@@ -476,6 +560,79 @@ class AssembledDense:
         for slot in self.layout.slots:
             out[slot.name] = x[slot.offset:slot.stop].reshape(-1, 3)
         return out
+
+    # -- the body as its faults see it ---------------------------------
+
+    def condense(self) -> Condensed:
+        """Eliminate every unknown but the solved faults' slip (``Condensed``).
+
+        The Schur complement of this operator on the traction rows of its
+        FAULT_TRACTION faults: one LU of the rest and one right-hand side per
+        slip coordinate. It is what a consumer needs that solves the faults
+        itself -- a law that is not linear, stepped in time
+        (``mbem.stepper``) -- and it is the same elastic problem ``solve``
+        solves, so a fault that drags with ``kappa`` is recovered from it to
+        rounding. An operator built WITH a drag is refused: its rows are
+        already a law's.
+        """
+        faults = self.system.traction_faults()
+        if not faults:
+            raise ValueError("condense: the model has no FAULT_TRACTION "
+                             "fault, so there is nothing to condense onto")
+        if self.fault_drag:
+            raise ValueError(
+                f"condense: this operator was built with a drag on "
+                f"{sorted(self.fault_drag)}; its fault rows already carry a "
+                f"law. Rebuild with fault_drag={{}}")
+        if self.deflate:
+            raise ValueError("condense: not with deflate (a bordered system)")
+        A, b = self.A, self.b
+        N = A.shape[0]
+        on_fault = np.zeros(N, bool)
+        coords, rows, start = [], [], 0
+        for region, f in faults:
+            slot = self.layout.slot(f, "b")
+            free = np.flatnonzero(~f.locked_mask(region.patches))
+            n_comp = 3 if f.allow_opening else 2
+            on_fault[slot.offset:slot.stop] = True
+            rows.append((slot.offset + 3 * free[:, None]
+                         + np.arange(n_comp)[None, :]).ravel())
+            coords.append(FaultCoordinates(
+                f.name, free, traction_row_frame(f)[free, :n_comp, :],
+                start, start + n_comp * free.size, f.n_dofs))
+            start += n_comp * free.size
+        n, rows = start, np.concatenate(rows)
+        # the columns of a unit of each coordinate, and what it is in the
+        # faults' own (Cartesian) slots
+        AE, X = np.empty((N, n)), np.zeros((N, n))
+        for (_region, f), c in zip(faults, coords):
+            slot = self.layout.slot(f, "b")
+            cols = A[:, slot.offset:slot.stop].reshape(N, f.n_dofs, 3)
+            AE[:, c.start:c.stop] = np.einsum(
+                "rfj,fij->rfi", cols[:, c.free, :], c.frame).reshape(N, -1)
+            k = c.start + c.frame.shape[1] * np.arange(c.free.size)
+            for i in range(c.frame.shape[1]):
+                for j in range(3):
+                    X[slot.offset + 3 * c.free + j, k + i] = c.frame[:, i, j]
+        rest = np.flatnonzero(~on_fault)
+        x0 = np.zeros(N)
+        S, L, cond = AE[rows], -b[rows], 1.0
+        if rest.size:
+            A_rr = A[np.ix_(rest, rest)]
+            anorm = float(np.linalg.norm(A_rr, 1))
+            lu = lu_factor(A_rr, overwrite_a=True)
+            from scipy.linalg import get_lapack_funcs
+            gecon = get_lapack_funcs(("gecon",), (lu[0],))[0]
+            rcond, info = gecon(lu[0], anorm, norm="1")
+            cond = (1.0 / rcond) if (info == 0 and rcond > 0) else np.inf
+            X[rest] = -lu_solve(lu, AE[rest])
+            x0[rest] = lu_solve(lu, b[rest])
+            A_fr = A[np.ix_(rows, rest)]
+            S = S + A_fr @ X[rest]
+            L = L + A_fr @ x0[rest]
+        self.report = DenseSolveReport(cond_estimate=float(cond))
+        return Condensed(S=S, L=L, X=X, x0=x0, faults=tuple(coords),
+                         layout=self.layout, cond_estimate=float(cond))
 
     # -- viscoelastic hook --------------------------------------------
 

@@ -90,6 +90,24 @@ dense backend, and a mesh it can hold:
         --set depth_box=200 --set fault_half_len=100 --set t_max=100 \
         --set backend=dense --sweep lower=slip,creep           # afterslip
 
+``route=step`` solves the same reach by STEPPING IT IN TIME
+(``mbem.stepper``) instead: the body is reduced to the reach through the
+same Laplace states and the reach is integrated, so its law need not be
+linear. ``creep_law=viscous`` is then the cross-check of the two routes;
+``power`` is a shear zone that flows as the ``creep_n``-th power of its
+stress, and ``friction`` one that strengthens with slip rate
+(``rheology.RateStrengtheningFault``). Both are the viscous law of
+``creep_tau`` and ``creep_width`` where the traction is ``creep_stress``
+(GPa) or well below it, and softer above. A law that is not linear knows how
+large the earthquake was, so ``slip`` (m) matters here and nowhere else:
+
+    python -m mbem run configs/plate_substrate.py \
+        --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+        --set rho_substrate=3300 --set sides=window --set half_x=300 \
+        --set depth_box=200 --set fault_half_len=100 --set t_max=100 \
+        --set backend=dense --set lower=creep --set route=step \
+        --sweep creep_law=viscous,friction                     # ... stepped
+
 ``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
 footwall plate continues down the dip as an elastic slab to that depth, in
 the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
@@ -104,8 +122,11 @@ far field and the comparison with it is the slab's effect, not an error.
         --set depth_box=300 --set fault_half_len=100 --set t_max=100 \
         --sweep slab_depth=0,150                                # a slab
 """
+import math
+
 from mbem import defaults, laplace, rheology
-from mbem.config import Backend, Geometry, Laplace, Model, Output, Run, Solve
+from mbem.config import (Backend, Geometry, Laplace, Model, Output, Run,
+                         Solve, Stepper)
 
 
 def run_spec(half_x: float = 600.0, sides: str = "clamped",
@@ -121,7 +142,21 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              edge_interface: float = 15.0, refine: float = 1.0,
              depth_box: float = 0.0, lower: str = "slip",
              creep_tau: float = 1.0, creep_width: float = 10.0,
-             slab_depth: float = 0.0, slab_half_len: float = 0.0) -> Run:
+             slab_depth: float = 0.0, slab_half_len: float = 0.0,
+             route: str = "laplace", creep_law: str = "viscous",
+             creep_stress: float = 1.0e-3, creep_n: float = 3.0,
+             slip: float = 1.0, times_per_decade: int = 8) -> Run:
+    if route not in ("laplace", "step"):
+        raise ValueError(f"route {route!r}: 'laplace' or 'step'")
+    if creep_law not in ("viscous", "power", "friction"):
+        raise ValueError(f"creep_law {creep_law!r}: 'viscous', 'power' or "
+                         f"'friction'")
+    if route == "step" and lower != "creep":
+        raise ValueError("route=step steps a SOLVED fault: give lower=creep")
+    if route == "laplace" and (creep_law != "viscous" or slip != 1.0):
+        raise ValueError(
+            "the Laplace route is linear: it has the viscous law only, and "
+            "its answer is per unit slip. Give route=step")
     if fault_half_len <= 0.0:
         fault_half_len = 0.5 * half_x
     # the plate's two faces and the interface's eps: what a plate that bends
@@ -135,6 +170,18 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                base=eps_substrate)
     if depth > thickness:                   # the fault goes on in the substrate
         eps["fault_lower"] = "auto"
+    law = rheology.ViscousFault(tau=creep_tau, width=creep_width)
+    if creep_law == "power":
+        law = rheology.PowerLawFault(tau=creep_tau, width=creep_width,
+                                     n=creep_n, stress=creep_stress)
+    elif creep_law == "friction":
+        # the steady rate at which it IS the viscous law for a small change
+        law = rheology.RateStrengtheningFault(
+            v0=creep_stress * creep_width / (mu_substrate * creep_tau),
+            a_sigma=creep_stress, rake=rake)
+    step = route == "step"
+    n_t = max(1, round(math.log10(t_max / t_min) * times_per_decade))
+    times = tuple(t_min * (t_max / t_min) ** (i / n_t) for i in range(n_t + 1))
     return Run(
         name=f"plate_substrate_{sides}_{backend}",
         model=Model(
@@ -159,17 +206,23 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                         lam_substrate=mu_substrate, rho_plate=rho_plate,
                         rho_substrate=rho_substrate,
                         g=gravity * defaults.GRAVITY, rake=rake,
-                        lower=lower),
+                        lower=lower,
+                        **({"slip_mag": 1.0e-3 * slip} if slip != 1.0
+                           else {})),
             eps=eps),
         backend=Backend(kind=backend),
         solve=Solve(),
         laplace=Laplace(rheology={"substrate": substrate},
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade),
-                        faults=({"fault_lower": rheology.ViscousFault(
-                            tau=creep_tau, width=creep_width)}
-                            if lower == "creep" else {})),
+                        faults=({"fault_lower": law}
+                                if lower == "creep" and not step else {})),
+        stepper=(Stepper(faults={"fault_lower": law}, t=times)
+                 if step else None),
+        # a stepped run has a history and no state to draw the Laplace
+        # route's figures from
         outputs=Output(slots=(), save_meshes=True,
-                       figures=(("plate_substrate",) if rake % 180.0 == 0.0
+                       figures=(("plate_afterslip",) if step else
+                                ("plate_substrate",) if rake % 180.0 == 0.0
                                 else ("plate_thrust", "plate_cycle")
                                 + (("plate_creep",) if lower == "creep"
                                    else ()))),

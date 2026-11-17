@@ -841,3 +841,102 @@ def plate_creep(study):
     out = save_figure(fig, study.study_dir, "plate_creep")
     plt.close(fig)
     return out
+
+
+def stepped_reach(run):
+    """``(t, slip, rate)`` of a STEPPED run's lower reach (``route=step``):
+    its mean slip and mean slip rate through time, in the sense of the
+    rupture above it and over that rupture's slip."""
+    from mbem.cases import layered_box as lb
+
+    mp = run.resolved["spec"]["model"]["params"]
+    tri = run.meshes["fault_lower__v"][run.meshes["fault_lower__t"]]
+    area = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0],
+                                         tri[:, 2] - tri[:, 0]), axis=1)
+    sense = lb.burgers(1.0, mp.get("rake", 180.0), run.meshes["arr__n_hat"],
+                       run.meshes["arr__s_hat"])
+    w = area / area.sum() / mp.get("slip_mag", 1.0e-3)
+    return (run.history["t"], run.history["b:fault_lower"] @ sense @ w,
+            run.history["rate:fault_lower"] @ sense @ w)
+
+
+def plate_afterslip(study):
+    """Afterslip under a law that need not be linear: a megathrust whose
+    lower reach is STEPPED IN TIME (``route=step``, ``mbem.stepper``), one
+    curve for each child of the sweep -- the laws of ``creep_law``, or the
+    sizes of the earthquake (``slip``), which a law that is not linear knows.
+
+    Three panels through time: the reach's mean slip; its mean slip rate, on
+    logarithmic axes, over the four decades below its peak (beneath that it
+    is the fit's noise); and the vertical displacement of the surface over
+    the reach's lower edge at mid-strike. All over the rupture's slip.
+    """
+    import matplotlib.pyplot as plt
+    set_paper_style()
+
+    def named(params, run):
+        if "creep_law" in study.swept or not study.swept:
+            law = run.resolved["spec"]["stepper"]["faults"]["fault_lower"]
+            return {"viscous_fault": "linear",
+                    "rate_strengthening_fault": "friction",
+                    "power_law_fault": rf"power law, $n = {law.get('n', 0):g}$"
+                    }[law["kind"]]
+        return ", ".join(f"{v:g} m" if k == "slip" else f"{k} = {v}"
+                         for k, v in params.items() if k in study.swept)
+
+    rows = [(named(pr, run), run) for pr, run in study.rows if run.history]
+    if not rows:
+        raise ValueError("plate_afterslip draws stepped runs (route=step); "
+                         "this study has none")
+    gp = rows[0][1].resolved["spec"]["model"]["geometry"]["params"]
+    edge = gp["fault_depth"] / np.tan(np.deg2rad(gp["dip"]))
+    fig, (a0, a1, a2) = plt.subplots(1, 3, figsize=(10.5, 3.6))
+    colors = (BLUE, ORANGE, "0.45", "k")
+    curves, top, peak, u_lo, u_hi = [], 0.0, 0.0, 0.0, 0.0
+    for (label, run), color in zip(rows, colors):
+        t, slip, rate = stepped_reach(run)
+        cen = run.meshes["top__v"][run.meshes["top__t"]].mean(axis=1)
+        site = int(np.argmin(np.hypot(cen[:, 0] - edge, cen[:, 1])))
+        u = run.history["u:top"][:, site, 2] \
+            / run.resolved["spec"]["model"]["params"].get("slip_mag", 1.0e-3)
+        curves.append((label, color, t, slip, rate, u))
+        top, peak = max(top, float(slip.max())), max(peak, float(rate.max()))
+        u_lo, u_hi = min(u_lo, float(u.min())), max(u_hi, float(u.max()))
+    hi = 10.0 ** np.ceil(np.log10(peak))
+    lo = 1.0e-4 * hi
+    for label, color, t, slip, rate, u in curves:
+        a0.plot(t, slip, "-", color=color, lw=1.0, label=label)
+        a1.plot(t, np.where(rate > lo, rate, np.nan), "-", color=color, lw=1.0)
+        a2.plot(t, u, "-", color=color, lw=1.0)
+    t_lo, t_hi = float(curves[0][2][0]), float(curves[0][2][-1])
+    # a tenth above the round number if the curves end under the letter
+    top = np.ceil(top * 10.0) / 10.0 + (0.1 if top > 0.85 * np.ceil(
+        top * 10.0) / 10.0 else 0.0)
+    a0.set_ylim(0.0, top)
+    a0.set_yticks([0.0, top])
+    a0.set_ylabel("mean afterslip / slip")
+    a0.legend(frameon=False, loc="upper left", fontsize=8)
+    a1.set_yscale("log")
+    a1.set_ylim(lo, hi)
+    a1.set_yticks([lo, hi])
+    a1.set_ylabel(r"mean slip rate $\times\ \tau$ / slip")
+    # room above the curves for the panel's letter
+    bottom, ceil = np.floor(u_lo * 10.0) / 10.0, np.ceil(u_hi * 10.0) / 10.0
+    a2.set_ylim(bottom, ceil + 0.2 * (ceil - bottom))
+    a2.set_yticks(sorted({bottom, 0.0, ceil}))
+    a2.axhline(0.0, color="0.5", lw=0.6)
+    a2.set_ylabel(rf"$u_z\,/\,s$ at $x = {edge:.0f}$ km")
+    for ax, letter in ((a0, "a"), (a1, "b"), (a2, "c")):
+        ax.set_xscale("log")
+        ax.set_xlim(t_lo, t_hi)
+        ax.set_xticks([t_lo, t_hi])
+        ax.set_xticklabels([f"{t_lo:g}", f"{t_hi:g}"])
+        ax.minorticks_off()
+        ax.set_xlabel(r"$t\,/\,\tau$")
+        ax.set_box_aspect(1)
+        ax.text(0.95, 0.95, letter, transform=ax.transAxes, ha="right", va="top")
+
+    fig.tight_layout(w_pad=1.6)
+    out = save_figure(fig, study.study_dir, "plate_afterslip")
+    plt.close(fig)
+    return out

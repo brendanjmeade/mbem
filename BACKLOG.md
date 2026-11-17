@@ -4,7 +4,7 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 47 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 48 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
@@ -143,6 +143,25 @@ orthonormal modes, the weights of each time already applied;
 map is the fine mesh as solved), a reference in two dimensions to map the
 misfit, a recurrence interval that slides.
 
+STEPPED (2026-11-17). A solved fault under a law that is NOT linear, in
+time (`mbem.stepper`, `Run.stepper`; the note's section 6;
+`verify_stepper`, `verify_config` [o]). The body is linear, so each Laplace
+state is reduced to the fault (`AssembledDense.condense`), the fit's own
+exponentials are the body's memory, and the fault alone is integrated
+(Dormand-Prince): the Laplace route's states are its precompute. Laws:
+`PowerLawFault`, `RateStrengtheningFault` (friction at steady state).
+Closed forms in time on the penny with graded mobility, each within the
+crack's 0.6 % and flat: linear and exponential laws, elastic and Maxwell
+body (the last against a scalar equation with the material's exact poles).
+Against the Laplace route: 5e-4 on the penny, 1.4e-3 in slip and 8e-5 at
+the surface on the gate's megathrust, and the stored creep study reproduced
+to four figures. The fit's relaxed limit had to be made passive: as fitted,
+modes grow 2-5 % by the window's end where a fault sits in a region that
+relaxes completely. First result: per metre of slip, friction at 1 MPa
+gives 0.20 / 0.21 / 0.29 of the rupture's slip as afterslip under 1 cm /
+1 m / 10 m, eight times as much by a tenth of a Maxwell time under the
+largest. A run is the linear study's cost plus two minutes.
+
 OPEN, in the order they bite:
 
 * **A window knows only what its reference solves.** The walls carry the far
@@ -156,9 +175,19 @@ OPEN, in the order they bite:
   the finer mesh of the pair; a solved fault is on the dense backend, where
   the finer mesh is ~35,000 unknowns and the plate's faces 10 km. A
   FAULT_TRACTION fault on the compressed backend would lift that.
-* **Time-stepping with memory on the boundary** (the note's section 6): what
-  friction that is not linearized needs. Not built. Linear creep on a fault
-  no longer waits for it.
+* **Rate and state.** The stepper takes any law of the traction; a law
+  with a STATE variable, radiation damping (a law exponential in traction
+  is refused where it starts over a hundred times its scale) and a normal
+  stress that changes are not written. Nor is the size nucleation wants:
+  the faults' stiffness is dense and of full rank in its relaxing part
+  (n^2 per state: hours for 1e5-1e6 steps at 2,000 slip unknowns, weeks at
+  20,000), and the body behind it is on the dense backend.
+* **A stepped run's field in the volume** is a readout per state AND time;
+  `mbem sample` refuses one. The boundary through time is in `history.npz`.
+* **A stepped fault through the earthquake cycle.** `march` takes repeated
+  steps (`events`) and nothing draws them: the creep below a locked patch
+  at a rate that varies through the cycle (the last item below) is now a
+  run away, with a window of several periods.
 * **Slip on an interface.** Below the plate a slab's upper face is an
   interface, and slip there is a displacement jump between two regions:
   the +n region sees `u_p + b`, which is the prescribed-displacement RHS

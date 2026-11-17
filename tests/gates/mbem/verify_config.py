@@ -68,6 +68,12 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      the dense solve with that drag; the dump round-trips; and it is REFUSED
      on a prescribed slip, on a fault the model lacks and on the compressed
      backend, which solves no slip.
+  o  a fault STEPPED IN TIME reaches a run through ``Run.stepper``: the run
+     writes ``history.npz`` and no state's fields; the history is
+     ``stepper.march`` on the reduction of the same model; the law, one that
+     is not linear, round-trips through the dump; ``mbem sample`` refuses the
+     run; and it is REFUSED with a solved fault left without a law and on the
+     compressed backend.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -778,6 +784,77 @@ def l_sweep_dry_run(tmp: pathlib.Path) -> None:
           f"{len(list(runs.iterdir()))} directories made")
 
 
+def o_stepped_run(tmp: pathlib.Path) -> None:
+    """[o] a stepped fault through the config path."""
+    print("\n[o] a stepped fault: a law that is not linear, in time")
+    from mbem import cli, rheology, stepper
+    from mbem.backends.dense import AssembledDense
+    from mbem.model import generate_system
+    path = CONFIGS / "penny.py"
+    base = cfg.load(path)
+    drop = 1.0e-3 * 30.0                        # the scale of the crack's drop
+    law = rheology.RateStrengtheningFault(v0=1.0e-3, a_sigma=0.3 * drop,
+                                          rake=0.0)
+    times = (0.3, 1.0, 3.0)
+    run = dataclasses.replace(base, stepper=cfg.Stepper(
+        faults={"penny": law}, t=times))
+    d = tmp / "stepped"
+    d.mkdir()
+    rep = runner.execute(run, d, path)
+    check("the run finished", rep["status"] == "OK", rep["status"])
+    check("it wrote a history and no state's fields",
+          (d / "history.npz").exists() and not list(d.glob("fields_*.npz")))
+    resolved = json.loads((d / "resolved.json").read_text())
+    check("its one state is the elastic body",
+          [r["label"] for r in resolved["states"]] == ["elastic"])
+    bundle = cfg.resolve("penny", cfg.MESH_BUILDERS)(
+        scale=1.0, **dict(run.model.geometry.params))
+    model = cfg.resolve("penny", cfg.MODEL_BUILDERS)(
+        bundle, **dict(run.model.params))
+    body = stepper.Body([AssembledDense(
+        generate_system(model), run.model.eps, "direct").condense()])
+    direct = stepper.march(body, stepper.law_rate(
+        body, {"penny": law}, {"penny": model.regions[0].material.mu}), times)
+    with np.load(d / "history.npz") as z:
+        hist = {k: z[k] for k in z.files}
+    check("the history's times are the ones asked for",
+          np.array_equal(hist["t"], np.array(times)))
+    check("the slip == stepper.march on the reduction of the same model",
+          _rel(hist["b:penny"], direct.fault("penny")) < 1e-12,
+          f"{_rel(hist['b:penny'], direct.fault('penny')):.1e}")
+    check("... and the traction the law saw is beside it",
+          _rel(hist["traction:penny"], direct.fault("penny", "traction")) < 1e-12)
+    check("the fault really slips, and more as time goes",
+          0.0 < np.abs(hist["b:penny"][0]).max() < np.abs(hist["b:penny"][-1]).max())
+    check("the law comes back from the dump as itself",
+          rheology.from_spec(resolved["spec"]["stepper"]["faults"]["penny"])
+          == law)
+    check("the report says what the stepper did",
+          rep["stepper"]["slip_unknowns"] == body.n
+          and rep["stepper"]["law_evaluations"] > 0, f"{rep['stepper']}")
+    with contextlib.redirect_stdout(io.StringIO()) as said:
+        code = cli.main(["sample", str(d), "--out", str(tmp / "stepped_vol")])
+    check("mbem sample refuses a stepped run, and says why",
+          code == 1 and "stepped run" in said.getvalue(), f"exit {code}")
+
+    def refused_with(run_bad, exc, fragment):
+        dd = tmp / f"stepped_refused_{len(list(tmp.iterdir()))}"
+        dd.mkdir()
+        try:
+            runner.execute(run_bad, dd, path, save=False)
+        except exc as e:
+            return fragment in str(e)
+        return False
+
+    ghost = dataclasses.replace(run, stepper=cfg.Stepper(
+        faults={"elsewhere": law}, t=times))
+    check("REFUSED: a solved fault left without a law",
+          refused_with(ghost, KeyError, "every one of them a law"))
+    hmat = dataclasses.replace(run, backend=cfg.Backend(kind="hmat"))
+    check("REFUSED: the compressed backend, which solves no slip",
+          refused_with(hmat, ValueError, "dense backend only"))
+
+
 def main() -> bool:
     print("=" * 76)
     print("Config layer: one statement of the model, one of every number")
@@ -802,6 +879,7 @@ def main() -> bool:
         l_sweep_dry_run(pathlib.Path(tmp))
         m_creeping_fault(pathlib.Path(tmp))
         n_window_run(pathlib.Path(tmp))
+        o_stepped_run(pathlib.Path(tmp))
     g_figures_resolve()
     n_bad = sum(1 for c in CHECKS if not c)
     print("-" * 76)

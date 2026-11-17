@@ -165,6 +165,36 @@ def _creeping_faults(model, run: cfg.Run) -> dict:
         raise KeyError(
             f"laplace.faults names {sorted(unknown)}, which are not "
             f"FAULT_TRACTION faults of the model (those are {sorted(solved)})")
+    linear = {name: rheology.from_spec(law) for name, law in laws.items()}
+    bad = sorted(n for n, law in linear.items() if not hasattr(law, "drag"))
+    if bad:
+        raise ValueError(
+            f"laplace.faults gives {bad} a law that is not linear: the "
+            f"Laplace route has no state for it. Step the run instead "
+            f"(Run.stepper)")
+    return {name: (law, solved[name]) for name, law in linear.items()}
+
+
+def _stepped_faults(model, run: cfg.Run) -> dict:
+    """``{fault name: (law, unrelaxed mu of its region)}`` for
+    ``run.stepper.faults``: the model's FAULT_TRACTION faults, ALL of them
+    (one without a law would be a constraint and not an equation in time),
+    on the dense backend, which alone solves a slip."""
+    from mbem import rheology
+    from mbem.model import BCType
+
+    laws = dict(run.stepper.faults)
+    if run.backend.kind != "dense":
+        raise ValueError(
+            f"a stepped run reduces the body to its SOLVED faults: dense "
+            f"backend only (got {run.backend.kind!r})")
+    solved = {f.name: r.material.mu for r in model.regions for f in r.faults
+              if f.bc is BCType.FAULT_TRACTION}
+    if set(laws) != set(solved):
+        raise KeyError(
+            f"stepper.faults names {sorted(laws)}; the model's "
+            f"FAULT_TRACTION faults are {sorted(solved)}, and a stepped run "
+            f"gives every one of them a law and no other fault")
     return {name: (rheology.from_spec(law), solved[name])
             for name, law in laws.items()}
 
@@ -226,6 +256,10 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         states = rheology.laplace_states(
             {r.name: (r.material.mu, r.material.lam) for r in model.regions},
             relaxing, run.laplace.s, creeping)
+    stepped = _stepped_faults(model, run) if run.stepper is not None else {}
+    if stepped and run.laplace is None:
+        # the one state of a body that does not relax, named for what it is
+        states = (cfg.State("elastic", {}, s=float("inf")),)
     for st in states:
         unknown = set(st.materials) - known
         if unknown:
@@ -290,6 +324,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
              for st in states])
         phases["far_field"] = time.perf_counter() - t0
     cur, held, held_drag, ok, solutions = asm, {}, {}, True, {}
+    condensed = []
     for st in states:
         want, drag = overrides[cfg.slug(st.label)], dict(st.drag)
         if want != held or drag != held_drag:
@@ -300,8 +335,14 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                    if drag or held_drag else cur.rebuild_for_materials(mats))
             held, held_drag = want, drag
         t0 = time.perf_counter()
-        sol = cur.solve(**run.solve.kwargs()) if run.backend.kind != "dense" \
-            else cur.solve()
+        if stepped:
+            # nothing is solved at a state of a stepped run: the body is
+            # reduced to its faults, which the stepper then solves in time
+            condensed.append(cur.condense())
+            sol = {}
+        else:
+            sol = cur.solve(**run.solve.kwargs()) \
+                if run.backend.kind != "dense" else cur.solve()
         wall = time.perf_counter() - t0
         rep = cur.report
         row = {"label": st.label, "solve_s": wall,
@@ -329,7 +370,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 payload[f"arr__{name}"] = np.asarray(a)
             np.savez(run_dir / "meshes.npz", **payload)
 
-        if save and run.outputs.save_fields:
+        if save and run.outputs.save_fields and not stepped:
             want = run.outputs.slots or tuple(sol)
             missing = [s for s in want if s not in sol]
             if missing:
@@ -337,6 +378,40 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                                f"not have: {missing} (have {sorted(sol)})")
             np.savez(run_dir / f"fields_{cfg.slug(st.label)}.npz",
                      **{k: sol[k] for k in want})
+
+    history = None
+    if stepped:
+        from mbem import stepper as stp
+        t0 = time.perf_counter()
+        body = stp.Body(condensed, s=[st.s for st in states[1:]]
+                        if run.laplace is not None else None)
+        rate = stp.law_rate(body, {k: v[0] for k, v in stepped.items()},
+                            {k: v[1] for k, v in stepped.items()})
+        history = stp.march(body, rate, run.stepper.t,
+                            events=run.stepper.events,
+                            rtol=run.stepper.rtol, atol=run.stepper.atol)
+        phases["march"] = time.perf_counter() - t0
+        report["stepper"] = {
+            "slip_unknowns": body.n, "poles": int(body.tau.size),
+            "window": body.window, "law_evaluations": history.nfev,
+            "growing_modes_removed": body.growing,
+            "removed_over_elastic": body.removed}
+        if save and run.outputs.save_fields:
+            rows = [history.slots(i) for i in range(history.t.size)]
+            want = run.outputs.slots or tuple(rows[0])
+            missing = [s for s in want if s not in rows[0]]
+            if missing:
+                raise KeyError(f"outputs.slots names slots the model does "
+                               f"not have: {missing} (have {sorted(rows[0])})")
+            # what the law saw and what it answered, beside every slot
+            law = {f.name: np.stack([f.cartesian(rate(v)[f.start:f.stop])
+                                     for v in history.traction])
+                   for f in body.faults}
+            np.savez(run_dir / "history.npz", t=history.t,
+                     **{k: np.stack([r[k] for r in rows]) for k in want},
+                     **{f"traction:{f.name}": history.fault(f.name, "traction")
+                        for f in body.faults},
+                     **{f"rate:{k}": v for k, v in law.items()})
 
     if save and run.outputs.figures:
         from mbem import figures as F
@@ -352,7 +427,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
             fn = F.resolve(key)
             ctx = F.RunContext(run_dir=run_dir, model=model, bundle=bundle,
                                eps=eps, solutions=solutions, resolved=resolved,
-                               asm=asm, system=system)
+                               asm=asm, system=system, history=history)
             made += [str(p.name) for p in fn(ctx) or []]
         phases["figures"] = time.perf_counter() - t0
         report["figures"] = made

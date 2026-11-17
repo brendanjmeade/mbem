@@ -223,6 +223,31 @@ class Laplace:
 
 
 @dataclass(frozen=True)
+class Stepper:
+    """A run whose solved faults are stepped in time (``mbem.stepper``).
+
+    ``faults`` maps EVERY solved fault (``BCType.FAULT_TRACTION``) to its law
+    (``mbem.rheology``: any with a ``rate``, linear or not), ``t`` are the
+    times to return, and ``events`` the times at which the model's prescribed
+    data are applied as a step, the first of them the start.
+
+    The body is whatever the rest of the run says: with ``Run.laplace`` it
+    relaxes, and its states are reduced to the faults and become their memory;
+    without, it is elastic and there is one state. Nothing is solved per
+    state, so no ``fields_<state>.npz`` is written: the run's result is
+    ``history.npz``, every slot at every ``t``. Dense backend only.
+
+    A fault takes its law here or in ``laplace.faults``, never both: there
+    the law must be linear and the run is the Laplace route's.
+    """
+    faults: Mapping[str, Any]
+    t: tuple[float, ...]
+    events: tuple[float, ...] = (0.0,)
+    rtol: float | None = None
+    atol: float | None = None
+
+
+@dataclass(frozen=True)
 class Output:
     """``slots`` empty means every slot. At 4M unknowns that is tens of GB per
     state, so a large run should name the slots it actually wants."""
@@ -246,6 +271,7 @@ class Run:
     notes: str = ""
     tags: tuple[str, ...] = ()
     laplace: Laplace | None = None
+    stepper: Stepper | None = None
 
     def __post_init__(self):
         if self.backend.kind not in BACKENDS:
@@ -280,6 +306,26 @@ class Run:
                 raise ValueError("laplace.rheology names no region and "
                                  "laplace.faults no fault: nothing relaxes, "
                                  "which is an elastic run")
+        if self.stepper is not None:
+            if not self.stepper.faults:
+                raise ValueError("stepper.faults names no fault: nothing to "
+                                 "step")
+            tt = tuple(float(v) for v in self.stepper.t)
+            if not tt or any(b < a for a, b in zip(tt, tt[1:])):
+                raise ValueError(f"stepper.t must be one or more "
+                                 f"non-decreasing times, got {tt}")
+            if not self.stepper.events:
+                raise ValueError("stepper.events is empty: nothing ever "
+                                 "loads the faults")
+            if self.laplace is None and self.states != (State("base"),):
+                raise ValueError("a stepped run's body is elastic (no "
+                                 "`states`) or relaxes (`laplace`): its "
+                                 "states are not a list")
+            if self.laplace is not None and self.laplace.faults:
+                raise ValueError(
+                    f"laplace.faults gives {sorted(self.laplace.faults)} a "
+                    f"law in a stepped run: every solved fault of one is "
+                    f"stepped, so its law belongs in stepper.faults")
 
 
 # ---------------------------------------------------------------------

@@ -335,6 +335,12 @@ def cmd_sample(a) -> int:
     saved = {}
     for child in children:
         run = F.load_run(child)
+        if (run.resolved.get("spec") or {}).get("stepper"):
+            print(f"  {child.name}: a stepped run has no state to sample. "
+                  f"Its field at a time is a sum over the states of the "
+                  f"body's memory, one readout per state AND time; not "
+                  f"built. history.npz holds every slot at every time")
+            return 1
         if not run.fields:
             print(f"  {child.name}: no fields saved -- rerun the config with "
                   f"outputs=Output(slots=()) so every slot is stored")

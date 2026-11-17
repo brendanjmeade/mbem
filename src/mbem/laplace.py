@@ -110,6 +110,14 @@ class Prony:
                 B[:, 1:] = -e / self.tau * geo
         return B
 
+    def coefficients(self) -> np.ndarray:
+        """``(1 + len(tau) [+ 1], n_states)``: the fit itself, the map from a
+        stack to ``[a0, a_1 .. a_m, (c)]``, each ``a_j`` the amplitude of
+        ``exp(-t / tau[j - 1])``. What a consumer needs that carries the
+        response as an equation in time rather than reading it at a time
+        (``mbem.stepper``): every method below is a row vector times this."""
+        return self._pinv
+
     def weights(self, t) -> np.ndarray:
         """``(n_t, n_states)``: ``u(t) = weights(t) @ stack`` for the response
         to a unit step."""

@@ -25,6 +25,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class Maxwell:
@@ -107,9 +109,98 @@ class ViscousFault:
         modulus ``mu`` (GPa)."""
         return math.inf if math.isinf(s) else mu * self.tau * s / self.width
 
+    def rate(self, traction, mu):
+        """The law in time: slip rate (km per unit of ``tau``) under
+        ``traction`` (GPa), both ``(n, 2)`` in the fault's row frame
+        (``equations.traction_row_frame``). What ``mbem.stepper`` integrates;
+        every fault law has one, and only this law has a ``drag`` as well."""
+        return np.asarray(traction, float) * (self.width / (mu * self.tau))
+
+
+@dataclass(frozen=True)
+class PowerLawFault:
+    """A shear zone that flows as a power of its stress:
+
+        rate = (traction / eta_f) (|traction| / stress)^(n - 1),
+
+    ``eta_f = mu tau / width`` as in ``ViscousFault``, which this is at
+    ``|traction| = stress`` and for ``n = 1``; above ``stress`` it is the
+    softer of the two. Not linear, so it has no ``drag`` and no Laplace
+    state: a fault with this law is stepped in time (``Run.stepper``).
+    """
+    tau: float
+    width: float
+    n: float
+    stress: float
+    kind: str = field(default="power_law_fault", init=False)
+
+    def __post_init__(self):
+        for name in ("tau", "width", "stress"):
+            v = getattr(self, name)
+            if not (v > 0.0 and math.isfinite(v)):
+                raise ValueError(f"PowerLawFault {name} {v} must be positive")
+        if not (self.n >= 1.0 and math.isfinite(self.n)):
+            raise ValueError(f"PowerLawFault n {self.n} must be >= 1: below "
+                             f"it the rate is unbounded as the stress vanishes")
+
+    def rate(self, traction, mu):
+        t = np.asarray(traction, float)
+        mag = np.linalg.norm(t, axis=-1, keepdims=True)
+        return t * (self.width / (mu * self.tau)) \
+            * (mag / self.stress) ** (self.n - 1.0)
+
+
+@dataclass(frozen=True)
+class RateStrengtheningFault:
+    """Friction that strengthens with slip rate, at steady state: a fault
+    sliding at ``v0`` under its ambient stress slides at
+    ``v0 exp(dtau / a_sigma)`` when its shear traction along the rake changes
+    by ``dtau`` (``a_sigma`` is ``(a - b) sigma_n``, GPa). Slip is measured
+    FROM STEADY SLIP, as everything in a Laplace run is, so
+
+        rate = v0 (exp(dtau / a_sigma) - 1)   along the rake,
+
+    and none across it: the direction of sliding is the ambient traction's,
+    which a change smaller than the fault's strength does not turn. ``rake``
+    is in the fault's row frame, degrees from strike toward
+    ``n x strike``, the convention of ``layered_box.burgers``. For
+    ``dtau << a_sigma`` this is the ``ViscousFault`` of section 9 with
+    ``eta_f = a_sigma / v0`` (``linearized``); above it the rate grows
+    exponentially, which is why afterslip is logarithmic in time. A negative
+    ``dtau`` slows the fault and never reverses it. No state variable: the
+    fault is always at steady state. Stepped in time (``Run.stepper``).
+    """
+    v0: float
+    a_sigma: float
+    rake: float
+    kind: str = field(default="rate_strengthening_fault", init=False)
+
+    def __post_init__(self):
+        for name in ("v0", "a_sigma"):
+            v = getattr(self, name)
+            if not (v > 0.0 and math.isfinite(v)):
+                raise ValueError(
+                    f"RateStrengtheningFault {name} {v} must be positive")
+
+    def direction(self) -> np.ndarray:
+        """(2,): the rake in the row frame, quarter turns exact."""
+        r = math.radians(self.rake)
+        return np.array([round(math.cos(r), 15), round(math.sin(r), 15)])
+
+    def rate(self, traction, mu=None):
+        d = self.direction()
+        along = np.asarray(traction, float) @ d
+        return (self.v0 * np.expm1(along / self.a_sigma))[..., None] * d
+
+    def linearized(self, mu) -> ViscousFault:
+        """The linear law this one is for a small change of traction, on a
+        fault in a region of unrelaxed shear modulus ``mu``."""
+        return ViscousFault(tau=self.a_sigma / (self.v0 * mu), width=1.0)
+
 
 KINDS = {"maxwell": Maxwell, "burgers": Burgers,
-         "viscous_fault": ViscousFault}
+         "viscous_fault": ViscousFault, "power_law_fault": PowerLawFault,
+         "rate_strengthening_fault": RateStrengtheningFault}
 
 
 def from_spec(spec):

@@ -2,7 +2,7 @@
 // visitor can take over. Loads the smallest useful set -- one field plus the
 // region and clearance arrays, about 230 kB raw and 48 kB over the wire.
 
-import { VolumeScene } from "./scene";
+import { AZIMUTH, ELEVATION, VolumeScene } from "./scene";
 import { Payload } from "./volume";
 
 export async function startHero(el: HTMLElement, baseUrl: string) {
@@ -26,17 +26,13 @@ export async function startHero(el: HTMLElement, baseUrl: string) {
   scene.start();
 
   // Idle rotation until the visitor touches it, then hand over for good.
-  let t = 0, idle = true;
-  const target = scene.target;
+  // Each frame is placed, not just turned, so the box stays whole in the
+  // frame at every angle and every size of window.
+  let t = AZIMUTH, idle = !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const spin = () => {
     if (!idle) return;
     t += 0.0012;
-    // 1.15 / 0.7: the figure 30 % smaller in frame, so the whole domain fits
-    const R = p.extent[0] * 1.643;
-    scene.camera.position.set(
-      target.x + R * Math.cos(t), target.y + R * Math.sin(t),
-      target.z + p.extent[2] * 1.93);
-    scene.camera.lookAt(target);
+    scene.place(t, ELEVATION + 0.12);
     scene.render();
     requestAnimationFrame(spin);
   };

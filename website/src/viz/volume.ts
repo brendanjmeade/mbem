@@ -42,10 +42,15 @@ export class Payload {
     this.base = baseUrl.replace(/\/?$/, "/") + "data/";
   }
 
+  // The files keep their names across deploys, and a browser may serve one
+  // from its cache for as long as the host allows: after new data went up, a
+  // page showed the old fields. So the manifest is always revalidated, and
+  // an array is asked for BY ITS HASH, which the manifest states.
   async load(): Promise<Manifest> {
-    this.manifest = await (await fetch(this.base + "manifest.json")).json();
+    const fresh: RequestInit = { cache: "no-cache" };
+    this.manifest = await (await fetch(this.base + "manifest.json", fresh)).json();
     if (this.manifest.geometry) {
-      this.geometry = await (await fetch(this.base + this.manifest.geometry)).json();
+      this.geometry = await (await fetch(this.base + this.manifest.geometry, fresh)).json();
     }
     return this.manifest;
   }
@@ -54,7 +59,8 @@ export class Payload {
   async array(key: string): Promise<Uint8Array> {
     const hit = this.cache.get(key);
     if (hit) return hit;
-    const r = await fetch(`${this.base}${key}.bin`);
+    const v = this.manifest.arrays[key]?.sha256;
+    const r = await fetch(`${this.base}${key}.bin${v ? `?v=${v}` : ""}`);
     if (!r.ok) throw new Error(`${key}.bin: ${r.status}`);
     const a = new Uint8Array(await r.arrayBuffer());
     const want = this.manifest.grid.n_points;

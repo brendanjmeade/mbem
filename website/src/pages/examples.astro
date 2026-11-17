@@ -10,7 +10,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
   <Fragment slot="sidebar">
     <h1>Examples<span class="sub">a stored solve, explored</span></h1>
     <p>
-      Nothing is computed here. The solve &mdash; 24,348 unknowns, a dense LU
+      Nothing is computed here. The solve &mdash; 31,188 unknowns, a dense LU
       reference and a block-compressed operator agreeing to ~2&times;10<sup>&minus;6</sup>
       &mdash; ran in Python; this page moves three slices through its stored
       readout.
@@ -43,7 +43,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
       <label><span>Field</span><span data-ctl="field"></span></label>
       <label><span>Colours</span><span data-ctl="map"></span></label>
     </div>
-    <div data-canvas class="canvas"></div>
+    <div data-canvas class="stage"></div>
     <div data-bar class="bar"></div>
     <div class="panel slices">
       <label><span>x slice</span><span data-ctl="slice-x" class="rng"></span></label>
@@ -63,16 +63,14 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
 
   <style is:global>
     #viewer { margin-bottom: 18px; }
-    #viewer .canvas { width: 100%; min-height: 440px; cursor: grab; background: #fff; }
-    #viewer .canvas:active { cursor: grabbing; }
-    #viewer .canvas canvas { display: block; }
     #viewer .panel {
       display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
       margin-bottom: 10px; font-size: 13px;
     }
-    #viewer .panel label { display: flex; align-items: center; gap: 6px; }
+    #viewer .panel label { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
     #viewer .panel label > span:first-child { color: var(--fg-dim); }
-    #viewer .panel select { font: inherit; font-size: 13px; padding: 2px 4px; }
+    #viewer .panel select { font: inherit; font-size: 13px; padding: 2px 4px; max-width: 100%; min-width: 0; }
+    #viewer .panel [data-ctl] { min-width: 0; }
     #viewer .panel .rng { display: flex; align-items: center; gap: 6px; }
     #viewer .panel input[type="range"] { width: 120px; }
     #viewer .panel .val { color: var(--fg-dim); min-width: 84px; font-variant-numeric: tabular-nums; }

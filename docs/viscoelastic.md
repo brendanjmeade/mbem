@@ -444,6 +444,60 @@ unknowns and weeks at 20,000; and a FIELD at a time is a sum over states of
 the body's memory, one readout per state and time, which `mbem sample` does
 not make (`history.npz` holds every boundary slot at every time).
 
+**A fault in the whole space, with nothing dense.** With no boundary there
+is nothing to eliminate: $S_k$ is the fault's own traction kernel, and two
+things about it are exact. The elastic traction of a slip is $\mu$ times a
+function affine in $g$ (section 2.3), so two matrices, the kernel at unit
+modulus at the two ends of the run's range of $g$, give it at every state as
+a convex combination:
+
+$$ S(t)=a_{lo}(t)\,H_{lo}+a_{hi}(t)\,H_{hi} , $$
+
+with $a$ the fits of each state's two weights, scalars, and a stage of the
+integrator is two products however many states the body has. And the kernel
+falls as the cube of distance, so each matrix is stored in flat H form
+(`la.faultkernel.FaultKernel`: near blocks dense, the rest by the cross
+approximation the boundary operator already uses, built by a pool of
+processes), P0 faults only. `stepper.KernelBody` steps on it, and a stepped
+run of a model with no boundary takes it with `backend=hmat`. The fit's
+relaxed limit is then two numbers and not a matrix's spectrum, and it is
+corrected in $H_{lo}$ and $H_{hi}-H_{lo}$, both of which resist: weight by
+weight the two fitted limits miss in opposite senses and all but cancel,
+and clipping one alone adds ten times what it removes. Against the dense
+body on the penny at P0: 3e-7 where the operators are one, 1e-3 with each
+one's own correction.
+
+The same Maxwell penny under friction, to $10\,\tau$ (`configs/penny.py
+--set order=0 --set backend=hmat --set law=friction --set maxwell=1`):
+
+| elements | slip unknowns | stored | dense, two matrices | build | evaluations of the law | run |
+|---|---|---|---|---|---|---|
+| 1,959 | 3,918 | 0.20 GB | 0.55 GB | 8 s | 4,304 | 27 s (dense: 215 s) |
+| 31,042 | 62,084 | 5.9 GB | 139 GB | 70 s | 18,692 | 19 min |
+| 124,462 | 248,924 | 32 GB | 2,231 GB | 6 min | not run to the end | |
+
+The dense body at 31,042 elements would be eleven states of 31 GB each.
+**What the table shows next is the step count.** An explicit pair is stable
+only below the fault's own fastest rate, its stiffness over its viscosity,
+and the stiffness of an element grows as it shrinks: four times the elements
+along a radius, 4.3 times the evaluations. At 124,462 elements that is some
+39,000 evaluations at about a third of a second, three to four hours by
+extrapolation, and the run was stopped. The product is no longer the limit;
+the integrator is, and a stabilized explicit method (whose stages grow as
+the square root of that ratio) or an implicit one on the compressed product
+is what a finer fault wants. Not built.
+
+*A fault in a body* still goes through the dense reduction, and its $S_k$
+is this kernel plus the boundary's correction. Measured on the megathrust's
+reach (992 slip unknowns): the kernel is 90-96 % of $S_k$ in norm; the
+correction is not of low rank (136-193 above $10^{-3}$ of $|S_k|$, because
+the reach touches the plate's base, and keeping 160 leaves 0.3-3 % in the
+stepped slip), though between clusters of the fault two apart it has rank
+0-2 like the kernel. It needs a column from a solve for each slip unknown.
+Applying it instead of forming it, one back-substitution per state per
+stage with the body's factors kept, is the route to a large fault in a
+body; not built.
+
 **The design this replaced** steps every boundary unknown. Multiplying by
 $s/(s+\beta)$ is, in time, the variable
 $m(t)=\int_0^te^{-\beta(t-t')}\dot x(t')\,dt'$, and because every operator

@@ -153,6 +153,10 @@ class Body:
             x += w[k] * st.x0 + st.X @ c[k]
         return x
 
+    def slots(self, t, Y, events) -> dict:
+        """Every unknown at ``t``, as a solve returns them."""
+        return self.states[0].slots(self.unknowns(t, Y, events))
+
     def slip_scale(self) -> float:
         """The largest slip the elastic body's faults would take to shed the
         load entirely: what an absolute tolerance on slip is a fraction of."""
@@ -182,6 +186,182 @@ class Body:
                 J[i * n:(i + 1) * n, i * n:(i + 1) * n] -= \
                     np.eye(n) / self.tau[i - 1]
         return float(np.linalg.eigvals(J).real.max())
+
+
+class KernelBody:
+    """A body with no boundary, as its faults feel it: no dense matrix.
+
+    One region that is the whole space, its solved faults (P0) the only
+    unknowns. Nothing is then eliminated, and the reduced stiffness of
+    ``Body`` is the faults' own traction kernel, which is a kernel sum:
+    ``la.faultkernel.FaultKernel`` holds it compressed, as TWO matrices that
+    serve every material. So
+
+        S(t) = a_lo(t) H_lo + a_hi(t) H_hi
+
+    with ``a`` SCALAR functions of time, the fit of each state's two
+    weights, and a stage of the integrator is two compressed products
+    however many states the body has. What ``Body`` does to the fit's
+    relaxed limit with an ordered Schur form is here two numbers: a relaxed
+    weight below zero is one that pushes, and it is moved onto the slowest
+    pole.
+
+    ``materials`` are the region's ``(mu, lam)`` state by state, the elastic
+    one first, ``s`` their finite Laplace parameters (None: one state).
+    ``loads`` is ``(n_states, n)``: what the prescribed data load the held
+    faults with at each state, in coordinates.
+    """
+
+    def __init__(self, kernel, faults, materials, loads, s=None,
+                 passive: bool = True):
+        self.kernel, self.faults = kernel, tuple(faults)
+        self.n = int(self.faults[-1].stop)
+        materials = [(float(m), float(lam)) for m, lam in materials]
+        if s is None:
+            if len(materials) != 1:
+                raise ValueError(f"a body that does not relax is ONE state; "
+                                 f"got {len(materials)} and no s")
+            self.tau, self.C, self.window = np.zeros(0), np.ones((1, 1)), None
+        else:
+            s = np.asarray(s, float)
+            if len(materials) != 1 + s.size:
+                raise ValueError(f"{s.size} Laplace parameters want "
+                                 f"{1 + s.size} states (the elastic one "
+                                 f"first), got {len(materials)}")
+            pr = laplace.Prony(s)
+            self.tau, self.C = pr.tau, pr.coefficients()
+            self.window = laplace.window(s)
+        self.materials = materials
+        W = np.array([kernel.weights(m, lam) for m, lam in materials])  # (K, B)
+        self._a = (self.C @ W).T.copy()                  # (B, 1 + m)
+        self._aL = self.C @ np.asarray(loads, float)
+        self._elastic, self._L0 = W[0], np.asarray(loads, float)[0]
+        self.growing, self.removed = 0, 0.0
+        if passive and self.tau.size:
+            # Not weight by weight: the two fitted limits miss in opposite
+            # senses and all but cancel, so clipping one alone would add ten
+            # times what it removes. In S = c1 H_lo + c2 (H_hi - H_lo) both
+            # operators resist (the stiffer material is the stiffer fault)
+            # and each limit is its own fit: c1 = a_lo + a_hi, c2 = a_hi.
+            slow = 1 + int(np.argmax(self.tau))
+            a = self._a
+            c = [a[:, 0].sum(), a[-1, 0]] if a.shape[0] == 2 else [a[0, 0]]
+            cut = [min(v, 0.0) for v in c]              # what pushes
+            self.growing = int(sum(v < 0.0 for v in cut))
+            self.removed = float(max(-v for v in cut) / np.abs(W[0]).sum())
+            if a.shape[0] == 2:
+                move = np.array([cut[0] - cut[1], cut[1]])
+            else:
+                move = np.array([cut[0]])
+            a[:, 0] -= move
+            a[:, slow] += move
+        # element offset of each fault in the kernel's order
+        self._at, at = [], 0
+        for f in self.faults:
+            self._at.append(at)
+            at += f.n_dofs
+
+    def _cart(self, v) -> np.ndarray:
+        """Coordinates ``(n,)`` -> the kernel's Cartesian ``(3 n_el,)``."""
+        return np.concatenate([f.cartesian(v[f.start:f.stop]).ravel()
+                               for f in self.faults])
+
+    def _coords(self, x) -> np.ndarray:
+        x = x.reshape(-1, 3)
+        return np.concatenate([f.coordinates(x[at:at + f.n_dofs])
+                               for f, at in zip(self.faults, self._at)])
+
+    _basis = Body._basis
+    load = Body.load
+
+    def traction(self, Y, load) -> np.ndarray:
+        return self._coords(self.kernel.apply(
+            *(self._cart(a @ Y) for a in self._a))) + load
+
+    def slots(self, t, Y, events) -> dict:
+        """The faults' slip at ``t``: all the unknowns such a body has."""
+        return {f"b:{f.name}": f.cartesian(Y[0][f.start:f.stop])
+                for f in self.faults}
+
+    def slip_scale(self) -> float:
+        """As ``Body.slip_scale``, by a few steps of GMRES on the compressed
+        kernel: the scale of a tolerance needs one figure, not a solve."""
+        from scipy.sparse.linalg import LinearOperator, gmres
+
+        if not np.any(self._L0):
+            return 0.0
+        op = LinearOperator((self.n, self.n), matvec=lambda v: -self._coords(
+            self.kernel.apply(*(w * self._cart(v) for w in self._elastic))))
+        x, _info = gmres(op, self._L0, rtol=1.0e-2, restart=40, maxiter=3)
+        return float(np.abs(x).max())
+
+    @classmethod
+    def from_model(cls, model, eps, materials, s=None, tol: float = None,
+                   passive: bool = True, log=None):
+        """Build one for ``model``: one region with no boundary patch, its
+        FAULT_TRACTION faults P0. ``materials`` as in the class; faults with
+        PRESCRIBED slip in the region load the solved ones, state by state."""
+        from .backends.dense import FaultCoordinates
+        from .kernels import basis as kb
+        from .kernels import tri_nodal as tn
+        from .la.faultkernel import FaultKernel, g_of
+        from .model.core import BCType
+        from .model.equations import traction_row_frame
+
+        if len(model.regions) != 1 or model.regions[0].patches:
+            raise ValueError(
+                "KernelBody: the model must be ONE region with no boundary "
+                "patch (the whole space); a body with a boundary is reduced "
+                "through the dense backend (AssembledDense.condense)")
+        region = model.regions[0]
+        solved = [f for f in region.faults if f.bc is BCType.FAULT_TRACTION]
+        given = [f for f in region.faults if f.bc is BCType.FAULT]
+        if not solved:
+            raise ValueError("KernelBody: the model has no FAULT_TRACTION "
+                             "fault, so there is nothing to step")
+        coords, start = [], 0
+        for f in solved:
+            if f.allow_opening:
+                raise ValueError(f"KernelBody: fault '{f.name}' opens; the "
+                                 f"stepper is of faults that slide")
+            free = np.flatnonzero(~f.locked_mask(()))
+            coords.append(FaultCoordinates(
+                f.name, free, traction_row_frame(f)[free, :2, :], start,
+                start + 2 * free.size, f.n_dofs))
+            start += 2 * free.size
+        g = [g_of(m, lam) for m, lam in materials]
+        kernel = FaultKernel(solved, eps, (min(g), max(g)), tol=tol)
+        if log is not None:
+            r = kernel.report
+            log(f"fault kernel: {r['elements']} elements, "
+                f"{r['bytes'] / 1e9:.2f} GB against {r['dense_bytes'] / 1e9:.1f} "
+                f"dense, built in {r['build_s']:.0f} s")
+        # the loads: minus the faults' own datum, plus the traction of every
+        # prescribed slip (b[b_f] of model/equations.py, with the sign of L)
+        datum = np.concatenate([c.coordinates(f.value_array())
+                                for c, f in zip(coords, solved)])
+        loads = np.tile(-datum, (len(materials), 1))
+        if given:
+            x = np.concatenate([f.collocation_points() for f in solved])
+            n_c = np.concatenate([f.collocation_normals() for f in solved])
+            body_at = np.cumsum([0] + [f.n_dofs for f in solved])
+            arrays = kb.MeshArrays()
+            for gf in given:
+                tv, nrm = arrays.source_arrays(gf.mesh)
+                ge = kb.resolve_patch_eps(eps, gf)
+                ids = np.arange(tv.shape[0], dtype=np.int64).reshape(-1, 1)
+                slip = gf.value_array().ravel()
+                step = max(1, int(defaults.ASSEMBLY_SOURCE_CHUNK))
+                for k, (m, lam) in enumerate(materials):
+                    t_c = np.concatenate([tn.traction_matrix(
+                        np.ascontiguousarray(x[i:i + step]),
+                        np.ascontiguousarray(n_c[i:i + step]), tv, nrm, ge,
+                        ids, tv.shape[0], m, lam, 0, "slip") @ slip
+                        for i in range(0, x.shape[0], step)]).reshape(-1, 3)
+                    loads[k] += np.concatenate([
+                        c.coordinates(t_c[a:b]) for c, a, b in
+                        zip(coords, body_at[:-1], body_at[1:])])
+        return cls(kernel, coords, materials, loads, s=s, passive=passive)
 
 
 def law_rate(body: Body, laws, mu):
@@ -241,8 +421,7 @@ class History:
 
     def slots(self, i: int) -> dict:
         """Every unknown at ``t[i]``, as a solve returns them."""
-        return self.body.states[0].slots(
-            self.body.unknowns(self.t[i], self.y[i], self.events))
+        return self.body.slots(self.t[i], self.y[i], self.events)
 
 
 def _events(events) -> tuple:

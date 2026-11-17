@@ -177,16 +177,32 @@ def _creeping_faults(model, run: cfg.Run) -> dict:
 def _stepped_faults(model, run: cfg.Run) -> dict:
     """``{fault name: (law, unrelaxed mu of its region)}`` for
     ``run.stepper.faults``: the model's FAULT_TRACTION faults, ALL of them
-    (one without a law would be a constraint and not an equation in time),
-    on the dense backend, which alone solves a slip."""
+    (one without a law would be a constraint and not an equation in time).
+    A body with a boundary is reduced to them through the dense backend,
+    which alone solves a slip; one with none (the whole space) needs no
+    reduction and may take the compressed kernel instead (``_kernel_route``)."""
     from mbem import rheology
     from mbem.model import BCType
 
     laws = dict(run.stepper.faults)
-    if run.backend.kind != "dense":
+    if run.backend.kind != "dense" and any(r.patches for r in model.regions):
         raise ValueError(
-            f"a stepped run reduces the body to its SOLVED faults: dense "
-            f"backend only (got {run.backend.kind!r})")
+            f"a stepped run reduces a body WITH A BOUNDARY to its solved "
+            f"faults through the dense backend (got {run.backend.kind!r}); "
+            f"only a fault in the whole space steps on the compressed kernel")
+    if run.backend.kind == "fmm":
+        raise ValueError(
+            "a stepped run on the compressed kernel is far='aca' "
+            "(backend.kind='hmat'): the FMM carries no traction kernel, and "
+            "its product is some 55 times the ACA's, which a stepper pays "
+            "at every stage")
+    if run.backend.kind != "dense":
+        rough = sorted(f.name for _r, f in model.solved_faults()
+                       if f.order != 0 or f.continuous)
+        if rough:
+            raise ValueError(
+                f"the compressed kernel is of P0 faults (a cluster tree of "
+                f"elements); {rough} are not: step them on the dense backend")
     solved = {f.name: r.material.mu for r, f in model.solved_faults()}
     if set(laws) != set(solved):
         raise KeyError(
@@ -266,7 +282,16 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
 
     eps = run.model.eps
     t0 = time.perf_counter()
-    if run.backend.kind == "dense":
+    # a stepped fault in the whole space: no operator to assemble, no state
+    # to reduce -- the faults' own kernel, compressed, is all there is
+    kernel_route = bool(stepped) and run.backend.kind != "dense"
+    if kernel_route:
+        asm = None
+        effective_backend = {"kind": run.backend.kind, "far": "aca",
+                             "operator": "fault kernel",
+                             "tol": run.backend.tol
+                             or prov.defaults_snapshot()["BLOCK_COMPRESSION_TOL"]}
+    elif run.backend.kind == "dense":
         from mbem.backends.dense import AssembledDense
         asm = AssembledDense(system, eps, run.backend.dense_mode,
                              jump=run.backend.jump, deflate=run.backend.deflate)
@@ -323,7 +348,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         phases["far_field"] = time.perf_counter() - t0
     cur, held, held_drag, ok, solutions = asm, {}, {}, True, {}
     condensed = []
-    for st in states:
+    for st in (() if kernel_route else states):
         want, drag = overrides[cfg.slug(st.label)], dict(st.drag)
         if want != held or drag != held_drag:
             mats = {**base, **{k: m.build() for k, m in want.items()}}
@@ -381,8 +406,21 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     if stepped:
         from mbem import stepper as stp
         t0 = time.perf_counter()
-        body = stp.Body(condensed, s=[st.s for st in states[1:]]
-                        if run.laplace is not None else None)
+        s_run = [st.s for st in states[1:]] if run.laplace is not None \
+            else None
+        if kernel_route:
+            name = model.regions[0].name
+            mats = [{**base, **{k: m.build() for k, m in
+                                overrides[cfg.slug(st.label)].items()}}[name]
+                    for st in states]
+            body = stp.KernelBody.from_model(
+                model, eps, [(m.mu, m.lam) for m in mats], s=s_run,
+                tol=run.backend.tol, log=lambda msg: print(f"  {msg}",
+                                                           flush=True))
+            phases["kernel"] = body.kernel.report["build_s"]
+            report["kernel"] = body.kernel.report
+        else:
+            body = stp.Body(condensed, s=s_run)
         rate = stp.law_rate(body, {k: v[0] for k, v in stepped.items()},
                             {k: v[1] for k, v in stepped.items()})
         history = stp.march(body, rate, run.stepper.t,

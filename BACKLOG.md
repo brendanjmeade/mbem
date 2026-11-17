@@ -172,7 +172,36 @@ friction after 5 m it has 0.032 by 0.02 where the linear law has 0.003.
 Both are the fifth and sixth models of the ve site, the stepped one shipped
 as its own history (modes and a table whose rows are the times).
 
+COMPRESSED (2026-11-17). A stepped fault in the whole space with nothing
+dense (`la.faultkernel.FaultKernel`, `stepper.KernelBody`; `verify_stepper`
+[h], `verify_config` [o]): the fault's own traction kernel as two flat-H
+matrices that serve every material, so a stage of the integrator is two
+products whatever the number of states. 31,042 elements: 5.9 GB against 139
+dense (and eleven dense states of 31 GB), built in 70 s by a pool of
+processes, a Maxwell penny under friction stepped to 10 tau in 19 minutes.
+124,462 elements: 32 GB against 2,231, built in 6 minutes; its stepped run
+was stopped, three to four hours by extrapolation at the explicit step
+count (the next item).
+
 OPEN, in the order they bite:
+
+* **The explicit integrator is the limit of a fine fault.** Its step is
+  bounded by the fault's own fastest rate, stiffness over viscosity, which
+  grows as the elements shrink: 4,304 evaluations of the law at 1,959
+  elements and 18,692 at 31,042. A stabilized explicit method (stages as
+  the square root of that ratio) or an implicit one on the compressed
+  product; not built.
+* **A large fault in a BODY.** Its reduced stiffness is the kernel above
+  plus the boundary's correction, 4-10 % of it and not of low rank (136-193
+  of 992 on the megathrust's reach, which touches the plate's base). Formed,
+  it is a solve per slip unknown and n^2 per state. Applied instead, a
+  back-substitution per state per stage with the body's factors kept, it
+  needs the fault-to-boundary and boundary-to-fault blocks compressed too
+  (the traction kernels are in no compressed backend yet). Not built.
+* **The far blocks are held to 1e-4 of THEMSELVES**, and they fall as the
+  cube of distance: against the operator's norm most are far below that
+  (rank 0-2 where the build keeps 26). A tolerance on the operator would
+  shrink the far field several times; unmeasured beyond that count.
 
 * **A window knows only what its reference solves.** The walls carry the far
   field of PRESCRIBED slip in a plate over a half-space. A solved slip (the

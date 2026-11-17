@@ -1074,6 +1074,17 @@ STEPPER_FIRST_STEP = 1.0e-6
 # refused: friction at a traction over a hundred times its a_sigma.
 STEPPER_REJECT = 1.0e60
 
+# --- A fault's own kernel, compressed (la/faultkernel.py) ----------------
+# Processes that build its far blocks, capped at the machine's cores. The
+# blocks are the build (86 s of 87 at 7,771 elements in one process, 693 s
+# at 31,042) and independent, and beyond some two dozen the pool's own
+# start-up and the return of the factors stop paying.
+FAULT_KERNEL_PROCESSES = 24
+# Below this many far blocks the pool's start-up (a few seconds of imports
+# per process) costs more than the blocks: 84 blocks at 1,959 elements take
+# 6 s in one process.
+FAULT_KERNEL_POOL_MIN_BLOCKS = 256
+
 # --- A Laplace run as a web payload (webexport.py, the fields in time) ---
 # A stack of state solutions is shipped as an orthonormal basis of its rows,
 # and the modes whose singular value is below this fraction of the largest

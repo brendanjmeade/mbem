@@ -72,8 +72,9 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      writes ``history.npz`` and no state's fields; the history is
      ``stepper.march`` on the reduction of the same model; the law, one that
      is not linear, round-trips through the dump; ``mbem sample`` refuses the
-     run; and it is REFUSED with a solved fault left without a law and on the
-     compressed backend.
+     run; it is REFUSED with a solved fault left without a law, and on the
+     compressed kernel under a continuous fault; and at P0 in the whole space
+     the compressed kernel (``backend=hmat``) is the dense run.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -868,8 +869,26 @@ def o_stepped_run(tmp: pathlib.Path) -> None:
     check("REFUSED: a solved fault left without a law",
           refused_with(ghost, KeyError, "every one of them a law"))
     hmat = dataclasses.replace(run, backend=cfg.Backend(kind="hmat"))
-    check("REFUSED: the compressed backend, which solves no slip",
-          refused_with(hmat, ValueError, "dense backend only"))
+    check("REFUSED: the compressed kernel under a continuous fault",
+          refused_with(hmat, ValueError, "P0 faults"))
+
+    # ... and at P0, in the whole space, the compressed kernel IS the route:
+    # the config's own stepped crack, dense and compressed
+    got = {}
+    for kind in ("dense", "hmat"):
+        dd = tmp / f"stepped_p0_{kind}"
+        dd.mkdir()
+        rep = runner.execute(cfg.load(path, order=0, law="friction",
+                                      backend=kind), dd, path)
+        with np.load(dd / "history.npz") as z:
+            got[kind] = (rep, z["b:penny"])
+    check("at P0 the compressed kernel is the dense run",
+          got["hmat"][0]["status"] == "OK"
+          and _rel(got["hmat"][1], got["dense"][1]) < 1e-5,
+          f"{_rel(got['hmat'][1], got['dense'][1]):.1e}")
+    check("... and says what it stored",
+          got["hmat"][0]["kernel"]["elements"] == got["hmat"][1].shape[1]
+          and "kernel" not in got["dense"][0], f"{got['hmat'][0]['kernel']['elements']} elements")
 
 
 def main() -> bool:

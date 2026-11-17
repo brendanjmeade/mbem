@@ -251,54 +251,25 @@ def node_sheet(vertices, triangles, faults=(), on_fault: float = None):
     A node takes the mean of the elements around it, weighted by the inverse
     of the distance to their centroids. It is a DISPLAY smoothing and says
     nothing the elements do not; what it must not do is average across a
-    fault, where the displacement jumps. A node lying on one of ``faults``
-    (``TriMesh``) is therefore split, one copy per side, each averaging the
-    elements of its own side only. Vertices that COINCIDE are one node: a
-    patch built of pieces that share no vertices (an interface that wraps a
-    slab) is still one surface, and would otherwise tear along its seams.
+    fault, where the displacement jumps: the nodes are
+    ``shared_nodes.split_nodes``'s, one copy per side of a fault, each
+    averaging the elements of its own side only, and coincident vertices one
+    node so that a patch built of pieces does not tear along its seams.
     """
     from scipy import sparse
-    from scipy.spatial import cKDTree
 
-    from . import defaults
-    from .geometry import distance_to_mesh
+    from .model.shared_nodes import split_nodes
 
-    v = np.asarray(vertices, float)
-    tri = np.asarray(triangles, np.int64)
-    nt = tri.shape[0]
-    corners = v[tri]
+    nodes, index = split_nodes(vertices, triangles, faults, on_fault)
+    corners = np.asarray(vertices, float)[np.asarray(triangles, np.int64)]
+    nt = corners.shape[0]
     cen = corners.mean(axis=1)
-    edge = np.linalg.norm(corners - np.roll(corners, 1, axis=1), axis=2)
-    tol = (defaults.WEB_ON_FAULT if on_fault is None else on_fault) * edge.min()
-    pairs = cKDTree(v).query_pairs(tol, output_type="ndarray")
-    if pairs.size:
-        _n, same = sparse.csgraph.connected_components(sparse.coo_matrix(
-            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
-            shape=(v.shape[0],) * 2), directed=False)
-        tri = same[tri]                  # a label per group of coincident vertices
-    side = np.zeros((nt, 3), np.int64)
-    for f in faults:
-        d, near = distance_to_mesh(v, f)
-        on = d < tol
-        if not on.any():
-            continue
-        fv = np.asarray(f.vertices, float)[np.asarray(f.triangles)]
-        normal = np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0])
-        for c in range(3):
-            sel = on[tri[:, c]]
-            k = near[tri[sel, c]]
-            s = np.sign(np.einsum("ij,ij->i", cen[sel] - fv[k, 0], normal[k]))
-            side[sel, c] = 3 * side[sel, c] + s.astype(np.int64) + 2
-    _keys, index = np.unique(np.column_stack([tri.ravel(), side.ravel()]),
-                             axis=0, return_inverse=True)
-    index = np.asarray(index).ravel()
-    nodes = np.empty((index.max() + 1, 3))
-    nodes[index] = corners.reshape(-1, 3)
     w = 1.0 / np.linalg.norm(cen[:, None, :] - corners, axis=2)
-    A = sparse.csr_matrix((w.ravel(), (index, np.repeat(np.arange(nt), 3))),
+    A = sparse.csr_matrix((w.ravel(), (index.ravel(),
+                                       np.repeat(np.arange(nt), 3))),
                           shape=(nodes.shape[0], nt))
     A = sparse.diags(1.0 / np.asarray(A.sum(axis=1)).ravel()) @ A
-    return nodes, index.reshape(nt, 3), A
+    return nodes, index, A
 
 
 def boundary_segments(vertices, triangles) -> np.ndarray:

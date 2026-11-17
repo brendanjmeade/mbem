@@ -151,9 +151,10 @@ def _warn_near_boundary(points, region):
             f"{', '.join(names)} (min d/h = {worst:.2f}): the "
             f"piecewise-constant boundary density limits the volume "
             f"representation there (~2e-1 relative stress error at "
-            f"d/h = 0.25 measured); evaluate deeper, or lower eps -- "
-            f"refining the patch at fixed eps is weak (1.27x for 4x "
-            f"refinement, against 13x for standing off to d/h = 2)")
+            f"d/h = 0.25 measured); pass near=recover.NearField(model) to "
+            f"read those pairs from a continuous displacement, or evaluate "
+            f"deeper -- refining the patch at fixed eps is weak (1.27x for "
+            f"4x refinement, against 13x for standing off to d/h = 2)")
 
 
 def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr,
@@ -182,10 +183,16 @@ def _disp_from_source(points, src_mesh, density, kernel, material, eps_arr,
 
 def evaluate_displacement(model: RegionModel, region: Region | str,
                           solution: dict, points: np.ndarray,
-                          eps, warn_near: bool = True) -> np.ndarray:
+                          eps, warn_near: bool = True,
+                          near=None) -> np.ndarray:
     """Displacement at interior ``points`` (N,3) of ``region``.
 
     ``solution`` is the slot dict returned by a backend solve.
+
+    ``near`` (a ``recover.NearField`` of this model) reads the pairs close
+    to a boundary patch from a continuous displacement recovered from the
+    element values, at a narrowed mollification: without it a point within
+    about half an element of a patch resolves the element edges.
 
     INTERIOR is the word that matters: a point ON a boundary patch comes back
     at HALF the interior limit. The representation is the field inside the body
@@ -198,8 +205,8 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
     region = _region(model, region)
     if region.faults:
         ensure_fault_convention()
-    points = np.asarray(points, dtype=float)
-    if warn_near:
+    points = np.ascontiguousarray(np.asarray(points, dtype=float))
+    if warn_near and near is None:
         _warn_near_boundary(points, region)
     u = np.zeros((points.shape[0], 3))
 
@@ -216,6 +223,11 @@ def evaluate_displacement(model: RegionModel, region: Region | str,
             u += sigma * _disp_from_source(points, p.mesh, t_p, KERNEL_U,
                                            mat, kb.resolve_patch_eps(eps, p),
                                            p.order)
+        if near is not None and near.recovers(p):
+            dbl, sgl, _ = _near_field(
+                points, p.mesh, u_p, near.recover(p, u_p), t_p, mat.mu,
+                mat.lam, kb.resolve_patch_eps(eps, p), near, stress=False)
+            u += sigma * (sgl - dbl)
 
     # Faults carry an orientation too (FAULT_ORIENTATION), so this is
     # literally the u_p branch above with sigma supplied by the same
@@ -253,20 +265,37 @@ def _source_chunks(cen, radius):
     return chunks
 
 
+def _near_blocks(points, cen, radius):
+    """``(P, S)`` for every chunk of source elements with observation points
+    in reach: ``S`` indexes ``cen``, ``P`` the points within the one ball
+    that covers every member's own ball of ``radius``. Whether a point takes
+    part in a chunk depends on that point and that chunk alone, so a result
+    summed over these blocks is the same sum however the points are batched.
+    """
+    from scipy.spatial import cKDTree
+
+    if points.shape[0] == 0 or cen.shape[0] == 0:
+        return
+    tree = cKDTree(points)
+    for S in _source_chunks(cen, radius):
+        c0 = cen[S].mean(axis=0)
+        reach = float(np.max(np.linalg.norm(cen[S] - c0, axis=1) + radius[S]))
+        P = np.asarray(tree.query_ball_point(c0, reach), dtype=np.intp)
+        if P.size:
+            yield P, S
+
+
 def _eigen_near_list(points, verts, normals, eps_arr, density, h, mu, lam,
                      order):
     """``eigenstress_contract`` restricted to the near pairs: for every source
     element the observation points within EIGEN_NEAR_RADIUS_EPS x (eps + h)
     of its centroid (the weight beyond is below the readout's tolerance;
     basis in ``defaults``). Elements are visited in spatially compact chunks
-    (``_source_chunks``); each chunk queries one ball of the point KD-tree
-    that covers every member's own ball and evaluates the (points, chunk)
-    block with the plain kernel, so no pair list is ever stored and memory
-    is O(N_obs) + O(chunk). Elements with zero density or eps <= 0 (no
-    eigenstress) are dropped first.
+    (``_near_blocks``); each evaluates the (points, chunk) block with the
+    plain kernel, so no pair list is ever stored and memory is O(N_obs) +
+    O(chunk). Elements with zero density or eps <= 0 (no eigenstress) are
+    dropped first.
     """
-    from scipy.spatial import cKDTree
-
     from . import defaults
     from .kernels.tri_nodal import eigenstress_contract
 
@@ -278,14 +307,8 @@ def _eigen_near_list(points, verts, normals, eps_arr, density, h, mu, lam,
         return sig
     cen = verts.mean(axis=1)
     radius = defaults.EIGEN_NEAR_RADIUS_EPS * (eps_arr + h)
-    tree = cKDTree(points)
-    for S in _source_chunks(cen[live], radius[live]):
+    for P, S in _near_blocks(points, cen[live], radius[live]):
         S = live[S]
-        c0 = cen[S].mean(axis=0)
-        reach = float(np.max(np.linalg.norm(cen[S] - c0, axis=1) + radius[S]))
-        P = np.asarray(tree.query_ball_point(c0, reach), dtype=np.intp)
-        if P.size == 0:
-            continue
         sig[P] += eigenstress_contract(
             np.ascontiguousarray(points[P]), np.ascontiguousarray(verts[S]),
             np.ascontiguousarray(normals[S]), np.ascontiguousarray(eps_arr[S]),
@@ -372,6 +395,71 @@ def _double_layer_stress(points, src_mesh, jump, sigma, mu, lam, eps_arr,
         if subtract_anelastic:
             sig += eig
     return (sig, eig) if parts else sig
+
+
+def _near_field(points, mesh, u0, u2, t0, mu, lam, eps_arr, near,
+                stress: bool, eigen: bool = True):
+    """What reading a patch's NEAR pairs from the recovered density adds to
+    the element-constant readout: ``(double, single, eigen)``, unsigned, the
+    pieces ``evaluate_displacement`` / ``evaluate_stress`` sum with the signs
+    they already use (``recover.NearField``).
+
+    For the elements within ``near.radius_h`` of their own h of a point:
+
+    * double layer: the recovered P2 displacement ``u2`` at the narrowed
+      width, in place of the element values ``u0`` at the solve's;
+    * single layer: the SAME element-constant traction ``t0``, at the
+      narrowed width (the traction is not smoothed);
+    * and for stress the eigenstress of each of the two double layers, so
+      that what is removed is the one that was put in.
+    """
+    from .kernels import tri_nodal as tn
+
+    verts, normals = kb._source_arrays(mesh)
+    verts = np.ascontiguousarray(np.asarray(verts, float))
+    normals = np.ascontiguousarray(np.asarray(normals, float))
+    cen = verts.mean(axis=1)
+    eps_arr = np.ascontiguousarray(np.asarray(eps_arr, float))
+    eps_near = near.eps_factor * eps_arr
+    radius = near.radius_h * kb.element_sizes(mesh)
+    shape = (points.shape[0], 3, 3) if stress else (points.shape[0], 3)
+    dbl, sgl = np.zeros(shape), np.zeros(shape)
+    eig = np.zeros(shape) if stress else None
+    do_u, do_t = bool(np.any(u0)), bool(np.any(t0))
+    if not (do_u or do_t):
+        return dbl, sgl, eig
+    u0 = np.asarray(u0, float).reshape(-1, 3)
+    t0 = np.asarray(t0, float).reshape(-1, 3)
+    u2 = np.asarray(u2, float).reshape(-1, 6, 3)
+    c = kb.t_coeffs(mu, lam)
+    g = kb.u_coeffs(mu, lam)
+    for P, S in _near_blocks(points, cen, radius):
+        x = np.ascontiguousarray(points[P])
+        v, n = np.ascontiguousarray(verts[S]), np.ascontiguousarray(normals[S])
+        e0 = np.ascontiguousarray(eps_arr[S])
+        e1 = np.ascontiguousarray(eps_near[S])
+        if do_u:
+            q0 = np.ascontiguousarray(u0[S])
+            q2 = np.ascontiguousarray(u2[S].reshape(-1, 3))
+            if stress:
+                dbl[P] += (tn.dd_stress_contract(x, v, n, e1, q2, mu, lam, 2)
+                           - tn.dd_stress_contract(x, v, n, e0, q0, mu, lam, 0))
+                if eigen:
+                    eig[P] += (
+                        tn.eigenstress_contract(x, v, n, e1, q2, mu, lam, 2)
+                        - tn.eigenstress_contract(x, v, n, e0, q0, mu, lam, 0))
+            else:
+                dbl[P] += (tn.t_disp_contract(x, v, n, e1, q2, *c, 2)
+                           - tn.t_disp_contract(x, v, n, e0, q0, *c, 0))
+        if do_t:
+            f0 = np.ascontiguousarray(t0[S])
+            if stress:
+                sgl[P] += (tn.kelvin_stress_contract(x, v, e1, f0, mu, lam, 0)
+                           - tn.kelvin_stress_contract(x, v, e0, f0, mu, lam, 0))
+            else:
+                sgl[P] += (tn.u_disp_contract(x, v, e1, f0, *g, 0)
+                           - tn.u_disp_contract(x, v, e0, f0, *g, 0))
+    return dbl, sgl, eig
 
 
 def evaluate_fault_traction(model: RegionModel, region: Region | str,
@@ -500,8 +588,12 @@ def evaluate_stress(model: RegionModel, region: Region | str,
                     solution: dict, points: np.ndarray, eps,
                     subtract_anelastic: bool = True,
                     warn_near: bool = True,
-                    parts: bool = False):
+                    parts: bool = False, near=None):
     """Stress tensor (N,3,3) at ``points`` of ``region``.
+
+    ``near`` as in :func:`evaluate_displacement`: the near pairs of every
+    boundary patch read from the recovered displacement, each double layer
+    with its own eigenstress.
 
     Mirrors :func:`evaluate_displacement` with the stress operator applied
     to every term. With ``subtract_anelastic`` (default) the EXACT
@@ -535,8 +627,8 @@ def evaluate_stress(model: RegionModel, region: Region | str,
     region = _region(model, region)
     if region.faults:
         ensure_fault_convention("stress")
-    points = np.asarray(points, dtype=float)
-    if warn_near:
+    points = np.ascontiguousarray(np.asarray(points, dtype=float))
+    if warn_near and near is None:
         _warn_near_boundary(points, region)
     sig = np.zeros((points.shape[0], 3, 3))
     eigen = np.zeros((points.shape[0], 3, 3)) if parts else None
@@ -568,6 +660,16 @@ def evaluate_stress(model: RegionModel, region: Region | str,
             sig += sigma * _stress_from_source(
                 points, p.mesh, t_p, "force", mu, lam,
                 kb.resolve_patch_eps(eps, p), p.order)
+        if near is not None and near.recovers(p):
+            dbl, sgl, eig = _near_field(
+                points, p.mesh, u_p, near.recover(p, u_p), t_p, mu, lam,
+                kb.resolve_patch_eps(eps, p), near, stress=True,
+                eigen=subtract_anelastic or parts)
+            sig += sigma * (sgl - dbl)
+            if subtract_anelastic:
+                sig += sigma * eig
+            if parts:
+                eigen += sigma * eig
 
     # As in evaluate_displacement: the fault term is the u_p branch with
     # sigma = FAULT_ORIENTATION through the same accessor and the same

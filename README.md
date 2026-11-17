@@ -191,8 +191,10 @@ box a result needs.
 A Burgers substrate (`--set tau_K=0.1 --set t_min=0.02`) converges on the same
 ladder at the same rate.
 
-The time-stepper with memory on the boundary, which would couple this to
-stress-driven fault slip, is designed in `docs/viscoelastic.md` and not built.
+All of this is linear. A fault whose law is not -- friction that is not
+linearized, a power-law shear zone -- is stepped in time instead, the body
+reduced to the fault through these same states (`mbem.stepper`; "Afterslip
+under a law that is not linear", below).
 
 ## Gravity
 
@@ -404,6 +406,40 @@ model are one.  A solved fault is on the dense backend, so these runs are
 31,179 unknowns at most and their vertical carries the plate's faces (14-23
 % of the postseismic part; the horizontal is within 1.4 %).
 
+**Afterslip under a law that is not linear.**  Friction that is not
+linearized, or a shear zone that flows as a power of its stress, has no
+Laplace state.  The body is still linear, so each state is reduced to the
+fault (`traction = S slip + L`), the body's relaxation is carried as the
+fit's own exponentials, and the fault alone is integrated in time by an
+adaptive Runge-Kutta pair (`mbem.stepper`, `--set route=step`).  It is held
+to closed forms in time on a penny crack whose faces' mobility is graded so
+that its slip stays Eshelby's under ANY law: a linear law, an exponential
+one (logarithmic afterslip), and both again in a Maxwell body, each within
+the crack's own 0.6 % and flat in time.  Where both routes apply they agree
+(5e-4 on the penny; on the megathrust's reach the stored study above is
+reproduced to four figures).
+
+```
+python -m mbem run configs/plate_substrate.py \
+    --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 \
+    --set rho_substrate=3300 --set edge_near=15 --set edge_interface=22.5 \
+    --set eps_substrate=2.25 --set near_field_radius=120 --set sides=window \
+    --set half_x=300 --set depth_box=200 --set fault_half_len=100 \
+    --set t_max=100 --set backend=dense --set lower=creep --set route=step \
+    --set creep_law=friction --sweep slip=0.01,1,10
+```
+
+A law that is not linear knows how large the earthquake was.  With
+rate-strengthening friction at `a sigma = 1 MPa`, a centimetre of slip is
+the linear law (the reach ends at 0.20 of the rupture's slip); a metre
+gives 0.21 and ten metres 0.29, with eight times the afterslip per metre in
+the first tenth of a Maxwell time.  The end differs because the substrate
+takes the reach's stress away within ten Maxwell times whatever the reach
+does, and the law decides how much of it the reach spends first.  A run
+costs what the linear one costs plus two minutes.  No state variable yet:
+this is steady-state friction, not rate and state, and a stepped run's
+result is every boundary unknown through time (`history.npz`), not a volume.
+
 
 **A slab.**  Layers are what that reference knows; a boundary method is for
 what it does not.  `slab_depth` lets the footwall plate go on down the dip
@@ -419,7 +455,11 @@ python -m mbem run configs/plate_substrate.py \
 
 Plate and slab are one region and the interface wraps the slab; a slab of
 the mantle's own material is no slab, to 1 %, which is how the geometry is
-gated.  At the earthquake it is invisible (the surface within 0.8 % and
+gated.  Below the plate's base the megathrust runs down the slab's upper
+face, where slip is two regions moving past each other along an interface
+and not a fault inside one (`depth` greater than `thickness`, with
+`lower=slip` or `lower=creep`): afterslip between slab and mantle wedge,
+under the linear law or a non-linear one.  At the earthquake it is invisible (the surface within 0.8 % and
 1.4 % of the layered reference).  Afterwards it is the largest thing in the
 model: the uplift behind the trench, which halves in a hundred Maxwell times
 without a slab, stays (0.29 of the slip at the earthquake, 0.25 at a
@@ -466,7 +506,7 @@ src/inclusion_mesh.py     host + cylindrical-inclusion mesh builder
 src/anelastic.py          anelastic (eigenstrain) eigenstress -> elastic stress
 src/tde_reference.py      classical triangular-dislocation reference
 configs/                  nine studies, each a Python module declaring a run
-tests/                    run_all.py + test_gates.py; 47 gates (print PASS/FAIL)
+tests/                    run_all.py + test_gates.py; 49 gates (print PASS/FAIL)
 studies/                  bench_scaling.py and the printing quickstarts
 docs/                     clq derivation, the two closed-line findings
 ```
@@ -527,7 +567,7 @@ model the gates do, fault Burgers vector bitwise included.
 ## Verify the kernels
 
 Every gate prints one final `PASS: <title>` / `FAIL: <title>` line and exits 1
-on FAIL; `python tests/run_all.py` runs all 47 sequentially and tabulates
+on FAIL; `python tests/run_all.py` runs all 49 sequentially and tabulates
 verdict and wall time; `pytest` is the same set behind a second front end.
 `--fast` / `-m "not slow"` skips the ~900 s FMM gate.
 

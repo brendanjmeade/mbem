@@ -7,8 +7,9 @@ mesh, no stored history.
 Sections 2 and 3 are properties of the kernels, and section 5, the Laplace
 route, is built on them (`mbem.rheology`, `mbem.laplace`, `Run.laplace`); all
 three are gated by `tests/gates/mbem/verify_viscoelastic.py`. Sections 1 and 4
-are the algebra around them. Section 6, time-stepping, is a design and is NOT
-built. Section 7, gravity, is built: buoyancy on the free surface and on
+are the algebra around them. Section 6 steps a solved fault in time, for a
+law that is not linear (`mbem.stepper`, `Run.stepper`;
+`verify_stepper.py`). Section 7, gravity, is built: buoyancy on the free surface and on
 density interfaces, with nothing in the volume; under it a thrust in the
 plate held to an independent reference, the earthquake cycle of a locked
 fault, and a megathrust through the interface. Section 8 gives the box
@@ -290,28 +291,172 @@ every size and time. So a result near the fault at a few Maxwell times wants a
 box some fifty plate thicknesses across; `mbem run configs/plate_substrate.py
 --sweep half_x=400,800,1600 --sweep sides=clamped,free` draws the figure.
 
-## 6. Design: time-stepping with memory on the boundary
+## 6. A fault that is not linear: stepping it in time
 
-Multiplying by $s/(s+\beta)$ is, in time, the variable
-$m(t)=\int_0^te^{-\beta(t-\tau)}\dot x(\tau)\,d\tau$, which obeys
-$\dot m=-\beta m+\dot x$ and updates in one line per step:
+Section 5 needs every part of a model to be linear. A fault whose slip rate
+is not proportional to its traction is not (friction, a power-law shear
+zone), but it is the only part that is not. So the body is REDUCED TO THE
+FAULT, and the fault alone is stepped (`mbem.stepper`, `Run.stepper`; gated
+by `tests/gates/mbem/verify_stepper.py`).
 
-$$ m^n=e^{-\beta\Delta t}m^{n-1}+\psi\,(x^n-x^{n-1}),\qquad
-   \psi=\frac{1-e^{-\beta\Delta t}}{\beta\Delta t} . $$
+**The reduction.** At a state $s_k$ every unknown but the solved faults'
+slip $\mathbf b$ is eliminated (`AssembledDense.condense`: a Schur
+complement, one factorization and one right-hand side per slip unknown),
+which leaves, on the faults' own nodes,
 
-Because every operator is geometry times a few such functions, the history of
-a region is a few vectors of the size of its boundary unknowns. The implicit
-step is an elastic solve at effective moduli, for example
-$g_{\rm eff}=2+(g_e-2)\psi$, which lies between the unrelaxed and relaxed
-values and so is an admissible material; one factorization serves every step
-of equal length. History enters the right-hand side through the same geometric
-operators applied to the stored vectors. This is the method of Mesquita & Coda
-and of Panagiotopoulos, Mantic & Roubicek without their restriction that bulk
-and shear relax alike.
+$$ \boldsymbol\tau = S_k\,\mathbf b + \mathbf L_k : $$
 
-In a relaxing region the eigenstress is hereditary,
-$\sigma^*(t)=\int_0^tC(t-\tau)\,d\epsilon^*(\tau)$: after a step of slip it
-decays with the shear modulus.
+the faults' stiffness in that body, and what the prescribed data load them
+with while they are held. The linear fault of section 9 is
+$(\kappa-S_k)\,\mathbf b=\mathbf L_k$, and the reduction returns the dense
+backend's own solution of it to rounding (1e-14).
+
+**In time.** $S$ is a transfer function like any other of section 5, so by
+the same fit $S(t)=S_\infty+\sum_jS_je^{-t/\tau_j}$ after a unit step of
+slip, and after any history of slip the traction is the hereditary integral
+$\int_0^tS(t-t')\,\dot{\mathbf b}(t')\,dt'$. Each exponential is one vector
+that decays, $\mathbf p_j(t)=\int_0^te^{-(t-t')/\tau_j}\,\dot{\mathbf
+b}(t')\,dt'$, so
+
+$$ \boldsymbol\tau=S_\infty\mathbf b+\sum_jS_j\mathbf p_j+\mathbf L(t),
+   \qquad \dot{\mathbf b}=F(\boldsymbol\tau),
+   \qquad \dot{\mathbf p}_j=\dot{\mathbf b}-\mathbf p_j/\tau_j : $$
+
+an ordinary differential equation in the faults' unknowns alone, handed to
+an embedded Runge-Kutta pair (Dormand-Prince 5(4), `scipy`'s `RK45`).
+Nothing is asked of the law $F$ but a rate for a traction; what is used is
+the body's linearity, and that is exact. A body that does not relax is one
+state and no $\mathbf p$. The $S_j$ are never formed: the fit's coefficients
+turn $[\mathbf b;\mathbf p_j]$ into one slip per STATE, each state's own
+$S_k$ acts on its own, and every other unknown at a time is the same sum
+through each state's own response. Data applied as a step load the faults
+with $\mathbf L(t)$, the fit of the $\mathbf L_k$, which is section 5 itself.
+A fault does not slip AT a step, whatever its law: a rate is finite.
+
+**The laws** (`mbem.rheology`; traction and rate in the fault's strike/dip
+frame). `ViscousFault`, section 9's, on either route. `PowerLawFault`: the
+viscous law times $(|\tau|/\tau_0)^{n-1}$. `RateStrengtheningFault`:
+friction at steady state, a fault sliding at $v_0$ under its ambient stress
+slides at $v_0e^{\Delta\tau/a\sigma}$ when its traction along the rake
+changes by $\Delta\tau$ ($a\sigma$ for $(a-b)\sigma_n$), so, measured from
+steady slip as everything here is,
+
+$$ \dot b=v_0\big(e^{\Delta\tau/a\sigma}-1\big)\ \text{along the rake} , $$
+
+which is section 9's linear law with $\eta_f=a\sigma/v_0$ where
+$\Delta\tau\ll a\sigma$, and above it is why afterslip is logarithmic in
+time. No state variable, no radiation damping, and the normal stress is
+held: rate and state is not built (section 11).
+
+**Two things the fit owes a consumer that feeds back through it.**
+
+*Its relaxed limit must not push.* The constant of the fit is what the
+faults' stiffness has relaxed to by the end of the window, and it misses by
+the fit's error, about 1e-3 of the kernel. Where the exact limit is zero or
+nearly so -- a fault in a region that relaxes completely -- it misses with
+the wrong sign for some modes, and they GROW: 2.4e-3 of a relaxation time on
+the penny below, 5e-4 on a megathrust's reach, which is 2-5 % by the
+window's end. `stepper.Body` moves the growing part of that constant's
+spectrum onto the slowest pole. The elastic instant stays exact, the kernel
+changes by 3e-3 of the elastic stiffness at most and less inside the window,
+and no mode grows (5e-14).
+
+*The window is the body's, the step is the fault's.* The fit must reach
+below the BODY's fastest relaxation and past the last time asked for, which
+`march` enforces. How fast the fault moves is the integrator's business, and
+its step is bounded by the fit's fastest pole ($3.3\,\tau_{\min}$), not by
+the law: about $T/(3\,t_{\min})$ steps a run. A law exponential in traction
+adds its own at the start, where it is stiff: the penny under friction at
+$\Delta\tau/a\sigma=5$, 100 and 130 takes 167, 1,460 and 1,988 steps to
+$10\,\tau$. `march` starts from a step that moves the slip a millionth of
+its scale, rejects a trial stage in which the law overflows, and refuses a
+law that STARTS beyond $10^{60}$, friction at a traction over a hundred
+times its $a\sigma$: there the law wants its radiation damping.
+
+**The anchor is in closed form, in time.** The penny of section 9 with the
+MOBILITY of its faces graded as $\sqrt{1-r^2/a^2}$ keeps Eshelby's slip under
+any law of the traction, because that slip's traction is uniform. Its peak
+slip $B$ obeys one scalar equation, $\dot B=F(\Delta\tau-k_EB)$: an
+exponential for a linear $F$; $B=(A/k_E)\ln(1+t/t_c)$ for
+$F=v_0e^{\tau/A}$; and in a Maxwell body $k_E$ relaxes with the material's
+two exact poles, $1/\tau$ and $1/\tau_2$ (section 4), so the reference is a
+scalar equation that shares nothing with the real-axis fit. Moment over the
+reference through $0.1\ldots10\,\tau$, continuous P2 at $a/h=8$ (1,838 slip
+unknowns):
+
+| body | law | reference | stepper | Laplace route |
+|---|---|---|---|---|
+| elastic | linear | one exponential | 0.9943 - 0.9944 | 0.9932 - 0.9954 |
+| elastic | exponential | $(A/k_E)\ln(1+t/t_c)$ | 0.9944 - 0.9944 | none |
+| Maxwell | linear | contour inversion | 0.9943 - 0.9946 | 0.9941 - 0.9949 |
+| Maxwell | exponential | scalar, two exact poles | 0.9943 - 0.9949 | none |
+
+The 0.6 % is the crack's own (section 5). In the elastic body there is no
+fit at all and the stepper is flat to four figures; in the Maxwell body the
+two routes agree to 5e-4.
+
+**A megathrust's reach** (section 9's, 19,266 unknowns, 992 of them the
+reach's slip, eleven states). `ViscousFault` stepped against the Laplace
+route: the reach's slip within 1.4e-3 and the free surface within 8e-5,
+through the window. Friction under an earthquake ten thousand times smaller
+is the linear law along the rake (7e-5); under a metre of slip against
+$a\sigma=1$ MPa it has slipped 1.75 times as far by $0.1\,\tau$.
+
+**Afterslip that knows how large the earthquake was** (`--set lower=creep
+--set route=step`). Section 9's study on its coarser mesh: 19,338 unknowns,
+2,164 of them the reach's slip, fourteen states, the window out to
+$100\,\tau$. Stepped under the linear law it IS that study: the reach's mean
+slip agrees with the stored Laplace run to four figures at every time, its
+slip within 2e-3 and the free surface within 6e-5. Then friction with
+$a\sigma=1$ MPa and the steady rate at which it is that linear law, under
+three earthquakes (`--set creep_law=friction --sweep slip=0.01,1,10`), and a
+power-law zone, $n=3$ about 1 MPa, under one metre:
+
+| mean afterslip over the slip | $0.1\tau$ | $0.3\tau$ | $\tau$ | $3\tau$ | $10\tau$ | $100\tau$ |
+|---|---|---|---|---|---|---|
+| linear law | 0.012 | 0.034 | 0.084 | 0.155 | 0.196 | 0.201 |
+| friction, 1 cm | 0.012 | 0.034 | 0.084 | 0.155 | 0.196 | 0.201 |
+| friction, 1 m | 0.017 | 0.044 | 0.098 | 0.168 | 0.208 | 0.213 |
+| friction, 10 m | 0.094 | 0.139 | 0.196 | 0.254 | 0.287 | 0.291 |
+| power law, 1 m | 0.007 | 0.015 | 0.026 | 0.034 | 0.036 | 0.036 |
+
+A centimetre of slip is the linear law. Ten metres give eight times the
+afterslip per metre by $0.1\,\tau$, and 44 % more in the end; a zone that
+is slower than the linear law below 1 MPa ends with a sixth of it. The end
+differs because the reach is in a substrate that relaxes: slip in such a
+body is forgotten (section 7), the substrate takes the reach's stress away
+within ten Maxwell times whatever the reach does, and a law decides how
+much of it the reach spends first. The Laplace route cannot ask the
+question. `plate_afterslip` draws it.
+
+**Cost.** A state costs what a state of the Laplace route costs: on the
+gate's megathrust 3.6 s to assemble, 4.2 s to factor and 2.2 s for the 993
+right-hand sides, against 10 s for the Laplace route's state, and its march
+to $10\,\tau$ is 4 s. Each run of the study above is 4.3 minutes, 2 of them
+the march: 6,200-7,000 evaluations of the law at 18 ms (one product with
+the fourteen stiffnesses, 0.5 GB), whether the law is linear or starts
+$2\times10^5$ times faster than that where the reach is loaded most (ten
+metres: 15 MPa against an $a\sigma$ of 1). What it cannot do: the compressed backend solves no slip, so the body
+is dense (about 1e5 unknowns at most); the faults' stiffness is $n^2$ per
+state and its relaxing part is of full rank (the reach's own stiffness
+relaxes), so 1e5-1e6 steps of a rate-and-state cycle are hours at 2,000 slip
+unknowns and weeks at 20,000; and a FIELD at a time is a sum over states of
+the body's memory, one readout per state and time, which `mbem sample` does
+not make (`history.npz` holds every boundary slot at every time).
+
+**The design this replaced** steps every boundary unknown. Multiplying by
+$s/(s+\beta)$ is, in time, the variable
+$m(t)=\int_0^te^{-\beta(t-t')}\dot x(t')\,dt'$, and because every operator
+is geometry times a few such functions (section 2) a region's history is a
+few vectors of the size of its boundary unknowns, with the material's own
+poles and no fit (Mesquita & Coda; Panagiotopoulos, Mantic & Roubicek,
+without their restriction that bulk and shear relax alike). It is exact
+where the reduction is fitted, and it is not built: a step costs $N^2$ in
+the boundary's unknowns where the reduction costs $n^2$ in the fault's, a
+hundredfold here; it needs the split of section 2 as stored operators, which
+no backend keeps for a model with a solved fault; and its natural step is
+implicit and of fixed length, one factorization a length, where a fault
+under friction wants an adaptive one.
 
 ## 7. Gravity
 
@@ -911,7 +1056,8 @@ the elastic traction of every source, as before, less a stiffness times the
 fault's own slip. That is an elastic problem like every other state, so a
 linear viscous fault needs no time-stepper, and neither does friction that
 strengthens with rate, linearized about a steady rate $V$, which is the same
-law with $\eta_f=(a-b)\sigma_n/V$. At $s=\infty$ the drag is infinite and
+law with $\eta_f=(a-b)\sigma_n/V$. (Friction that is NOT linearized is
+stepped in time: section 6.) At $s=\infty$ the drag is infinite and
 the fault is locked: it does not slip at the instant of loading. As $s\to0$
 it vanishes and the fault ends where it carries no traction. In between,
 its slip is whatever the rest of the model loads it with: afterslip.
@@ -1038,6 +1184,75 @@ the trench, rises at $0.41\,V$ just after an earthquake without the slab
 (the reference: 0.39) and sinks at $0.18\,V$ with it. A layered reference
 is not a stand-in for a subduction zone.
 
+**The megathrust down the slab's face.** Below the plate's base the
+megathrust's plane is the slab's upper face, an interface between slab and
+mantle wedge, and slip there is not a fault's: two regions move past each
+other along the patch they share (`Patch.slip`). The traction on it stays
+one unknown and the displacement jumps by the Burgers vector, so the region
+the patch's normal points into sees $\mathbf u+\mathbf b$ wherever it saw
+$\mathbf u$: one more column block, or one more right-hand side, with the
+coefficients $\mathbf u$ already has there, and no new kernel. A SOLVED
+slip's own rows are algebraic,
+
+$$ \mathbf t-\kappa\,\mathbf b=\Delta\mathbf t\ \ \text{in the plane},
+   \qquad \mathbf n\cdot\mathbf b=0 , $$
+
+because the traction on an interface is an unknown already, where a
+fault's is a hypersingular integral over every source: no eigenstress to
+remove, no mollified row. In everything else it is section 9's fault: a
+drag at each $s$, a place in section 6's reduction, a law in the stepper.
+`layered_box` takes the megathrust deeper than the plate under a slab and
+makes that reach (`fault_lower`, as before) the part of the slab's top it
+runs down.
+
+It is exact where there is something exact to ask (`verify_interface_slip`):
+two blocks of different materials, one on the other, slip on the plane
+between them a rigid motion of the upper one (5e-15); a top face dragged by
+$U$ over a plane let go, which slips by $U$ and carries nothing (1e-14); an
+infinite drag the welded interface; a finite one whose slip, prescribed,
+returns the solution it came from; the stepper on it the matrix exponential
+of the reduced operator (1e-7). And against the other formulation: a slab
+of the mantle's own material is no slab, so slip prescribed on its face
+must be the fault through a flat interface, and the free surface says so to
+0.9 % where the reach itself is 36 % of it.
+
+*What a freed reach does is set by the mollification width.* Uniform slip
+ends in a line where its traction is unbounded (section 9), and the reach
+begins on that line. Let go entirely, with slab and mantle one material,
+the reach on the face slips by 0.23 / 0.30 / 0.34 of the rupture's slip at
+an interface width of 3 / 1.5 / 0.75 km -- whatever its elements: 10, 7.5
+and 5 km agree to 3 % -- and the solved fault of section 9 by 0.28 / 0.33
+/ 0.39 at fault widths of 0.35 / 1.5 / 3 km, the opposite way. The two
+approach one answer from either side, their surfaces agree to 2 %, and a
+number for the afterslip of a model carries its width with it. The reach is
+on the substrate's closed boundary, so its width is the substrate's one
+$\varepsilon$ (section 3); it wants elements several of those across.
+
+**The three together** (`--set slab_depth=150 --set depth=50 --set
+tau_K=0.1 --set t_min=0.02 --set lower=creep`): the slab of the study above
+in a Burgers mantle, the megathrust running from the plate's base down the
+slab's face to 50 km. A solved slip, so dense: 42,078 unknowns on plate
+faces of 15 and 20 km, the reach's elements 7.5 km and $\varepsilon=1.5$ km,
+seventeen states in 25 minutes. Under section 9's linear law the face slips
+by 0.08 / 0.23 / 0.31 of the rupture's slip on average at $\tau$ / $10\tau$
+/ $100\tau$ (0.42 just under the plate and 0.18 at its lower edge, at the
+last), and it has NOT finished by then, where the reach of section 9 has by
+ten: that one lies inside the mantle, which takes its stress away, and this
+one has a slab on one side that does not relax. At the surface it is 9 / 28
+/ 25 / 5 % of the postseismic displacement of the same model with the face
+held, at $0.1$ / $1$ / $10$ / $100\,\tau$.
+
+Under friction instead (section 6: `--set route=step --set
+creep_law=friction --set slip=5`, $a\sigma=1$ MPa, the traction on the face
+0.7 MPa at the median and 27 at the rupture's edge): 0.032 of the slip by
+$0.02\,\tau$ where the linear law has 0.003, 0.054 against 0.013 by
+$0.1\,\tau$, and 0.33 against 0.31 at a hundred. The surface's postseismic
+displacement departs from the linear law's by 32 % at $0.1\,\tau$, 18 % at
+$\tau$ and 2 % at $10\,\tau$: friction moves the afterslip early. Its
+run is 32 minutes, 6 of them the march (32,750 evaluations of the law on
+1,276 slip unknowns; the stiff start costs five times the linear law's).
+Both are on <https://brendanjmeade.github.io/ve/>.
+
 *The walls do not know the slab.* They carry the slabless far field, and
 the slab's tip is 88 km from one of them. The same model in a window 800 km
 to its walls (67,182 unknowns) differs from this one by 0.1 % at the
@@ -1061,13 +1276,20 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
 - **A plate that bends costs two meshes** (section 7), and on the dense
   backend, where a creeping fault must be, the second mesh is small. The
   compressed backend solves no slip.
-- **Time-stepping with memory on the boundary** (section 6): what nonlinear
-  fault behaviour needs, friction that is not linearized. Not built.
-- **A slab is elastic and welded.** Slip on the slab's face below the plate
-  is slip ON AN INTERFACE, a jump of displacement between two regions; the
-  rows are a prescribed displacement's and are not written. Nor is a slab
-  denser than the mantle around it, which wants the stratification rule of
-  section 7 read face by face.
+- **Rate and state.** The stepper of section 6 takes any law of the
+  traction; a law with a STATE variable, radiation damping and a normal
+  stress that changes are not written. Nor is the size that earthquake
+  nucleation wants: the faults' stiffness is dense, $n^2$ per state, and
+  the body behind it is on the dense backend.
+- **A stepped run's field in the volume** is a readout per state AND time
+  (section 6); `mbem sample` refuses one.
+- **A slab is of the mantle's density.** Slip on its face is built
+  (section 10), between regions of ONE density: under a contrast the
+  buoyancy of an interface that slips is a load on how far the interface
+  has risen, its two sides have risen differently, and the run is refused.
+  Nor is a slab denser than the mantle around it written, which wants the
+  stratification rule of section 7 read face by face. And an interface
+  that slips is on the dense backend only.
 - **Uniform slip on a plane.** Slip that tapers, a fault that curves, a
   rupture that stops short of the trench (a difference of two faults, by
   linearity): none attempted. The reference of section 8 is one rectangle

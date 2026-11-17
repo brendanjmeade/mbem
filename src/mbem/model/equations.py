@@ -90,6 +90,30 @@ that, ``kappa = eta_f s`` (``rheology.ViscousFault``), so it is a number of
 the STATE and not of the patch: the dense backend holds it (``fault_drag``)
 and hands it to ``apply_fault_rows``. ``kappa = 0`` is the fault above,
 ``kappa = inf`` a locked one.
+
+SLIP ON AN INTERFACE (``Patch.slip``) is two regions moving past each other
+along the patch they share, and it needs no kernel the boundary rows do not
+already have. The traction stays one unknown, t_p; the displacement jumps by
+``b = u(+n side) - u(-n side)``, so with u_p the displacement of the -n side
+the region the normal points INTO (``RegionModel.slip_side``) sees
+``u_p + b`` wherever it saw u_p: in its boundary rows, free term and
+buoyancy included, in the traction rows of its own solved faults, and in a
+readout. That is one more column block (a solved slip) or one more
+right-hand side (a prescribed one) with the coefficients of u_p, in that
+region ONLY; with sigma(R,p) = -1 there it is ``-H b``, a fault's sign.
+(An interface that slips between two DENSITIES is refused: its buoyancy
+is a load on how far it has risen, and its two sides have risen
+differently.)
+
+A solved slip's own rows are the law it obeys, and they are ALGEBRAIC: the
+traction the +n side exerts on the other is t_p itself, an unknown, where a
+fault's is a hypersingular integral over every source. So the rows read
+
+    t_p - kappa b_p = dt        (tangential)        n . b_p = 0
+
+with no kernel, no eigenstress and no mollification of their own, and
+``apply_fault_rows`` gives them the frame, the drag and the constraint it
+gives a fault's. Buoyancy does not enter: it is normal to the patch.
 """
 
 from __future__ import annotations
@@ -177,16 +201,21 @@ class BlockSystem:
                 for t in self.terms}
 
     def traction_faults(self) -> list:
-        """[(region, fault)] for every FAULT_TRACTION fault, in slot order."""
-        return [(r, f) for r in self.model.regions for f in r.faults
-                if f.bc is BCType.FAULT_TRACTION]
+        """[(region, fault)] for every SOLVED slip, in slot order: the
+        FAULT_TRACTION faults with the region holding each, and the
+        interfaces that slip (``Patch.slip == "solved"``) with the region
+        that sees the slip (``RegionModel.solved_faults``)."""
+        return sorted(self.model.solved_faults(),
+                      key=lambda rf: self.layout.slot(rf[1], "b").offset)
 
 
 def generate_system(model: RegionModel) -> BlockSystem:
-    if any(r.faults for r in model.regions):
+    if any(r.faults for r in model.regions) or any(
+            q.slip for r in model.regions for q in r.patches):
         ensure_fault_convention()
     if any(f.bc is BCType.FAULT_TRACTION for r in model.regions for f in r.faults):
         ensure_fault_convention("traction")
+    _refuse_buoyant_slip(model)
     layout = UnknownLayout(model)
     system = BlockSystem(model=model, layout=layout)
     walls = {id(p) for p in model.far_field_patches()}
@@ -242,6 +271,22 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         row=row, col=layout.slot(p, "u"), kernel=KERNEL_U,
                         field_patch=q, source_patch=p, region=region,
                         scale=-sigma, col_op=B))
+
+                # ---- slip ON this interface: R sees u_p + b (docstring) ----
+                if p.slip and model.slip_side(p) is region:
+                    if p.slip == "solved":
+                        system.terms.append(BlockTerm(
+                            row=row, col=layout.slot(p, "b"), kernel=KERNEL_T,
+                            field_patch=q, source_patch=p, region=region,
+                            scale=sigma,
+                            diag=COLLOCATION_JUMP if p is q else 0.0))
+                    else:
+                        system.rhs_terms.append(RhsTerm(
+                            row=row, kernel=KERNEL_T, field_patch=q,
+                            source_patch=p, region=region, scale=-sigma,
+                            vector=p.value_array().ravel(),
+                            add_half_of_vector=(p is q),
+                            scale_half=-COLLOCATION_JUMP))
 
             # ---- fault sources of this region ----
             # Same -sigma rule as the prescribed-u branch above; for a
@@ -303,6 +348,17 @@ def generate_system(model: RegionModel) -> BlockSystem:
                         row=row, col=layout.slot(p, "u"), kernel=KERNEL_GT,
                         field_patch=f, source_patch=p, region=region,
                         scale=sigma, col_op=B))
+                if p.slip and model.slip_side(p) is region:   # u_p + b here too
+                    if p.slip == "solved":
+                        system.terms.append(BlockTerm(
+                            row=row, col=layout.slot(p, "b"), kernel=KERNEL_HT,
+                            field_patch=f, source_patch=p, region=region,
+                            scale=-sigma))
+                    else:
+                        system.rhs_terms.append(RhsTerm(
+                            row=row, kernel=KERNEL_HT, field_patch=f,
+                            source_patch=p, region=region, scale=sigma,
+                            vector=p.value_array().ravel()))
             for g in region.faults:
                 sigma = float(model.orientation(region, g))
                 if g.bc is BCType.FAULT_TRACTION:
@@ -320,7 +376,30 @@ def generate_system(model: RegionModel) -> BlockSystem:
             system.rhs_values.append(RhsValue(row=row,
                                               vector=f.value_array().ravel()))
 
+    # ---- the datum of a solved slip ON an interface: its rows are written
+    # by ``apply_fault_rows``, which has no kernel to ask (docstring) ----
+    for _region, q in model.solved_faults():
+        if q.slip == "solved":
+            system.rhs_values.append(RhsValue(
+                row=layout.slot(q, "b"), vector=q.value_array().ravel()))
+
     return system
+
+
+def _refuse_buoyant_slip(model: RegionModel) -> None:
+    """An interface that slips between two DENSITIES is refused. Its
+    buoyancy is a load on how far the interface has RISEN, and with a slip
+    the two sides of a dipping one have risen differently: which of them
+    the condition means is a derivation nobody has made, and a term nothing
+    gates. With one density across it there is no term."""
+    for region in model.regions:
+        for q in region.patches:
+            if q.slip and model.buoyancy(region, q) is not None:
+                raise NotImplementedError(
+                    f"interface '{q.name}' slips between regions of "
+                    f"different density under gravity: the buoyancy of an "
+                    f"interface that slips is not written. Give the two "
+                    f"regions one density")
 
 
 def rhs_terms_at(system: BlockSystem, materials: dict) -> list:
@@ -378,6 +457,11 @@ def apply_fault_rows(A: np.ndarray, b: np.ndarray, system: BlockSystem,
         slot = system.layout.slot(f, "b")
         r0, r1 = slot.offset, slot.stop
         n = f.n_dofs
+        if f.slip == "solved":
+            # an interface: the traction on it is the unknown t_p itself
+            t0 = system.layout.slot(f, "t").offset
+            k = np.arange(3 * n)
+            A[r0 + k, t0 + k] += 1.0
         F = traction_row_frame(f)
         step = max(1, int(defaults.ASSEMBLY_SOURCE_CHUNK))
         for c0 in range(0, n, step):

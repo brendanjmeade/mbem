@@ -1044,6 +1044,36 @@ LAPLACE_PAD_DECADES = 0.5
 # grid from dividing by rounding.
 PRONY_RCOND = 1.0e-13
 
+# --- A solved fault stepped in time (stepper.py) -----------------------
+# The embedded Runge-Kutta pair ``march`` hands the faults to
+# (``scipy.integrate.solve_ivp``): Dormand-Prince 5(4), explicit, because a
+# right-hand side is one matrix-vector product and the state is the faults'
+# alone. Its step is bounded by the fit's FASTEST pole (3.3 relaxation times
+# of it), so a run takes about T / (3 t_min) steps whatever the law: 1,059
+# on a megathrust's reach to 100 relaxation times in a window from 0.1, and
+# 1,100-1,260 under laws whose peak rate is 5 to 3e13 times the linear one's.
+STEPPER_METHOD = "RK45"
+# Relative tolerance of a step. With the step bounded as above a tight one
+# is nearly free: 1e-4 and 1e-6 take 1,059 and 1,108 steps there and agree
+# to four figures, so this sits well under the fit's own 1e-3.
+STEPPER_RTOL = 1.0e-6
+# Absolute tolerance on slip, as a fraction of the slip the elastic body's
+# faults would take to shed their load (``Body.slip_scale``): a tolerance in
+# kilometres would be a statement about the size of an earthquake.
+STEPPER_ATOL = 1.0e-9
+# The first step moves the slip by this fraction of that scale at the rate
+# the law starts with. The integrator's own choice probes with a step a
+# stiff law overshoots until it overflows: friction under a 10 m earthquake
+# at a_sigma = 1 MPa starts 2e5 times faster than its linear law where the
+# megathrust's reach is loaded most (15 MPa), 7,000 times in the mean.
+# Growing from here costs a mild law seven steps.
+STEPPER_FIRST_STEP = 1.0e-6
+# What a trial stage's rate is replaced by where the law overflowed: finite,
+# its square still finite in the integrator's error norm, and large enough
+# that the step is rejected and shortened. A law that STARTS beyond it is
+# refused: friction at a traction over a hundred times its a_sigma.
+STEPPER_REJECT = 1.0e60
+
 # --- A Laplace run as a web payload (webexport.py, the fields in time) ---
 # A stack of state solutions is shipped as an orthonormal basis of its rows,
 # and the modes whose singular value is below this fraction of the largest

@@ -4,7 +4,7 @@ The one status document for this repo. History and measurements live in
 `git log` (each commit message carries its numbers); rules live in the root
 `CLAUDE.md`. Trunk: `src/mbem`, installed with `pip install -e .`. `src/clq`
 and the two kernel copies are frozen oracles; the two closed lines are recorded in
-`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 47 of them.
+`docs/{ddbem,fbem}-findings.md`. Gates: `python tests/run_all.py`, 49 of them.
 
 **The tree was repackaged on 2026-10-01** (`bf2077c`..`f38d2dc`). Paths in
 entries below this line predate it: `msd/mbem` is now `src/mbem`, `msd/verify`
@@ -143,6 +143,35 @@ orthonormal modes, the weights of each time already applied;
 map is the fine mesh as solved), a reference in two dimensions to map the
 misfit, a recurrence interval that slides.
 
+STEPPED (2026-11-17). A solved fault under a law that is NOT linear, in
+time (`mbem.stepper`, `Run.stepper`; the note's section 6;
+`verify_stepper`, `verify_config` [o]). The body is linear, so each Laplace
+state is reduced to the fault (`AssembledDense.condense`), the fit's own
+exponentials are the body's memory, and the fault alone is integrated
+(Dormand-Prince): the Laplace route's states are its precompute. Laws:
+`PowerLawFault`, `RateStrengtheningFault` (friction at steady state).
+Closed forms in time on the penny with graded mobility, each within the
+crack's 0.6 % and flat: linear and exponential laws, elastic and Maxwell
+body (the last against a scalar equation with the material's exact poles).
+Against the Laplace route: 5e-4 on the penny, 1.4e-3 in slip and 8e-5 at
+the surface on the gate's megathrust, and the stored creep study reproduced
+to four figures. The fit's relaxed limit had to be made passive: as fitted,
+modes grow 2-5 % by the window's end where a fault sits in a region that
+relaxes completely. First result: per metre of slip, friction at 1 MPa
+gives 0.20 / 0.21 / 0.29 of the rupture's slip as afterslip under 1 cm /
+1 m / 10 m, eight times as much by a tenth of a Maxwell time under the
+largest. A run is the linear study's cost plus two minutes.
+
+ON A SLAB'S FACE (2026-11-17). Slip between two regions (`Patch.slip`,
+`verify_interface_slip`), and with it the megathrust below the plate under
+a slab. The three together, slab to 150 km, Burgers mantle, the face from
+30 to 50 km creeping (42,078 unknowns dense, seventeen states): the face
+slips 0.08 / 0.23 / 0.31 of the rupture's slip at 1 / 10 / 100 Maxwell
+times and has not finished, a slab on one side of it not relaxing; under
+friction after 5 m it has 0.032 by 0.02 where the linear law has 0.003.
+Both are the fifth and sixth models of the ve site, the stepped one shipped
+as its own history (modes and a table whose rows are the times).
+
 OPEN, in the order they bite:
 
 * **A window knows only what its reference solves.** The walls carry the far
@@ -156,17 +185,33 @@ OPEN, in the order they bite:
   the finer mesh of the pair; a solved fault is on the dense backend, where
   the finer mesh is ~35,000 unknowns and the plate's faces 10 km. A
   FAULT_TRACTION fault on the compressed backend would lift that.
-* **Time-stepping with memory on the boundary** (the note's section 6): what
-  friction that is not linearized needs. Not built. Linear creep on a fault
-  no longer waits for it.
-* **Slip on an interface.** Below the plate a slab's upper face is an
-  interface, and slip there is a displacement jump between two regions:
-  the +n region sees `u_p + b`, which is the prescribed-displacement RHS
-  term restricted to that region. Not written, so a slab is welded below
-  the megathrust and deep slip on it cannot be prescribed or solved. A slab
-  DENSER than the mantle also waits: the Laplace route's stratification rule
-  refuses a light body under a heavy one and has no reading for the reverse
-  on a dipping face.
+* **Rate and state.** The stepper takes any law of the traction; a law
+  with a STATE variable, radiation damping (a law exponential in traction
+  is refused where it starts over a hundred times its scale) and a normal
+  stress that changes are not written. Nor is the size nucleation wants:
+  the faults' stiffness is dense and of full rank in its relaxing part
+  (n^2 per state: hours for 1e5-1e6 steps at 2,000 slip unknowns, weeks at
+  20,000), and the body behind it is on the dense backend.
+* **A stepped run's field in the volume** is a readout per state AND time;
+  `mbem sample` refuses one. The boundary through time is in `history.npz`.
+* **A stepped fault through the earthquake cycle.** `march` takes repeated
+  steps (`events`) and nothing draws them: the creep below a locked patch
+  at a rate that varies through the cycle (the last item below) is now a
+  run away, with a window of several periods.
+* **A slab of another density, and slip on one.** Slip on an interface is
+  built (`Patch.slip`, `verify_interface_slip`: prescribed or solved, the
+  megathrust down a slab's upper face), between regions of ONE density and
+  on the dense backend. Under a contrast the buoyancy of an interface that
+  slips is not written (its two sides rise differently) and the run is
+  refused. A slab DENSER than the mantle also waits: the Laplace route's
+  stratification rule refuses a light body under a heavy one and has no
+  reading for the reverse on a dipping face.
+* **What a freed reach does against the rupture's edge is the mollification
+  width's.** Uniform slip ends in a line of unbounded traction; let go, the
+  reach on a slab's face slips 0.23 / 0.30 / 0.34 of the slip at interface
+  widths 3 / 1.5 / 0.75 km (element size does not matter), the solved fault
+  0.28 / 0.33 / 0.39 at fault widths 0.35 / 1.5 / 3 km. Slip that TAPERS to
+  its edge would end it (next item).
 * **Beyond one rectangle with uniform slip.** Slip that tapers down dip, a
   rupture short of the trench (a difference of two faults, by linearity), a
   curved megathrust. `layered_space` is one planar rectangle from the

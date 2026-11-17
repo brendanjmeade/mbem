@@ -277,7 +277,7 @@ gates FAIL rather than skip without them.
     beyond the layer itself), which is **safe only with the recovered
     density** (element values read at a narrower width are worse than
     before). Only the pairs within two elements are read this way, so a
-    section costs 7 % more, and the far field is the same sum, bitwise. A
+    section costs an eighth more, and the far field is the same sum, bitwise. A
     point within a tenth of an element of a face -- a grid row lying on one
     -- is read from that far inside its region (closer, the recovered
     density's kinks and the traction's steps are salt-and-pepper at the

@@ -288,10 +288,10 @@ conditioning is far more fragile under grading (5.7e19 at beta = 3).
    3 / 0.5 % off at 0.1 / 0.2 / 0.5 / 1 h. Read from the recovered
    displacement it is 1 % on the manufactured box, and on the stored
    megathrust the scatter along a row of the mean stress within a quarter
-   element of the top or the plate's base falls from 4 % to 0.2 % (median)
-   and from over 100 % to 3-4 % (95th percentile), for 7 % more time; more
-   than two elements from every face nothing moves (0.3 % at the 95th
-   percentile). What it does NOT mend, measured: (a) the solved TRACTION is
+   element of the top or the plate's base falls from 4 % to 0.13-0.15 %
+   (median) and from over 100 % to 1.4-1.6 % (95th percentile), for an
+   eighth more time (96 s a state against 85); more than two elements from
+   every face nothing moves (0.3 % at the 95th percentile). What it does NOT mend, measured: (a) the solved TRACTION is
    rough -- 6 % rms on a problem whose exact traction is constant, not
    improving from h = 10 to 5 km, growing with eps/h (4 / 6 / 11 % at 0.05 /
    0.125 / 0.3) -- which costs about 1.5 % of the interior stress and is what
@@ -301,10 +301,15 @@ conditioning is far more fragile under grading (5.7e19 at beta = 3).
    (c) where a fault meets a face the stress concentration is the model's.
    Both sites' data are made with it: the ve site's four sections, and the
    mbem site's volumes (551,412 points; within a quarter element of a patch
-   the von Mises stress against its six neighbours 0.77 -> 0.19 % at the
-   median and 7.6 -> 1.9 % at the 95th percentile; further than two
+   the von Mises stress against its six neighbours 0.77 -> 0.21 % at the
+   median and 7.6 -> 1.7 % at the 95th percentile; further than two
    elements from every patch the mean stress moves by 0.01 % of the local
-   von Mises stress at the median and 0.3 % at most).
+   von Mises stress at the median and 0.3 % at most). Two planes of that
+   grid were the test of the rules for a point ON a face and near one: the
+   plane on the inclusion's base, a patchwork of its two regions (scatter
+   in the disk 156 % at the median with the element values, 26 % with the
+   first readout, 0.6 % now), and the plane 2 km under the free surface
+   (11 %, 1.1 %, 0.5 %).
 
 ## Scale program (approved 2026-09-20; the plan file has the details)
 

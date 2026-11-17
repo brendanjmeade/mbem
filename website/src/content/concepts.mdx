@@ -176,9 +176,17 @@ elements, never across a fault — the traction is left as it was solved, and
 with no steps left to expose, the width $\varepsilon$ of those boundaries is
 narrowed fiftyfold for the reading. On the box that leaves 1 %. On the
 volumes shown here, the von Mises stress at neighbouring points within a
-quarter of an element of a boundary differs by 1.9 % for the worst twentieth
+quarter of an element of a boundary differs by 1.7 % for the worst twentieth
 of them, where it differed by 7.6 %; further than two elements from every
 boundary the stress is the same to a few parts in a thousand.
+
+Two rules go with it. A point within a tenth of an element of a boundary is
+read from a tenth of an element inside: exactly on a face the formula returns
+half the value, and a hair off it what is left of the elements shows as
+isolated bright points. And a point exactly on an interface is counted with
+the first of its two regions, because its solid angle cannot say which it is
+in: the grid here has a whole plane of points on the base of the inclusion,
+and read by solid angle it was a patchwork of the two.
 
 **A fault is exempt, and for a stronger reason than it being prescribed data.**
 Because the regularization is applied to the source, the fault's slip is spread

@@ -1135,6 +1135,32 @@ COUPLING_SPARE = 32
 # Fault elements to a block of the sweep.
 COUPLING_CHUNK = 1024
 
+# --- A compressed boundary factored in blocks (la/blr.py) ---
+# The rank of a far block is what TOL of its own largest singular value
+# keeps, in the blocks read off the operator and in every update of the
+# factorization; the operator is compressed at the same number. Per block
+# and not against the matrix's norm, for the reason the far fields are: a
+# smooth density sums its far blocks coherently. Measured on the megathrust
+# body's softest state (62,472 unknowns, mu(s)/mu = 0.03) against dense LU
+# of the same operator: a solve is off 2e-4 to 6e-4 at 1e-4 and 2e-6 to
+# 4e-6 at 1e-6, and the tighter one costs 9.6 GB where the looser costs 7.4
+# and the dense factor 31.
+BLR_TOL = 1.0e-6
+# Elements to a cluster. A near block is dense, so the near field's bytes
+# grow with this and the number of far blocks falls as its square.
+BLR_LEAF = 200
+# Columns of a block's sketch beyond the rank it had before its updates. A
+# block that fills the sketch to within half of this is sketched again at
+# twice the width: 1 in 10 at 1e-6, where the updates barely move a rank
+# (median 20 before and after).
+BLR_OVERSAMPLE = 10
+# Up to this many boundary unknowns a stepped run factors its body densely:
+# exact, and up to here the faster. Measured a state: at 44,085 unknowns
+# with 1,939 right-hand sides, 69 s dense against 108 in blocks; at 62,472,
+# a dense factor in 120 s and 31 GB against 70 s of factoring after 55 s of
+# reading the blocks off the operator, and 9.6 GB.
+STEPPER_DENSE_BOUNDARY = 60_000
+
 # --- A Laplace run as a web payload (webexport.py, the fields in time) ---
 # A stack of state solutions is shipped as an orthonormal basis of its rows,
 # and the modes whose singular value is below this fraction of the largest

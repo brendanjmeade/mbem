@@ -1313,6 +1313,83 @@ def check_gravity():
     return bool(ok)
 
 
+# The operator factored in blocks (la/blr.py), on the gravity model, each
+# bound a multiple of the tolerance the blocks are cut at (1e-4, 1e-6).
+BLR_LEAF = 48                    # clusters are the operator's own leaves
+TOL_BLR_BLOCKS = 10.0            # blocks against the dense form; 0.61, 0.65
+TOL_BLR_SOLVE = 10.0             # a solve against dense LU of it; 1.1, 0.69
+TOL_BLR_SCHUR = 10.0             # a partial factorization's complement; 0.70, 0.73
+TOL_BLR_COLUMNS = 1.0e-10        # many right-hand sides at once; 1e-15
+
+
+def check_block_lu():
+    """``la.blr``: the compressed operator read off as blocks on clusters,
+    factored, and solved with. Held to dense LU of the operator's OWN dense
+    form, so that what is on trial is the factorization and not the
+    compression before it: the blocks sum to that form, a solve follows the
+    tolerance down, many right-hand sides at once are each one alone, and a
+    factorization stopped early leaves the Schur complement of what it
+    eliminated. On the gravity model, whose terms on a transformed column
+    and whose interface -- two slots to a cluster -- are what the reading
+    could get wrong."""
+    from scipy.linalg import lu_factor, lu_solve
+
+    from mbem.la import blr
+
+    model, eps = _gravity_model()
+    system = generate_system(model)
+    n = system.layout.n_unknowns
+    rng = np.random.default_rng(11)
+    rhs = rng.standard_normal((n, 3))
+    ok, errs = True, {}
+    for tol in (1.0e-4, 1.0e-6):
+        hasm = HBackend(tol=tol, storage="basis").assemble(system, eps)
+        A = hasm.to_dense()
+        f, cl = blr.from_assembled(hasm, leaf=BLR_LEAF, tol=tol)
+        n_far = int((f.kind == blr.FAR).sum())
+        M = np.zeros((n, n))
+        for (a, b), blk in f.A.items():
+            M[np.ix_(cl.dofs[a], cl.dofs[b])] = (
+                blk[0] @ blk[1].T if isinstance(blk, tuple) else blk)
+        e_blocks = float(np.linalg.norm(M - A) / np.linalg.norm(A))
+        two_slots = max(cl.sizes) == 6 * max(cl.n_elem)
+        f.factor()
+        x = f.solve(rhs, cl.dofs)
+        ref = lu_solve(lu_factor(A), rhs)
+        e_solve = float(np.linalg.norm(x - ref) / np.linalg.norm(ref))
+        one = np.column_stack([f.solve(rhs[:, c], cl.dofs) for c in range(3)])
+        e_cols = float(np.abs(x - one).max() / np.abs(x).max())
+        errs[tol] = e_solve
+        # stopped two thirds of the way: the complement of the rest
+        g, cg = blr.from_assembled(hasm, leaf=BLR_LEAF, tol=tol, clusters=cl)
+        stop = (2 * cl.p) // 3
+        g.factor(stop=stop)
+        _kind, left = g.schur()
+        head = np.concatenate(cl.dofs[:stop])
+        tail = np.concatenate(cl.dofs[stop:])
+        at = np.cumsum([0] + [d.size for d in cl.dofs[stop:]])
+        S = np.zeros((tail.size, tail.size))
+        for (a, b), blk in left.items():
+            S[at[a]:at[a + 1], at[b]:at[b + 1]] = (
+                blk[0] @ blk[1].T if isinstance(blk, tuple) else blk)
+        S_ref = A[np.ix_(tail, tail)] - A[np.ix_(tail, head)] @ np.linalg.solve(
+            A[np.ix_(head, head)], A[np.ix_(head, tail)])
+        e_schur = float(np.linalg.norm(S - S_ref) / np.linalg.norm(S_ref))
+        good = (n_far > 0 and two_slots and e_blocks < TOL_BLR_BLOCKS * tol
+                and e_solve < TOL_BLR_SOLVE * tol and e_cols < TOL_BLR_COLUMNS
+                and e_schur < TOL_BLR_SCHUR * tol)
+        ok &= good
+        print(f"    tol {tol:.0e}: {n} unknowns in {cl.p} clusters, {n_far} "
+              f"far blocks (an interface's two slots in one: {two_slots}); "
+              f"blocks {e_blocks:.1e}, solve {e_solve:.1e}, columns "
+              f"{e_cols:.1e}, complement after {stop} clusters {e_schur:.1e}"
+              f"  {'ok' if good else 'XX'}")
+    follows = errs[1.0e-6] < 0.1 * errs[1.0e-4]
+    print(f"    the solve follows the tolerance: {errs[1.0e-4]:.1e} -> "
+          f"{errs[1.0e-6]:.1e}  {'ok' if follows else 'XX'}")
+    return bool(ok and follows)
+
+
 def main():
     checks = [
         ("pair-level ACA", check_pair_aca),
@@ -1337,6 +1414,7 @@ def main():
          check_convergence_rate),
         ("gravity: a term on a transformed column, every consumer",
          check_gravity),
+        ("the operator factored in blocks", check_block_lu),
     ]
     results = []
     for name, fn in checks:

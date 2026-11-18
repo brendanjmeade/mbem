@@ -93,7 +93,10 @@ is FLAT in time.
       every unknown of the boundary at a state the fit weighs (1e-7), in
       ranks of 58 and 60; as fitted the relaxed limit grows a mode (1.5e-3:
       tripwire), and a fluid's, which is none, does not; stepped it is the
-      dense body (3e-8). And the megathrust's reach of [f] (992 slip
+      dense body (3e-8). The same body factored in BLOCKS (``la.blr``,
+      where a boundary past what a dense matrix holds would be): stiffness
+      and loads as before (2e-8, 3e-8), the boundary's unknowns to 4e-5.
+      And the megathrust's reach of [f] (992 slip
       unknowns under 17,778, where the boundary sees all of so coarse a
       fault: ranks 982 and 992): stiffness (3e-8), loads (6e-15) and every
       unknown of the box (7e-7) are the dense body's, and stepped under the
@@ -151,6 +154,7 @@ TOL_RKC = 1.0e-4         # RKC vs the embedded pair, the crack under friction; 2
 TOL_STATE = 1.0e-5       # a state's stiffness and loads, coupling vs dense; 3e-8
 TOL_UNKNOWNS = 1.0e-4    # ... every unknown of the boundary; 1e-7, 7e-7
 TOL_MEAN = 1.0e-3        # mean afterslip, two corrections of one fit; 4e-4
+TOL_BLOCKS = 5.0e-4      # the boundary's unknowns, its body factored in blocks; 4e-5
 
 CHECKS = []
 
@@ -813,6 +817,20 @@ def j_boundary(reach):
     check("stepped under a linear law, it is the dense body",
           float(np.abs(a.slip - b.slip).max() / np.abs(b.slip).max()),
           TOL_KERNEL)
+
+    # ... and the same body factored in BLOCKS, where a boundary past what
+    # a dense matrix holds would be (la.blr)
+    kc = quiet(stepper.KernelBody.from_model, model, eps, states, s=s,
+               factor="blocks")
+    check_bool("the body factored in blocks, the one above densely",
+               kc.boundary.report["factor"] == "blocks"
+               and rep["factor"] == "dense")
+    check("... every state's stiffness is the dense reduction's still",
+          worst_state(kc, cond), TOL_STATE)
+    check("... what its faces' data load the fault with",
+          rel(kc.loads, np.array([c.L for c in cond])), TOL_STATE)
+    check("... and every unknown of the boundary", worst_unknown(kc, dense),
+          TOL_BLOCKS)
 
     # the megathrust's reach of [f]
     kb = quiet(stepper.KernelBody.from_model, reach.model, reach.eps,

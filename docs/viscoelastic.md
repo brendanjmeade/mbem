@@ -576,9 +576,65 @@ the slip at 17,564 and 71,046 elements; the study's own mesh, at its own
 0.23 km, has 0.2118. As on the slab's face (section 10), the width and not
 the element is what a freed reach's slip is quoted with.
 
+**The body factored in blocks.** What is left dense above is the body: at
+every state its boundary operator is factored, for a solve per column of
+$W$. Past what a dense matrix holds, the compressed backend's operator
+takes its place (that backend solves with it by iteration, one right-hand
+side at a time, which a thousand columns a state rule out) and is
+factored as it stands (`la.blr`). The unknowns are cut into clusters, the
+nodes of each patch's own cluster tree, a cluster holding every slot of
+its patch there: an interface's displacement and traction together, so
+that a diagonal block is the local transmission problem. A pair of
+clusters that is admissible is a block $XY^{\mathsf T}$ and any other is
+dense, both read off the operator's own compressed blocks with no kernel
+evaluated again, and the factorization is block LU with pivoting inside a
+diagonal block only. It is left-looking: a far block's update is a sum
+over every earlier pivot of products of low-rank blocks, and the block is
+compressed from a sketch of that sum, so that the work is matrix products
+of useful size. Truncation is per block, at the tolerance the operator is
+compressed at.
+
+Against dense LU of the same operator, on the megathrust's body at its
+softest state ($\tilde\mu/\mu=0.03$), a solve is off by 2e-6 to 4e-6 at a
+tolerance of 1e-6 and by 2e-4 to 6e-4 at 1e-4, at 17,778 unknowns and at
+62,472, where the factors are 9.6 GB against 31. Stepped
+(`--set factor=blocks`), the 17,564-element run above is the one with
+dense factors: 7e-7 in the reach's slip and 4e-5 at the free surface. The
+tractions on the walls, unknowns of a first-kind equation, are 2e-3 apart.
+
+What it is for is a finer box, and the first one shows why. The same run
+with the plate's two faces at half their elements and the substrate's
+width halved with them (`--set refine=2`: 44,085 boundary unknowns, the
+coupling's ranks 1,939 and 2,757) is the same under either factorization
+(3e-5 in the slip), and it is NOT the run above:
+
+| the box's faces, width | boundary unknowns | mean afterslip / slip at $0.3\,\tau$ | at $100\,\tau$ |
+|---|---|---|---|
+| 15 and 22.5 km, 2.25 km | 16,092 | 0.042 | 0.208 |
+| 7.5 and 11.25 km, 1.125 km | 44,085 | 0.058 | 0.235 |
+
+A third more early and an eighth more late: the reach meets the interface
+at the rupture's edge, and what it slips there is set by that boundary's
+elements and width (sections 7 and 10 say the same of a plate that bends
+and of a slab's face). The ladder has two rungs and no limit yet.
+
+At these sizes the dense factorization is still the faster (32 minutes
+against 41 for that run, 15.5 GB of factors against 6): the blocks cost
+$N^2$ with a small constant where dense LU costs $N^3$, and the two cross
+near 60,000 unknowns (`defaults.STEPPER_DENSE_BOUNDARY`). A factorization
+on the operator's own hierarchy would cost $N\log^2N$; not built.
+
 What this does not reach: a slip ON an interface (section 10) has no kernel
 of its own, all of its stiffness is the body's, and it stays on the dense
-reduction; and the body's boundary is dense, some $10^5$ unknowns.
+reduction. Its stiffness is what a factorization of the body leaves when
+it stops short of the slip's own rows, a Schur complement, and the blocks
+give it in their own format (`BlockLU.factor(stop)`, `schur`). Measured on
+the slab's face of section 10 against the dense reduction and not built
+into the stepper: 1e-6 at a tolerance of 1e-6 (1,180 and 4,820 slip
+unknowns, the width at or under the element), with far blocks of rank 83
+to 139 in 300, so that it compresses, and poorly; with the width over the
+element (3 km on 2.5) the body is ill conditioned and the same complement
+is 2e-4 off.
 
 **The design this replaced** steps every boundary unknown. Multiplying by
 $s/(s+\beta)$ is, in time, the variable
@@ -1410,9 +1466,11 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
   Folding a solved slip's far field into the solve is a rank-few coupling of
   the walls to the fault's mean slip; not built.
 - **A plate that bends costs two meshes** (section 7), and a body with a
-  solved fault is factored densely, where the second mesh is small. The
-  compressed backend solves no slip; a stepped fault's own kernel is
-  compressed (section 6), its body's boundary is not.
+  solved fault is factored at every state: densely, or in blocks where the
+  second mesh is past that (section 6). The compressed backend solves no
+  slip of its own. What a stepped fault's afterslip owes the box's faces
+  is measured at two rungs (section 6: an eighth to a third) and has no
+  limit yet.
 - **Rate and state.** The stepper of section 6 takes any law of the
   traction; a law with a STATE variable, radiation damping and a normal
   stress that changes are not written. The size earthquake nucleation
@@ -1430,7 +1488,8 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
   has risen, its two sides have risen differently, and the run is refused.
   Nor is a slab denser than the mantle around it written, which wants the
   stratification rule of section 7 read face by face. And an interface
-  that slips is on the dense backend only.
+  that slips is on the dense backend only: its stiffness as the complement
+  of a block factorization is measured (section 6), not built.
 - **Uniform slip on a plane.** Slip that tapers, a fault that curves, a
   rupture that stops short of the trench (a difference of two faults, by
   linearity): none attempted. The reference of section 8 is one rectangle

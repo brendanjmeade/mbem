@@ -411,6 +411,8 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 model, eps, mats, s=s_run, tol=run.backend.tol,
                 coupling_tol=run.stepper.boundary_tol,
                 rank=run.stepper.boundary_rank,
+                factor=run.stepper.factor,
+                factor_tol=run.stepper.factor_tol,
                 log=lambda msg: print(f"  {msg}", flush=True))
             phases["kernel"] = body.kernel.report["build_s"]
             report["kernel"] = body.kernel.report

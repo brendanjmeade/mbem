@@ -245,7 +245,9 @@ class Stepper:
     ``boundary_rank`` are of a fault in a body on its compressed kernel
     (``backend=hmat``): where the boundary's part of its stiffness is cut,
     and the random vectors the search for it starts with
-    (``la.coupling.Coupling``).
+    (``la.coupling.Coupling``). ``factor`` is how that body is factored at a
+    state, ``"dense"`` or in ``"blocks"`` (``la.blr``, at ``factor_tol``);
+    left ``None`` its size decides (``defaults.STEPPER_DENSE_BOUNDARY``).
     """
     faults: Mapping[str, Any]
     t: tuple[float, ...]
@@ -255,6 +257,8 @@ class Stepper:
     method: str | None = None
     boundary_tol: float | None = None
     boundary_rank: int | None = None
+    factor: str | None = None
+    factor_tol: float | None = None
 
 
 @dataclass(frozen=True)

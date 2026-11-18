@@ -122,6 +122,13 @@ no kernel of its own.
         --set backend=hmat --set creep_law=friction --set eps_lower=0.3225 \
         --sweep edge_lower=1.25,0.625          # 35,128 and 142,092 unknowns
 
+The body around it is factored at every state, ``factor="dense"`` or
+``"blocks"`` (``la.blr``: the compressed operator in block low-rank LU);
+left empty the boundary's size decides. ``refine`` with it is the box's own
+ladder, which a stepped afterslip needs as much as the reach's:
+
+    ... --set edge_lower=1.25 --set refine=2 --set factor=blocks
+
 ``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
 footwall plate continues down the dip as an elastic slab to that depth, in
 the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
@@ -176,7 +183,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              route: str = "laplace", creep_law: str = "viscous",
              creep_stress: float = 1.0e-3, creep_n: float = 3.0,
              slip: float = 1.0, times_per_decade: int = 8,
-             edge_lower: float = 0.0, eps_lower: float = 0.0) -> Run:
+             edge_lower: float = 0.0, eps_lower: float = 0.0,
+             factor: str = "") -> Run:
     if route not in ("laplace", "step"):
         raise ValueError(f"route {route!r}: 'laplace' or 'step'")
     if creep_law not in ("viscous", "power", "friction"):
@@ -254,7 +262,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade),
                         faults=({"fault_lower": law}
                                 if lower == "creep" and not step else {})),
-        stepper=(Stepper(faults={"fault_lower": law}, t=times)
+        stepper=(Stepper(faults={"fault_lower": law}, t=times,
+                         factor=factor or None)
                  if step else None),
         # a stepped run has a history and no state to draw the Laplace
         # route's figures from

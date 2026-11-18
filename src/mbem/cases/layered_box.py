@@ -163,7 +163,10 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
     below is a second mesh, ``fault_lower``, on the same plane, which belongs
     to the substrate; and the interface is then aligned on the line where the
     fault cuts it, as the top is on the trace, because the displacement of
-    the interface jumps there by the slip.
+    the interface jumps there by the slip. Its elements are ``edge_lower``
+    (the fault's by default): the reach may be finer than the rupture above
+    it and than the faces of the box, which is what a law that is not linear
+    wants of it and all that a stepped run on its compressed kernel pays for.
 
     ``slab_depth`` greater than the plate is thick makes the plate SUBDUCT:
     the footwall plate goes on down the dip as a slab to that depth, within
@@ -239,8 +242,7 @@ def build_layered_box(half_x=400.0, z_interface=-30.0, z_bottom=-300.0,
         return mesh, n_hat, s_hat
 
     fault, n_hat, s_hat = panel(max(reach), 0.0)
-    lower = dict(fault_lower=panel(
-        *reach, edge=edge_lower if slab else edge_fault)[0]) \
+    lower = dict(fault_lower=panel(*reach, edge=edge_lower)[0]) \
         if below > 0.0 else {}
     return dict(top=top, interface=interface, base=base,
                 sides_upper=_panels(half_x, (z_interface, 0.0), edge_side),

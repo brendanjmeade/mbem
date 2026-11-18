@@ -1046,6 +1046,21 @@ class RegionModel:
         return next(r for r in self.interface_regions(patch)
                     if self.orientation(r, patch) < 0)
 
+    def without_solved_faults(self) -> "RegionModel":
+        """This model with its FAULT_TRACTION faults taken out: the body
+        they sit in, every prescribed datum still on it -- what a slip of
+        theirs loads, and is loaded back by (``stepper.KernelBody``).
+        Geometry and the orientation table are shared, as in
+        ``with_materials``; an interface that slips is a patch, and stays."""
+        new = RegionModel.__new__(RegionModel)
+        new.regions = [replace(r, faults=[f for f in r.faults
+                                          if f.bc is not BCType.FAULT_TRACTION])
+                       for r in self.regions]
+        new.gravity = self.gravity
+        new.far_field = self.far_field
+        new._sigma = self._sigma
+        return new
+
     def solved_faults(self) -> list:
         """``[(region, patch)]`` for every slip that is an unknown: the
         FAULT_TRACTION faults, each with the region holding it, and the

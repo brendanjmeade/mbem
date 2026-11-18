@@ -74,7 +74,8 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      is not linear, round-trips through the dump; ``mbem sample`` refuses the
      run; it is REFUSED with a solved fault left without a law, and on the
      compressed kernel under a continuous fault; and at P0 in the whole space
-     the compressed kernel (``backend=hmat``) is the dense run.
+     the compressed kernel (``backend=hmat``) is the dense run, which left
+     to itself steps with the stabilised method (``mbem.rkc``) and says so.
 
 Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 """
@@ -874,21 +875,28 @@ def o_stepped_run(tmp: pathlib.Path) -> None:
 
     # ... and at P0, in the whole space, the compressed kernel IS the route:
     # the config's own stepped crack, dense and compressed
+    # (one integrator for the two, so that what is compared is the operator)
     got = {}
-    for kind in ("dense", "hmat"):
-        dd = tmp / f"stepped_p0_{kind}"
+    for kind, method in (("dense", "RK45"), ("hmat", "RK45"), ("hmat", "")):
+        dd = tmp / f"stepped_p0_{kind}_{method or 'own'}"
         dd.mkdir()
         rep = runner.execute(cfg.load(path, order=0, law="friction",
-                                      backend=kind), dd, path)
+                                      backend=kind, method=method), dd, path)
         with np.load(dd / "history.npz") as z:
-            got[kind] = (rep, z["b:penny"])
+            got[kind, method] = (rep, z["b:penny"])
+    dense, hmat, own = got["dense", "RK45"], got["hmat", "RK45"], got["hmat", ""]
     check("at P0 the compressed kernel is the dense run",
-          got["hmat"][0]["status"] == "OK"
-          and _rel(got["hmat"][1], got["dense"][1]) < 1e-5,
-          f"{_rel(got['hmat'][1], got['dense'][1]):.1e}")
+          hmat[0]["status"] == "OK" and _rel(hmat[1], dense[1]) < 1e-5,
+          f"{_rel(hmat[1], dense[1]):.1e}")
     check("... and says what it stored",
-          got["hmat"][0]["kernel"]["elements"] == got["hmat"][1].shape[1]
-          and "kernel" not in got["dense"][0], f"{got['hmat'][0]['kernel']['elements']} elements")
+          hmat[0]["kernel"]["elements"] == hmat[1].shape[1]
+          and "kernel" not in dense[0], f"{hmat[0]['kernel']['elements']} elements")
+    check("left to itself it steps with the stabilised method, to the "
+          "same slip, and the report says which",
+          _rel(own[1], hmat[1]) < 1e-4
+          and (own[0]["stepper"]["method"], hmat[0]["stepper"]["method"],
+               dense[0]["stepper"]["method"]) == ("RKC", "RK45", "RK45"),
+          f"{_rel(own[1], hmat[1]):.1e}")
 
 
 def main() -> bool:

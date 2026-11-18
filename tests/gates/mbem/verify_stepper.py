@@ -56,8 +56,9 @@ is FLAT in time.
       the linear one along the rake (7e-5), and under this one, 1 m against
       an a_sigma of 1 MPa, it is not (1.75 times the slip at 0.1: tripwire).
   [g] refusals: a time past the fit's window, a solved fault with no law, a
-      law on both routes, a law that is not linear on the Laplace route, the
-      compressed backend where the body has a boundary, the FMM anywhere.
+      law on both routes, a law that is not linear on the Laplace route; on
+      the compressed kernel a slip ON an interface, a continuous fault, and
+      the FMM anywhere (a P0 fault inside a body is TAKEN there: [j]).
       And ``PowerLawFault``: the viscous law at n = 1 (identical), and not
       at n = 3 (0.49: tripwire).
   [h] the fault's own kernel, COMPRESSED (``la.faultkernel``,
@@ -72,8 +73,32 @@ is FLAT in time.
       friction, as fitted (2e-7: the operators are one) and with each one's
       correction of the relaxed limit (1e-3: a matrix's spectrum there, two
       numbers here); the two numbers do not push, and as fitted one does
-      (-0.108, of mu = 30: tripwire). Refused: a body with a boundary, a
-      continuous fault, a material outside the range.
+      (-0.108, of mu = 30: tripwire). Refused: a slip on an interface, a
+      continuous fault, a material outside the range. Every run here is
+      the embedded pair's, so that what is compared is the operators.
+  [i] the STABILISED integrator (``mbem.rkc``), which is what a
+      ``KernelBody`` is stepped with: order two at a fixed step (the error
+      falls 4.2 times as the step halves); a stiff diffusion with its exact
+      answer, read between steps (4e-6), sixteen times the stiffness for
+      3.6 times the evaluations where the embedded pair pays 15.9
+      (tripwire); and the crack of [h] in its Maxwell body under friction,
+      the pair's answer (2e-6) in 1,575 evaluations against 3,020.
+  [j] a fault IN A BODY on its compressed kernel: what the boundary adds to
+      the faults' stiffness, in low rank (``la.coupling``,
+      ``KernelBody.boundary``). The box of [a] with its material relaxing,
+      a traction on its top and its base moved (96 slip unknowns, 9,348 of
+      the boundary's, eleven states): every state's stiffness is the dense
+      reduction's (2e-8), and so are what those data load the fault with
+      (3e-8; a third of it is not the fault's own datum: tripwire) and
+      every unknown of the boundary at a state the fit weighs (1e-7), in
+      ranks of 58 and 60; as fitted the relaxed limit grows a mode (1.5e-3:
+      tripwire), and a fluid's, which is none, does not; stepped it is the
+      dense body (3e-8). And the megathrust's reach of [f] (992 slip
+      unknowns under 17,778, where the boundary sees all of so coarse a
+      fault: ranks 982 and 992): stiffness (3e-8), loads (6e-15) and every
+      unknown of the box (7e-7) are the dense body's, and stepped under the
+      viscous law the two agree as two corrections of one fit can (1.6e-3
+      in the slip, 4e-4 in its mean).
 """
 
 from __future__ import annotations
@@ -120,6 +145,12 @@ TOL_PRODUCT = 1.0e-6     # compressed product vs dense (float32 store); 3e-8
 TOL_POOL = 1.0e-12       # two processes vs one; 2e-15
 TOL_KERNEL = 1.0e-5      # KernelBody vs Body, the same operator; 3e-7
 TOL_KERNEL_LIMIT = 5.0e-3   # ... each with its own relaxed limit; 1e-3
+TOL_ORDER = 0.3          # error ratio at half the step, less 4; 0.18
+TOL_HEAT = 2.0e-5        # a stiff diffusion vs its exact answer; 4e-6
+TOL_RKC = 1.0e-4         # RKC vs the embedded pair, the crack under friction; 2e-6
+TOL_STATE = 1.0e-5       # a state's stiffness and loads, coupling vs dense; 3e-8
+TOL_UNKNOWNS = 1.0e-4    # ... every unknown of the boundary; 1e-7, 7e-7
+TOL_MEAN = 1.0e-3        # mean afterslip, two corrections of one fit; 4e-4
 
 CHECKS = []
 
@@ -407,8 +438,8 @@ def f_megathrust():
         return {layered_box.PLATE: plate, layered_box.SUBSTRATE: VV.elastic(
             VV.relaxed(VV.MAXWELL, plate, sv))}
 
-    cond = [asm.rebuild_for_materials(mats(sv)).condense()
-            for sv in (np.inf,) + s]
+    states = [mats(sv) for sv in (np.inf,) + s]
+    cond = [asm.rebuild_for_materials(st).condense() for st in states]
     n = cond[0].n
     print(f"      {asm.A.shape[0]} unknowns, {n} of them the reach's slip, "
           f"{len(cond)} states")
@@ -470,7 +501,8 @@ def f_megathrust():
     check_gt("... and under this one it is not: slip at the first time, over "
              "the linear law's (tripwire)",
              float(big.slip[0].sum() / lin.slip[0].sum()), EARLY)
-    return body
+    return types.SimpleNamespace(body=body, model=model, eps=eps, s=s,
+                                 states=states, cond=cond)
 
 
 # ---- [g] refusals ------------------------------------------------------
@@ -501,40 +533,39 @@ def g_refusals(P, body_m, reach):
                    **spec), ValueError))
     # all these checks ask of a model: its solved faults, their regions,
     # and whether it has a boundary
-    model = types.SimpleNamespace(
-        regions=[types.SimpleNamespace(patches=["a wall"])],
-        solved_faults=lambda: [(
-            types.SimpleNamespace(material=types.SimpleNamespace(mu=MU)),
-            types.SimpleNamespace(name="fault_lower", order=0,
-                                  continuous=False))])
+    def stub(patches, **fault):
+        region = types.SimpleNamespace(
+            patches=patches, material=types.SimpleNamespace(mu=MU))
+        f = types.SimpleNamespace(**dict(dict(
+            name="fault_lower", order=0, continuous=False,
+            allow_opening=False, bc=BCType.FAULT_TRACTION), **fault))
+        return types.SimpleNamespace(regions=[region],
+                                     solved_faults=lambda: [(region, f)])
+
+    model = stub(["a wall"])
     run = cfg.Run(laplace=cfg.Laplace(faults={"fault_lower": power}, **lap),
                   **spec)
     check_bool("a law that is not linear, on the Laplace route",
                refuses(lambda: runner._creeping_faults(model, run), ValueError))
     step = dict(laplace=cfg.Laplace(**lap), stepper=cfg.Stepper(
         faults={"fault_lower": power}, t=(1.0,)))
-    check_bool("a stepped body WITH A BOUNDARY on the compressed backend",
-               refuses(lambda: runner._stepped_faults(model, cfg.Run(**dict(
-                   spec, backend=cfg.Backend(kind="hmat")), **step)),
-                   ValueError))
-    space = types.SimpleNamespace(regions=[types.SimpleNamespace(patches=[])],
-                                  solved_faults=model.solved_faults)
-    check_bool("... the whole space on it is taken",
-               "fault_lower" in runner._stepped_faults(space, cfg.Run(**dict(
-                   spec, backend=cfg.Backend(kind="hmat")), **step)))
-    check_bool("... and the FMM is not, anywhere",
+    hmat = cfg.Run(**dict(spec, backend=cfg.Backend(kind="hmat")), **step)
+    check_bool("a P0 fault inside a body is taken on the compressed kernel",
+               "fault_lower" in runner._stepped_faults(model, hmat))
+    space = stub([])
+    check_bool("... and one in the whole space",
+               "fault_lower" in runner._stepped_faults(space, hmat))
+    check_bool("... the FMM is not, anywhere",
                refuses(lambda: runner._stepped_faults(space, cfg.Run(**dict(
                    spec, backend=cfg.Backend(kind="fmm")), **step)),
                    ValueError))
-    smooth = types.SimpleNamespace(
-        regions=space.regions, solved_faults=lambda: [(
-            types.SimpleNamespace(material=types.SimpleNamespace(mu=MU)),
-            types.SimpleNamespace(name="fault_lower", order=2,
-                                  continuous=True))])
-    check_bool("... nor a continuous fault on the compressed kernel",
-               refuses(lambda: runner._stepped_faults(smooth, cfg.Run(**dict(
-                   spec, backend=cfg.Backend(kind="hmat")), **step)),
-                   ValueError))
+    check_bool("... nor a continuous fault",
+               refuses(lambda: runner._stepped_faults(
+                   stub([], order=2, continuous=True), hmat), ValueError))
+    check_bool("... nor a slip ON an interface, whose stiffness is all the "
+               "body's",
+               refuses(lambda: runner._stepped_faults(
+                   stub(["a wall"], bc=BCType.INTERFACE), hmat), ValueError))
     check_bool("a stepped run that names a fault the model does not solve",
                refuses(lambda: runner._stepped_faults(model, cfg.Run(
                    laplace=cfg.Laplace(**lap), stepper=cfg.Stepper(
@@ -598,9 +629,9 @@ def h_compressed_kernel():
     fric = rheology.RateStrengtheningFault(v0=a_sigma / P.eta0,
                                            a_sigma=a_sigma, rake=0.0)
 
-    def run(body, law):
+    def run(body, law):                     # the pair: operators compared
         return stepper.march(body, stepper.law_rate(
-            body, {"penny": law}, {"penny": MU}), t).slip
+            body, {"penny": law}, {"penny": MU}), t, method="RK45").slip
 
     def worst_of(a, b):
         return float(np.abs(a - b).max() / np.abs(b).max())
@@ -628,11 +659,11 @@ def h_compressed_kernel():
     check_bool("... and as fitted it does (tripwire)",
                min(limit(fitted._a)) < 0.0,
                "%.3f, %.3f" % limit(fitted._a))
-    walled = types.SimpleNamespace(regions=[types.SimpleNamespace(
-        patches=["a wall"], faults=[fault])])
-    check_bool("refused: a body with a boundary",
+    face = types.SimpleNamespace(solved_faults=lambda: [(None, (
+        types.SimpleNamespace(name="face", bc=BCType.INTERFACE)))])
+    check_bool("refused: a slip on an interface",
                refuses(lambda: stepper.KernelBody.from_model(
-                   walled, "auto", pairs[:1]), ValueError))
+                   face, "auto", pairs[:1]), ValueError))
     smooth = penny.build_model(fault.mesh, P.base, drop=P.drop,
                                order=2).regions[0].faults[0]
     check_bool("refused: a continuous fault",
@@ -640,6 +671,173 @@ def h_compressed_kernel():
                        NotImplementedError))
     check_bool("refused: a material outside the kernel's range",
                refuses(lambda: K.weights(1.0, lam_of(1.0, 1.05)), ValueError))
+    return kern, stepper.law_rate(kern, {"penny": fric}, {"penny": MU}), t
+
+
+# ---- [i] the stabilised integrator ----------------------------------------
+
+def i_stabilised(kern, rate, t):
+    print("\n[i] the stabilised integrator: the square root of the steps")
+    from scipy.integrate import solve_ivp
+    from mbem.rkc import RKC
+
+    def lag(tt, y):
+        return -y + np.sin(tt)
+
+    def lagged(tt):
+        return 1.5 * np.exp(-tt) + 0.5 * (np.sin(tt) - np.cos(tt))
+
+    err = [abs(solve_ivp(lag, (0.0, 2.0), [1.0], method=RKC, rtol=1.0e6,
+                         atol=1.0e6, first_step=h, max_step=h).y[0, -1]
+               - lagged(2.0)) for h in (0.1, 0.05)]
+    check("order two: at half the step the error is a quarter",
+          abs(err[0] / err[1] - 4.0), TOL_ORDER)
+
+    def heat(n, method):
+        x = np.linspace(0.0, 1.0, n + 2)[1:-1]
+        dx = x[1] - x[0]
+
+        def f(_t, u):
+            d = np.empty_like(u)
+            d[1:-1] = u[2:] - 2.0 * u[1:-1] + u[:-2]
+            d[0], d[-1] = u[1] - 2.0 * u[0], u[-2] - 2.0 * u[-1]
+            return d / dx ** 2
+
+        modes = [(1, np.sin(np.pi * x)), (5, 0.3 * np.sin(5.0 * np.pi * x))]
+        sol = solve_ivp(f, (0.0, 0.2), modes[0][1] + modes[1][1],
+                        method=method, rtol=1.0e-6, atol=1.0e-10,
+                        t_eval=[0.05, 0.2])
+        want = np.stack([sum(np.exp(-(2.0 - 2.0 * np.cos(k * np.pi * dx))
+                                    / dx ** 2 * tt) * m for k, m in modes)
+                         for tt in sol.t], 1)
+        return float(np.abs(sol.y - want).max()), sol.nfev
+
+    (e1, n1), (e4, n4) = heat(100, RKC), heat(400, RKC)
+    check("a stiff diffusion, 100 and 400 points, read between steps: its "
+          "exact answer", max(e1, e4), TOL_HEAT)
+    check("sixteen times the stiffness, under five times the evaluations",
+          n4 / n1, 5.0)
+    check_gt("... where the embedded pair pays over ten (tripwire)",
+             heat(400, "RK45")[1] / heat(100, "RK45")[1], 10.0)
+    pair = stepper.march(kern, rate, t, method="RK45")
+    cheb = stepper.march(kern, rate, t)
+    check("the crack of [h] under friction: RKC is the embedded pair",
+          float(np.abs(cheb.slip - pair.slip).max() / np.abs(pair.slip).max()),
+          TOL_RKC)
+    check_bool("... and it is what a KernelBody is stepped with, in fewer "
+               "evaluations", cheb.nfev < pair.nfev,
+               f"{cheb.nfev} against {pair.nfev}")
+    explicit = stepper.march(kern, rate, t, method="RKC")
+    check_bool("... the default IS that method", explicit.nfev == cheb.nfev)
+
+
+# ---- [j] a fault in a body, on its compressed kernel ------------------------
+
+def j_boundary(reach):
+    print("\n[j] a fault in a body on its compressed kernel: the boundary in "
+          "low rank")
+    rng = np.random.default_rng(3)
+
+    def worst_state(kb, cond):
+        x = rng.standard_normal(kb.n)
+        return max(rel(kb.stiffness(x, k), c.S @ x) for k, c in enumerate(cond))
+
+    def worst_unknown(kb, dense):
+        m = dense.tau.size
+        Y = 1.0e-3 * rng.standard_normal((1 + m, kb.n))
+        ev = ((0.0, 1.0),)
+        a, b = kb.slots(1.0, Y, ev), dense.slots(1.0, Y, ev)
+        return max(rel(a[k], b[k]) for k in b)
+
+    # the box of [a], relaxing: small enough for the eigenvalues
+    mat = VB.material(0.30)
+    fmesh, _, _ = make_vertical_fault_eq(**dict(VB.FAULT_C, target_edge=2.5))
+    value = np.zeros((fmesh.triangles.shape[0], 3))
+    value[:, 1] = 1.0e-3                        # along strike, in the plane
+    f = Patch("fault", fmesh, BCType.FAULT_TRACTION, value=value, order=0,
+              locked=np.zeros(value.shape[0], bool))
+    # ... loaded through its faces too, so that prescribed data reach the
+    # fault's rows by both kernels: a traction on the top, the base moved
+    def press(x):
+        out = np.zeros((x.shape[0], 3))
+        out[:, 2] = -1.0e-3 * np.exp(-(x[:, 0] ** 2 + x[:, 1] ** 2)
+                                     / VB.BOX_H ** 2)
+        return out
+
+    def shove(x):
+        out = np.zeros((x.shape[0], 3))
+        out[:, 1] = 1.0e-3 * np.tanh(x[:, 0] / VB.BOX_H)
+        return out
+
+    model, _r = VB._build_box_model(
+        VB._closed_box(VB.EDGE_C), mat, dict(top="t", sides="t", base="d"),
+        dict(top=press, sides=None, base=shove), faults=[f])
+    eps = {"top": VB.EPS_C, "sides": VB.EPS_C, "base": VB.EPS_C,
+           "fault": "auto"}
+    s = laplace.s_grid(*WINDOW)
+    states = [{model.regions[0].name: VV.elastic(VV.relaxed(VV.MAXWELL, mat, sv))}
+              for sv in (np.inf,) + s]
+    asm = quiet(AssembledDense, generate_system(model), eps, "direct")
+    cond = [asm.rebuild_for_materials(st).condense() for st in states]
+    dense = stepper.Body(cond, s=s)
+    kb = quiet(stepper.KernelBody.from_model, model, eps, states, s=s)
+    rep = kb.boundary.report
+    print(f"      the box: {kb.n} slip unknowns through "
+          f"{rep['boundary_unknowns']} of the boundary's, rank "
+          f"{rep['slip_rank']} and {rep['traction_rank']} at {rep['tol']:g}")
+    check("every state's stiffness is the dense reduction's",
+          worst_state(kb, cond), TOL_STATE)
+    check("... what its faces' data load the fault with",
+          rel(kb.loads, np.array([c.L for c in cond])), TOL_STATE)
+    check_gt("... which is not the fault's own datum alone (tripwire)",
+             rel(kb.loads[0], -cond[0].faults[0].coordinates(value)), 0.1)
+    check("... and every unknown of the boundary", worst_unknown(kb, dense),
+          TOL_UNKNOWNS)
+    check_bool("in a rank below the fault's own",
+               max(rep["slip_rank"], rep["traction_rank"]) < kb.n,
+               f"{rep['slip_rank']}, {rep['traction_rank']} of {kb.n}")
+    mob = 1.0 / float(np.median(np.abs(np.diag(cond[0].S))))
+    fitted = stepper.KernelBody(kb.kernel, kb.faults, kb.materials, kb.loads,
+                                s=s, passive=False, boundary=kb.boundary)
+    check_gt("as fitted the relaxed limit grows a mode (tripwire)",
+             fitted.growth(mob), GROWS)
+    check("... and a fluid's limit, which is none, does not",
+          kb.growth(mob), TOL_GROWTH)
+
+    def lin(tr):
+        return mob * tr
+
+    t = np.logspace(np.log10(WINDOW[0]), np.log10(WINDOW[1]), 5)
+    a = stepper.march(kb, lin, t, method="RK45")
+    b = stepper.march(dense, lin, t)
+    check("stepped under a linear law, it is the dense body",
+          float(np.abs(a.slip - b.slip).max() / np.abs(b.slip).max()),
+          TOL_KERNEL)
+
+    # the megathrust's reach of [f]
+    kb = quiet(stepper.KernelBody.from_model, reach.model, reach.eps,
+               reach.states, s=reach.s)
+    rep = kb.boundary.report
+    print(f"      the reach: {kb.n} slip unknowns through "
+          f"{rep['boundary_unknowns']} of the boundary's, rank "
+          f"{rep['slip_rank']} and {rep['traction_rank']} at {rep['tol']:g}")
+    check("the megathrust's reach: every state's stiffness",
+          worst_state(kb, reach.cond), TOL_STATE)
+    check("... what the earthquake loads it with",
+          rel(kb.loads, np.array([c.L for c in reach.cond])), TOL_STATE)
+    check("... and every unknown of the box", worst_unknown(kb, reach.body),
+          TOL_UNKNOWNS)
+    law = rheology.ViscousFault(tau=VV.CREEP_TAU, width=10.0)
+    mu = {"fault_lower": MU}
+    t = np.logspace(np.log10(WINDOW[0]), np.log10(WINDOW[1]), 9)
+    a = stepper.march(kb, stepper.law_rate(kb, {"fault_lower": law}, mu), t)
+    b = stepper.march(reach.body, stepper.law_rate(
+        reach.body, {"fault_lower": law}, mu), t)
+    check("stepped, each body with its own relaxed limit: the reach's slip",
+          float(np.abs(a.slip - b.slip).max() / np.abs(b.slip).max()),
+          TOL_KERNEL_LIMIT)
+    check("... and its mean",
+          float(np.abs(a.slip.mean(1) / b.slip.mean(1) - 1.0).max()), TOL_MEAN)
 
 
 def main():
@@ -654,8 +852,9 @@ def main():
     body_m = d_maxwell_linear(P)
     e_maxwell_exponential(P, body_m)
     reach = f_megathrust()
-    g_refusals(P, body_m, reach)
-    h_compressed_kernel()
+    g_refusals(P, body_m, reach.body)
+    i_stabilised(*h_compressed_kernel())
+    j_boundary(reach)
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: stepper ({len(CHECKS)} checks)")

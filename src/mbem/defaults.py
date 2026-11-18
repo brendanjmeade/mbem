@@ -1073,6 +1073,39 @@ STEPPER_FIRST_STEP = 1.0e-6
 # that the step is rejected and shortened. A law that STARTS beyond it is
 # refused: friction at a traction over a hundred times its a_sigma.
 STEPPER_REJECT = 1.0e60
+# The integrator of a ``KernelBody``, whose faults are fine enough to be
+# stiff: the stabilised Chebyshev method of rkc.py.
+STEPPER_METHOD_KERNEL = "RKC"
+# A ``KernelBody`` in a body with a boundary: the faults' region counts as
+# having relaxed to a FLUID where the fitted limit of their own kernel is
+# below this fraction of its elastic value, and the faults' relaxed
+# stiffness is then none (stepper.KernelBody). A Maxwell region's two
+# weights are fitted to 3.4e-3 and -7.4e-3 of the elastic modulus on a
+# window to 100 relaxation times and to -3.6e-3 and 8.4e-3 on one to 10: the
+# fit's error, which this must clear.
+STEPPER_FLUID_LIMIT = 3.0e-2
+
+# --- The stabilised integrator (rkc.py) ---------------------------------
+# Stages a step needs for a given (step x fastest rate): s = 1 +
+# floor(sqrt(this * h * rho + 1)). The damped second-order Chebyshev
+# polynomial is stable to 0.653 (s^2 - 1); 1 / 1.54 = 0.649 keeps a margin,
+# and is the reference code's (Sommeijer, Shampine, Verwer 1998).
+RKC_STAGES_PER_RADIUS = 1.54
+# The damping: w0 = 1 + this / s^2. It trades 2 % of the stable interval
+# for a stability region that is a strip about the axis and not a chain of
+# lobes touching it, which a spectrum not exactly real needs.
+RKC_DAMPING = 2.0 / 13.0
+# The fastest rate is held this far above the power iteration's value,
+# which approaches it from below and is stopped at a part in a hundred.
+RKC_SPECTRAL_SAFETY = 1.2
+RKC_SPECTRAL_ITERATIONS = 50
+# Accepted steps an estimate of the fastest rate serves (and it is measured
+# again at once after a rejected step). A fault's falls as its slip rate
+# does, so an estimate kept too long buys stages nothing needs: a Maxwell
+# penny under friction (15,542 slip unknowns) takes 2,235 / 2,131 / 2,102 /
+# 2,116 / 2,140 evaluations measuring every 5 / 10 / 25 / 50 / 100 steps,
+# and 6,615 measuring once.
+RKC_SPECTRAL_EVERY = 25
 
 # --- A fault's own kernel, compressed (la/faultkernel.py) ----------------
 # Processes that build its far blocks, capped at the machine's cores. The
@@ -1084,6 +1117,23 @@ FAULT_KERNEL_PROCESSES = 24
 # per process) costs more than the blocks: 84 blocks at 1,959 elements take
 # 6 s in one process.
 FAULT_KERNEL_POOL_MIN_BLOCKS = 256
+
+# --- What a boundary adds to a fault's stiffness (la/coupling.py) --------
+# The two bases are cut at this fraction of their largest singular value.
+# What is left out of the boundary's part of a stiffness is about this
+# fraction OF THAT PART, a tenth of the whole on a megathrust's reach, so
+# 1e-6 sits at the compressed kernel's own 1e-7.
+COUPLING_TOL = 1.0e-6
+# Random vectors the range finder starts with, doubled until both bases
+# are held with this many to spare. What they must hold is set by the
+# BOUNDARY's mesh and not the fault's: under the 17,778 unknowns of the
+# megathrust gate's box, 1,193 slips and 1,764 tractions at 1e-6 (1,535 and
+# 2,288 at 1e-8) for a reach of 68,024 slip unknowns, and 1,175 and 1,637
+# for one of 4,260.
+COUPLING_RANK = 2048
+COUPLING_SPARE = 32
+# Fault elements to a block of the sweep.
+COUPLING_CHUNK = 1024
 
 # --- A Laplace run as a web payload (webexport.py, the fields in time) ---
 # A stack of state solutions is shipped as an orthonormal basis of its rows,

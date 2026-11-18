@@ -27,6 +27,9 @@ which is what lets a/h go where n^2 does not fit:
 
     python -m mbem run configs/penny.py --set order=0 --set backend=hmat \
         --set law=friction --set maxwell=1 --sweep a_over_h=32,64,128
+
+``method`` names the integrator (``stepper.march``); left empty a run takes
+the one that suits its body.
 """
 from mbem import laplace, rheology
 from mbem.config import (Backend, Geometry, Laplace, Model, Output, Run,
@@ -38,7 +41,7 @@ def run_spec(a_over_h: float = 8.0, order: int = 2, eps_over_h: float | None = N
              law: str = "", a_sigma_over_drop: float = 0.2,
              maxwell: float = 0.0, t_min: float = 0.1, t_max: float = 10.0,
              times_per_decade: int = 4, mu: float = 30.0,
-             lam: float = 30.0) -> Run:
+             lam: float = 30.0, method: str = "") -> Run:
     a = 1.0
     eps = "auto" if eps_over_h is None else float(eps_over_h) * a / float(a_over_h)
     stepper = body = None
@@ -53,7 +56,8 @@ def run_spec(a_over_h: float = 8.0, order: int = 2, eps_over_h: float | None = N
             v0=a_sigma * zone.width / (mu * zone.tau), a_sigma=a_sigma, rake=0.0)
         n_t = max(1, round(times_per_decade * __import__("math").log10(t_max / t_min)))
         stepper = Stepper(faults={"penny": faces}, t=(0.0,) + tuple(
-            t_min * (t_max / t_min) ** (i / n_t) for i in range(n_t + 1)))
+            t_min * (t_max / t_min) ** (i / n_t) for i in range(n_t + 1)),
+            method=method or None)
         if maxwell > 0.0:
             body = Laplace(rheology={"space": rheology.Maxwell(tau=maxwell)},
                            s=laplace.s_grid(t_min, t_max))

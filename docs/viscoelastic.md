@@ -323,7 +323,8 @@ $$ \boldsymbol\tau=S_\infty\mathbf b+\sum_jS_j\mathbf p_j+\mathbf L(t),
    \qquad \dot{\mathbf p}_j=\dot{\mathbf b}-\mathbf p_j/\tau_j : $$
 
 an ordinary differential equation in the faults' unknowns alone, handed to
-an embedded Runge-Kutta pair (Dormand-Prince 5(4), `scipy`'s `RK45`).
+an embedded Runge-Kutta pair (Dormand-Prince 5(4), `scipy`'s `RK45`), or
+where the fault is fine enough to be stiff to a stabilized method (below).
 Nothing is asked of the law $F$ but a rate for a traction; what is used is
 the body's linearity, and that is exact. A body that does not relax is one
 state and no $\mathbf p$. The $S_j$ are never formed: the fit's coefficients
@@ -436,13 +437,13 @@ to $10\,\tau$ is 4 s. Each run of the study above is 4.3 minutes, 2 of them
 the march: 6,200-7,000 evaluations of the law at 18 ms (one product with
 the fourteen stiffnesses, 0.5 GB), whether the law is linear or starts
 $2\times10^5$ times faster than that where the reach is loaded most (ten
-metres: 15 MPa against an $a\sigma$ of 1). What it cannot do: the compressed backend solves no slip, so the body
-is dense (about 1e5 unknowns at most); the faults' stiffness is $n^2$ per
-state and its relaxing part is of full rank (the reach's own stiffness
-relaxes), so 1e5-1e6 steps of a rate-and-state cycle are hours at 2,000 slip
-unknowns and weeks at 20,000; and a FIELD at a time is a sum over states of
-the body's memory, one readout per state and time, which `mbem sample` does
-not make (`history.npz` holds every boundary slot at every time).
+metres: 15 MPa against an $a\sigma$ of 1). That is the dense reduction,
+whose faults' stiffness is $n^2$ per state; a P0 fault inside a region
+steps on its compressed kernel instead (below). What neither does: the
+body's boundary is dense (about 1e5 unknowns at most); what the 1e5-1e6
+steps of a rate-and-state cycle cost is not measured; and a FIELD at a time is a sum over states of the body's memory, one
+readout per state and time, which `mbem sample` does not make
+(`history.npz` holds every boundary slot at every time).
 
 **A fault in the whole space, with nothing dense.** With no boundary there
 is nothing to eliminate: $S_k$ is the fault's own traction kernel, and two
@@ -472,31 +473,112 @@ The same Maxwell penny under friction, to $10\,\tau$ (`configs/penny.py
 
 | elements | slip unknowns | stored | dense, two matrices | build | evaluations of the law | run |
 |---|---|---|---|---|---|---|
-| 1,959 | 3,918 | 0.20 GB | 0.55 GB | 8 s | 4,304 | 27 s (dense: 215 s) |
-| 31,042 | 62,084 | 5.9 GB | 139 GB | 70 s | 18,692 | 19 min |
-| 124,462 | 248,924 | 32 GB | 2,231 GB | 6 min | not run to the end | |
+| 1,959 | 3,918 | 0.20 GB | 0.55 GB | 8 s | 1,724 (the pair: 4,304) | 16 s (dense: 215 s) |
+| 31,042 | 62,084 | 5.9 GB | 139 GB | 70 s | 2,623 (the pair: 18,692) | 3.8 min |
+| 124,462 | 248,924 | 32 GB | 2,231 GB | 6 min | 3,621 | 22 min |
 
 The dense body at 31,042 elements would be eleven states of 31 GB each.
-**What the table shows next is the step count.** An explicit pair is stable
-only below the fault's own fastest rate, its stiffness over its viscosity,
-and the stiffness of an element grows as it shrinks: four times the elements
-along a radius, 4.3 times the evaluations. At 124,462 elements that is some
-39,000 evaluations at about a third of a second, three to four hours by
-extrapolation, and the run was stopped. The product is no longer the limit;
-the integrator is, and a stabilized explicit method (whose stages grow as
-the square root of that ratio) or an implicit one on the compressed product
-is what a finer fault wants. Not built.
 
-*A fault in a body* still goes through the dense reduction, and its $S_k$
-is this kernel plus the boundary's correction. Measured on the megathrust's
-reach (992 slip unknowns): the kernel is 90-96 % of $S_k$ in norm; the
-correction is not of low rank (136-193 above $10^{-3}$ of $|S_k|$, because
-the reach touches the plate's base, and keeping 160 leaves 0.3-3 % in the
-stepped slip), though between clusters of the fault two apart it has rank
-0-2 like the kernel. It needs a column from a solve for each slip unknown.
-Applying it instead of forming it, one back-substitution per state per
-stage with the body's factors kept, is the route to a large fault in a
-body; not built.
+**A fine fault is stiff, and the integrator is chosen for it.** An explicit
+pair is stable only below the fault's own fastest rate, its stiffness over
+its viscosity, and the stiffness of an element grows as it shrinks: four
+times the elements along a radius cost the pair 4.3 times the evaluations,
+and 124,462 elements some 39,000, three to four hours. The slip the law is
+asked for moves no faster for it. And a fault is dissipative, so its rates
+lie along the negative real axis, where a Chebyshev method spends its stages
+on stability instead of order: $s$ stages are stable to $0.65\,s^2$ over
+the fastest rate, so a step the accuracy allows costs the square root of
+what it costs the pair, still one product a stage and no linear solve
+(`mbem.rkc`: the RKC of Sommeijer, Shampine and Verwer, second order, with
+its embedded error estimate, and the fastest rate measured by a power
+iteration on the law itself). A `KernelBody` is stepped with it. At 31,042
+elements the slip is the pair's to 2e-6 in a seventh of the evaluations, and
+twice the resolution is 1.4 times the evaluations where it was twice. On a
+small fault the pair is as good or better (428 evaluations against 912
+where the accuracy sets the step and not the stability), and a dense `Body`
+keeps it. The traction agrees less well than the slip, 2e-3 at 31,042
+elements: the stiff modes turn a rounding of slip into traction, under
+either integrator.
+
+**A fault in a body.** Its $S_k$ is this kernel plus what the boundary
+returns of a slip,
+
+$$ R_k=-A_{fb}\,A_{bb}^{-1}\,A_{bf} : $$
+
+the columns of a unit slip in the boundary's rows, the body's own operator,
+and the rows of the faults' traction on the boundary's unknowns. On the
+megathrust's reach (992 slip unknowns) the kernel is 90-96 % of $S_k$ in
+norm, and $R_k$ as a matrix on the fault is not of low rank to any purpose:
+136-193 above $10^{-3}$ of $|S_k|$, because the reach touches the plate's
+base, and keeping 160 leaves 0.3-3 % in the stepped slip. But it is a
+product THROUGH THE BOUNDARY, and the boundary has a mesh. The slips it can
+tell apart, and the tractions it can return, span spaces whose dimension is
+set by its own elements, however fine the fault. Refining the reach under
+one box (17,778 boundary unknowns), the two at $10^{-6}$ of the largest
+singular value:
+
+| slip unknowns | 992 | 4,260 | 17,220 | 68,024 |
+|---|---|---|---|---|
+| slips the boundary sees | 982 | 1,175 | 1,190 | 1,193 |
+| tractions it returns | 992 | 1,637 | 1,750 | 1,764 |
+
+So with $W$ and $P$ orthonormal bases of the two,
+
+$$ R_k=P\,M_k\,W^{\mathsf T},\qquad
+   M_k=-(P^{\mathsf T}A_{fb,k})\,A_{bb,k}^{-1}\,(A_{bf,k}W) , $$
+
+a state costs the body's factorization and one solve per column of $W$
+where the reduction costs one per slip unknown, and a stage two thin
+products more (`la.coupling.Coupling`, `KernelBody.boundary`). The bases
+come from a randomized range finder: the blocks are swept a chunk of the
+fault at a time against random vectors, and once more to project them, so
+nothing of the size of fault times boundary is stored; and every block is
+geometry times a power of $\mu$ times a function affine in $g$ (section 2),
+so the two ends of $g$ serve every state as they do for the kernel. What
+the earthquake loads the faults with, and every unknown of the boundary
+through time, come through the same two bases. The body's own boundary is
+still assembled and factored densely at each state: it is the FAULT that
+stops being the limit. Against the dense reduction, at the default cut of
+$10^{-6}$: every state's stiffness to 3e-8, the loads to rounding, every
+unknown of the box to 7e-7 (the megathrust's reach), and stepped the two
+agree to 1.6e-3 in the slip and 4e-4 in its mean, each with its own
+correction of the relaxed limit.
+
+*That limit.* Where the faults' region has relaxed to a fluid within the
+fit's error (its own kernel's fitted limit under 3 % of the elastic), their
+relaxed stiffness is none, whatever the boundary: a fluid carries no shear.
+What the fit left there, of the kernel's two weights and of the $M_k$
+alike, is its error, and all of it goes to the slowest pole; no mode grows,
+to rounding. Where the region still resists, a boundary may rightly soften
+a fault and its limit cannot be judged apart from the kernel's: it is left
+as fitted and the run says so.
+
+**The megathrust's reach, refined under one box** (the friction study
+above with `--set backend=hmat`, then `--set edge_lower=1.25` and `0.625`
+with `--set eps_lower=0.3225`: 16,092 boundary unknowns, fourteen states,
+to $100\,\tau$). On the study's own mesh the run IS the stored dense one:
+the reach's slip within 1e-5 to $5\,\tau$ and 5e-3 at the window's end,
+where the two relaxed limits differ; the free surface within 7e-6; the mean
+afterslip to four figures.
+
+| reach's elements | slip unknowns | kernel stored | dense | ranks | evaluations | run |
+|---|---|---|---|---|---|---|
+| 1,082 | 2,164 | 0.04 GB | 0.2 GB | 709, 1,040 | 3,342 | 2 min (dense: 4.3) |
+| 17,564 | 35,128 | 1.6 GB | 44 GB | 725, 1,128 | 3,350 | 5.8 min |
+| 71,046 | 142,092 | 10.8 GB | 727 GB | 725, 1,132 | 3,355 | 22 min |
+
+The ranks stop, and so do the evaluations: the stiffness that sets the
+pair's step is no longer what a run pays for. The last run is 35 GB at its
+peak: 3 minutes of kernel, 5.5 of the coupling's two sweeps, and 13 of
+fourteen factorizations and the stepping. With the reach's mollification
+held at 0.32 km the mean afterslip at $100\,\tau$ is 0.2080 and 0.2095 of
+the slip at 17,564 and 71,046 elements; the study's own mesh, at its own
+0.23 km, has 0.2118. As on the slab's face (section 10), the width and not
+the element is what a freed reach's slip is quoted with.
+
+What this does not reach: a slip ON an interface (section 10) has no kernel
+of its own, all of its stiffness is the body's, and it stays on the dense
+reduction; and the body's boundary is dense, some $10^5$ unknowns.
 
 **The design this replaced** steps every boundary unknown. Multiplying by
 $s/(s+\beta)$ is, in time, the variable
@@ -1327,14 +1409,19 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
   the box is the parameter for that part, and it has not been laddered.
   Folding a solved slip's far field into the solve is a rank-few coupling of
   the walls to the fault's mean slip; not built.
-- **A plate that bends costs two meshes** (section 7), and on the dense
-  backend, where a creeping fault must be, the second mesh is small. The
-  compressed backend solves no slip.
+- **A plate that bends costs two meshes** (section 7), and a body with a
+  solved fault is factored densely, where the second mesh is small. The
+  compressed backend solves no slip; a stepped fault's own kernel is
+  compressed (section 6), its body's boundary is not.
 - **Rate and state.** The stepper of section 6 takes any law of the
   traction; a law with a STATE variable, radiation damping and a normal
-  stress that changes are not written. Nor is the size that earthquake
-  nucleation wants: the faults' stiffness is dense, $n^2$ per state, and
-  the body behind it is on the dense backend.
+  stress that changes are not written. The size earthquake nucleation
+  wants is within reach of a P0 fault inside a region (section 6); its
+  number of steps is not measured.
+- **A fault in a region that does not relax completely, in a body that
+  relaxes**, on the compressed kernel: the boundary's part of its relaxed
+  stiffness is left as fitted, and nothing checks it for a mode that grows
+  (section 6). The dense reduction does.
 - **A stepped run's field in the volume** is a readout per state AND time
   (section 6); `mbem sample` refuses one.
 - **A slab is of the mantle's density.** Slip on its face is built
@@ -1399,4 +1486,6 @@ half-space under surface buoyancy) and 1124. Love (1927) A Treatise on the
 Mathematical Theory of Elasticity (the sphere). Barbot, Moore
 & Lambert (2017) Bull. Seismol. Soc. Am. Miyake & Noda (2019) Earth Planets
 Space 71. Mallick, Lambert & Meade (2022) J. Geophys. Res. 127. Loveless &
-Meade (2025) Earth Space Sci.
+Meade (2025) Earth Space Sci. Sommeijer, Shampine & Verwer (1998) J. Comput.
+Appl. Math. 88, 315 (RKC, the stabilized explicit method). Halko, Martinsson
+& Tropp (2011) SIAM Rev. 53, 217 (the randomized range finder).

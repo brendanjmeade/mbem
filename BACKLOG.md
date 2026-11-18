@@ -172,36 +172,54 @@ friction after 5 m it has 0.032 by 0.02 where the linear law has 0.003.
 Both are the fifth and sixth models of the ve site, the stepped one shipped
 as its own history (modes and a table whose rows are the times).
 
-COMPRESSED (2026-11-17). A stepped fault in the whole space with nothing
-dense (`la.faultkernel.FaultKernel`, `stepper.KernelBody`; `verify_stepper`
-[h], `verify_config` [o]): the fault's own traction kernel as two flat-H
-matrices that serve every material, so a stage of the integrator is two
-products whatever the number of states. 31,042 elements: 5.9 GB against 139
-dense (and eleven dense states of 31 GB), built in 70 s by a pool of
-processes, a Maxwell penny under friction stepped to 10 tau in 19 minutes.
-124,462 elements: 32 GB against 2,231, built in 6 minutes; its stepped run
-was stopped, three to four hours by extrapolation at the explicit step
-count (the next item).
+COMPRESSED (2026-11-17). A stepped fault with nothing dense of its own
+(`la.faultkernel.FaultKernel`, `la.coupling.Coupling`, `stepper.KernelBody`,
+`mbem.rkc`; `verify_stepper` [h]-[j], `verify_config` [o]). Three pieces.
+The fault's own traction kernel as two flat-H matrices that serve every
+material, so a stage is two products whatever the number of states. A
+STABILISED integrator (Runge-Kutta-Chebyshev), because a fine fault is
+stiff: a Maxwell penny under friction to 10 tau takes 2,623 evaluations at
+31,042 elements where the embedded pair took 18,692 (3.8 minutes for 19),
+and 3,621 at 124,462 (22 minutes, where the pair was stopped at three to
+four hours by extrapolation). And for a fault in a BODY, what the boundary
+returns of a slip as a product through the boundary, in a rank its own
+mesh sets: 1,193 and 1,764 at 1e-6 under 17,778 boundary unknowns, the same
+at 4,260 and at 68,024 slip unknowns. The megathrust's creeping reach under
+friction, fourteen states to 100 tau, is the stored dense run on its own
+mesh (the surface to 7e-6, mean afterslip to four figures) and then 35,128
+slip unknowns in 6 minutes and 142,092 in 22 (35 GB; 727 GB a state
+dense), with 3,342 to 3,355 evaluations of the law at every size.
 
 OPEN, in the order they bite:
 
-* **The explicit integrator is the limit of a fine fault.** Its step is
-  bounded by the fault's own fastest rate, stiffness over viscosity, which
-  grows as the elements shrink: 4,304 evaluations of the law at 1,959
-  elements and 18,692 at 31,042. A stabilized explicit method (stages as
-  the square root of that ratio) or an implicit one on the compressed
-  product; not built.
-* **A large fault in a BODY.** Its reduced stiffness is the kernel above
-  plus the boundary's correction, 4-10 % of it and not of low rank (136-193
-  of 992 on the megathrust's reach, which touches the plate's base). Formed,
-  it is a solve per slip unknown and n^2 per state. Applied instead, a
-  back-substitution per state per stage with the body's factors kept, it
-  needs the fault-to-boundary and boundary-to-fault blocks compressed too
-  (the traction kernels are in no compressed backend yet). Not built.
+* **The body's boundary is dense.** The faults are no longer the limit of
+  a stepped run; the boundary they sit in is, assembled and factored at
+  every state (some 1e5 unknowns here). A state needs a solve per column of
+  the coupling's basis, some 700 to 1,200 of them, so an iterative solve
+  on the compressed backend is not the way; a fast direct solver for the
+  boundary is. Not built.
+* **A slip ON an interface is all the body's.** The megathrust under a
+  slab runs down the slab's face (rule 21): no kernel of its own, a
+  stiffness of full rank through the boundary, and so the dense reduction,
+  one solve per slip unknown. The models of the ve site that have a slab
+  are these.
+* **A region that does not relax completely.** On the compressed kernel the
+  boundary's part of a relaxed stiffness is corrected only where the
+  faults' region becomes a fluid (the megathrust's substrate). Elsewhere it
+  is left as fitted and the run warns: a fault in an elastic plate over a
+  relaxing substrate is not gated there. The dense `Body` corrects any.
+* **The coupling's two sweeps** evaluate every fault-to-boundary block
+  twice, 5.5 minutes of the 22 at 71,046 elements. One sweep with the
+  blocks kept would halve it where they fit; a compressed block would do
+  better. And the range finder's 2,048 vectors are more than the 1,132 it
+  keeps there.
 * **The far blocks are held to 1e-4 of THEMSELVES**, and they fall as the
   cube of distance: against the operator's norm most are far below that
   (rank 0-2 where the build keeps 26). A tolerance on the operator would
   shrink the far field several times; unmeasured beyond that count.
+* **Rate and state.** The size nucleation wants is now within reach of a
+  P0 fault inside a region; a state variable, radiation damping and the
+  number of steps a cycle takes under the stabilised method are not.
 
 * **A window knows only what its reference solves.** The walls carry the far
   field of PRESCRIBED slip in a plate over a half-space. A solved slip (the

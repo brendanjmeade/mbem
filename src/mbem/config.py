@@ -239,12 +239,22 @@ class Stepper:
 
     A fault takes its law here or in ``laplace.faults``, never both: there
     the law must be linear and the run is the Laplace route's.
+
+    ``method`` is the integrator (``stepper.march``): left ``None`` it is the
+    one that suits the body the run builds. ``boundary_tol`` and
+    ``boundary_rank`` are of a fault in a body on its compressed kernel
+    (``backend=hmat``): where the boundary's part of its stiffness is cut,
+    and the random vectors the search for it starts with
+    (``la.coupling.Coupling``).
     """
     faults: Mapping[str, Any]
     t: tuple[float, ...]
     events: tuple[float, ...] = (0.0,)
     rtol: float | None = None
     atol: float | None = None
+    method: str | None = None
+    boundary_tol: float | None = None
+    boundary_rank: int | None = None
 
 
 @dataclass(frozen=True)

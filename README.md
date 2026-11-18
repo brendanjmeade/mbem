@@ -410,8 +410,8 @@ model are one.  A solved fault is on the dense backend, so these runs are
 linearized, or a shear zone that flows as a power of its stress, has no
 Laplace state.  The body is still linear, so each state is reduced to the
 fault (`traction = S slip + L`), the body's relaxation is carried as the
-fit's own exponentials, and the fault alone is integrated in time by an
-adaptive Runge-Kutta pair (`mbem.stepper`, `--set route=step`).  It is held
+fit's own exponentials, and the fault alone is integrated in time
+(`mbem.stepper`, `--set route=step`).  It is held
 to closed forms in time on a penny crack whose faces' mobility is graded so
 that its slip stays Eshelby's under ANY law: a linear law, an exponential
 one (logarithmic afterslip), and both again in a Maxwell body, each within
@@ -439,6 +439,32 @@ does, and the law decides how much of it the reach spends first.  A run
 costs what the linear one costs plus two minutes.  No state variable yet:
 this is steady-state friction, not rate and state, and a stepped run's
 result is every boundary unknown through time (`history.npz`), not a volume.
+
+**A fine fault in time.**  That reduction makes the fault's stiffness dense,
+one solve per slip unknown.  A piecewise-constant fault inside a region
+needs neither (`--set backend=hmat` in a stepped run): its own traction
+kernel is stored compressed, as two matrices that serve every Laplace
+state, and what the boundary of its body adds is a product through the
+boundary, of a rank the BOUNDARY's mesh sets and not the fault's (about
+1,200 under the 17,778 boundary unknowns of the gate's box, at 4,260 slip
+unknowns and at 68,024).  A fine fault is also stiff, so it is stepped by a
+stabilised explicit method (Runge-Kutta-Chebyshev, `mbem.rkc`) whose
+evaluations grow as the square root of an embedded pair's, or not at all.
+The megathrust's creeping reach above, refined under the same box:
+
+```
+    ... --set backend=hmat --set lower=creep --set route=step \
+    --set creep_law=friction --set eps_lower=0.3225 --sweep edge_lower=1.25,0.625
+```
+
+35,128 slip unknowns in 6 minutes and 142,092 in 22 (35 GB; the dense
+stiffness would be 727 GB a state), with as many evaluations of the law as
+the 2,164 of the study's own mesh, where the run reproduces the dense one.
+In the whole space (`configs/penny.py --set order=0 --set backend=hmat
+--set law=friction --set maxwell=1 --set a_over_h=128`) 124,462 elements
+step to ten relaxation times in 22 minutes.  The body's own boundary is
+still dense, and a slip on an interface (the slab's face, below) has no
+kernel of its own and stays on the dense reduction.
 
 
 **A slab.**  Layers are what that reference knows; a boundary method is for

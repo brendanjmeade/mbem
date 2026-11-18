@@ -108,6 +108,20 @@ large the earthquake was, so ``slip`` (m) matters here and nowhere else:
         --set backend=dense --set lower=creep --set route=step \
         --sweep creep_law=viscous,friction                     # ... stepped
 
+With ``backend=hmat`` a stepped reach is on its own COMPRESSED kernel and
+the boundary's part of its stiffness in low rank (``stepper.KernelBody``),
+so it may be far finer than the box around it: ``edge_lower`` (km) is its
+element, the rupture's by default, and ``eps_lower`` (km) its mollification
+width, which is what its slip is quoted with and so is HELD while the
+element shrinks (left 0 it follows the element). The reach in the
+substrate only: down a slab's face it is a part of the interface, which has
+no kernel of its own.
+
+    python -m mbem run configs/plate_substrate.py \
+        ...                                    (the stepped run above) \
+        --set backend=hmat --set creep_law=friction --set eps_lower=0.3225 \
+        --sweep edge_lower=1.25,0.625          # 35,128 and 142,092 unknowns
+
 ``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
 footwall plate continues down the dip as an elastic slab to that depth, in
 the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
@@ -162,7 +176,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              route: str = "laplace", creep_law: str = "viscous",
              creep_stress: float = 1.0e-3, creep_n: float = 3.0,
              slip: float = 1.0, times_per_decade: int = 8,
-             edge_lower: float = 0.0) -> Run:
+             edge_lower: float = 0.0, eps_lower: float = 0.0) -> Run:
     if route not in ("laplace", "step"):
         raise ValueError(f"route {route!r}: 'laplace' or 'step'")
     if creep_law not in ("viscous", "power", "friction"):
@@ -188,7 +202,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     if depth > thickness:
         # the fault goes on in the substrate, with a fault's own width; or
         # down a slab's face, which is the substrate's boundary and has its
-        eps["fault_lower"] = eps_substrate if slab_depth > 0.0 else "auto"
+        eps["fault_lower"] = (eps_substrate if slab_depth > 0.0
+                              else eps_lower or "auto")
     law = rheology.ViscousFault(tau=creep_tau, width=creep_width)
     if creep_law == "power":
         law = rheology.PowerLawFault(tau=creep_tau, width=creep_width,

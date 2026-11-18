@@ -21,7 +21,7 @@ is the bug.
 | `src/mbem/` | **The trunk.** Region-graph model, P0/P1/P2 nodal patches and faults (slip prescribed, or solved from a traction condition: `BCType.FAULT_TRACTION`), the continuous P2 shared-node fault layout (`model/shared_nodes.py`), dense and block-compressed backends (`far="aca"` flat H + ACA, `far="fmm"` Chebyshev bbFMM), preconditioned FGMRES, elastic-stress readout with the exact eigenstress removed. New solver or kernel work goes here. |
 | `src/mbem/cases/` | The reference models the gates and the studies share: `fault_box`, `inclusion`, `topo_inclusion`, `penny` (the penny-shaped crack, Eshelby and Sneddon: the traction-BC fault's anchor), `layered_box` (an elastic plate over a substrate with a fault from the surface -- vertical strike-slip in the plate unless `dip` and `rake` say otherwise, and THROUGH the interface if `fault_depth` exceeds the plate, its lower reach a second fault, `fault_lower`, in the substrate -- and what it is compared with: the antiplane closed forms, and for dip slip `dip_slip_profile`, a plane-strain reference under gravity that shares nothing with the boundary elements; plus `two_mesh_limit`, what a plate that bends needs; `sides="window"` makes every wall of the box carry the far field of the prescribed slip, `lower="creep"` makes the megathrust's lower reach a solved fault that creeps, `slab_depth` lets the plate subduct as an elastic slab the interface wraps, and a fault deeper than the plate then runs down the slab's upper face: `fault_lower` is there a part of the interface that SLIPS, rule 21). `layered_space` is the same layer system in THREE dimensions, for a finite rectangular fault at the surface and at depth: the reference a finite rupture is compared with, and what a window's walls are made of. `fault_box` takes `walls="window"` too. Library code, because the gates and the studies both build from them. |
 | `src/mbem/rheology.py`, `src/mbem/laplace.py` | **Linear viscoelasticity, the Laplace route.** `rheology`: `Maxwell`, `Burgers` as operational shear moduli, stated in relaxation TIMES and modulus ratios (never viscosities), bulk modulus elastic; the states of a Laplace run; the one-eps rule. `laplace`: the collocation points for a window of times, and `Prony`, the fixed-pole fit that turns the stack of per-s elastic solutions into value, rate, periodic-cycle sums and the velocity of a fault locked between repeating earthquakes, each as one linear map. No kernel work: an operator at any s is the elastic one at `(mu(s), lam(s))`. Also `rheology.ViscousFault`: a solved fault that resists its slip rate is, at each s, a fault with a stiffness (`Laplace.faults`, `State.drag`), so afterslip needs no time-stepper either. `PowerLawFault` and `RateStrengtheningFault` are not linear: they have a `rate` and no `drag`, and a fault with one is stepped (rule 20). |
-| `src/mbem/stepper.py` | **A solved fault through time, under a law that need not be linear** (rule 20). The body is linear, so each state is REDUCED TO THE FAULT (`AssembledDense.condense`: traction = `S slip + L`), the body's relaxation is carried as the Laplace fit's own exponentials (`Prony.coefficients`), and the faults alone are integrated (`march`, `scipy`'s `RK45`). `Body` holds the states and makes the fit's relaxed limit passive; `law_rate` turns `rheology` laws into a rate. `Run.stepper` is how a run asks for it; the result is `history.npz`. The Laplace route is untouched: its states are this one's precompute. A fault in the WHOLE SPACE needs no reduction and nothing dense: `KernelBody` steps on `la/faultkernel.py`'s `FaultKernel`, the fault's own traction kernel as two flat-H matrices that serve every material (`backend=hmat` in a stepped run; P0 faults). |
+| `src/mbem/stepper.py` | **A solved fault through time, under a law that need not be linear** (rule 20). The body is linear, so each state is REDUCED TO THE FAULT (`AssembledDense.condense`: traction = `S slip + L`), the body's relaxation is carried as the Laplace fit's own exponentials (`Prony.coefficients`), and the faults alone are integrated (`march`, `scipy`'s `RK45`). `Body` holds the states and makes the fit's relaxed limit passive; `law_rate` turns `rheology` laws into a rate. `Run.stepper` is how a run asks for it; the result is `history.npz`. The Laplace route is untouched: its states are this one's precompute. P0 faults INSIDE a region need no such reduction (`backend=hmat` in a stepped run): `KernelBody` steps on `la/faultkernel.py`'s `FaultKernel`, the faults' own traction kernel as two flat-H matrices that serve every material, plus, in a body with a boundary, what the boundary returns of a slip in low rank (`la/coupling.py`'s `Coupling`: `P M_k W'`, of the rank the BOUNDARY's mesh gives it), the body's boundary still factored densely. `rkc.py` is the integrator a fine fault wants: stabilised explicit Runge-Kutta-Chebyshev, the square root of an embedded pair's steps, and what a `KernelBody` is stepped with. |
 | `src/mollified_kernel/`, `src/moss_kernel/` | **Two frozen, INDEPENDENT copies** of the analytic mollified kernels. The difference is the point: the gates compare them entrywise, so neither may be "fixed" to agree with the other. `moss_kernel` alone defines `analytical_eigenstress_kernel` and `eigenstress_batch`. |
 | `src/clq/` | **Frozen oracle.** Closed-form mollified kernels on one triangle for P0/P1/P2 nodal density, numpy. Separate derivation, so it is the parity reference that is genuinely independent. No development. |
 | `src/mollified_bem.py` and friends | Frozen legacy oracles, kept as top-level modules: `ElasticMaterial` and `TriMesh` are defined in `mollified_bem.py` and re-exported from `mbem`, plus `anelastic`, `tde_reference`, `local_box_mesh*`, `inclusion_mesh`. |
@@ -34,7 +34,7 @@ is the bug.
 | `studies/` | `bench_scaling.py`, the performance harness to run before and after touching assembly, compression or evaluation — it keeps its own provenance helpers deliberately, so its committed `bench-json:` baselines stay comparable. Plus `demo_triangle_quickstart.py`, which prints numbers and draws nothing. `studies/clq/` holds the clq oracle's own demos. |
 | `website/` | Astro static site (`npm run dev` / `npm run build` inside `website/`). `.github/workflows/deploy-website.yml` deploys it to GitHub Pages on every push to `main` that touches `website/**`, so pushing there publishes it. Nothing is computed in the browser: `public/data/` is a quantised readout of one stored run, made by `mbem sample <study-dir> --difference` and then `website/scripts/make_payload.py`. The encoder is `mbem.webexport`, kept in the package so that `verify_volume` [g] gates it. Fields are log10 uint8 and never float textures; `website/README.md` explains why. A SIBLING site, <https://brendanjmeade.github.io/ve/>, shows the Laplace runs through time; its source is its own repo (`brendanjmeade/ve`), and only its numerics are here: the second half of `mbem.webexport` (`encode_modes`, `time_weights`, `time_tables`, `node_sheet`), gated by `verify_volume` [i]. Time is a map whose weights sum to ~200, so a state is never quantised and combined in a page: a stack is shipped as orthonormal modes with the weights already applied. |
 | `docs/` | `figures/` (the curated, tracked PNG gallery), `clq.md`, `clq-derivation.md`, `clq-rules.md`. |
-| `docs/viscoelastic.md` | The derivation viscoelasticity rests on. With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; a solved fault stepped in time under a law that is not linear (section 6: the reduction to the fault, the closed forms it is held to, what it costs, and the boundary-memory design it replaced); why a region that relaxes needs ONE scalar eps; gravity as a condition on the boundary (section 7), the sphere it is gated against, and under it the thrust in the plate, the two-mesh limit that cancels what P0 costs a plate that bends, the earthquake cycle of a locked fault, and a megathrust through the interface; the walls of a box as a window, and the reference in three dimensions (section 8); a fault that creeps (section 9); a plate that subducts (section 10); and what is open (section 11: what a window's walls do not know, the time-stepper, slip on an interface, gravity's coupling with compression). |
+| `docs/viscoelastic.md` | The derivation viscoelasticity rests on. With elastic bulk and viscoelastic shear, every operator of a region is geometry times `{1, g} x {1, mu, 1/mu}`, `g = 1/(1-nu)`, which holds only for the eigenstress-removed stress (rule 4). The Laplace route built on it and its closed-form anchors; a solved fault stepped in time under a law that is not linear (section 6: the reduction to the fault, the closed forms it is held to, what it costs, the fault's own kernel compressed and a boundary's part of it in low rank, the stabilised integrator, and the boundary-memory design it replaced); why a region that relaxes needs ONE scalar eps; gravity as a condition on the boundary (section 7), the sphere it is gated against, and under it the thrust in the plate, the two-mesh limit that cancels what P0 costs a plate that bends, the earthquake cycle of a locked fault, and a megathrust through the interface; the walls of a box as a window, and the reference in three dimensions (section 8); a fault that creeps (section 9); a plate that subducts (section 10); and what is open (section 11: what a window's walls do not know, the time-stepper, slip on an interface, gravity's coupling with compression). |
 | `docs/ddbem-findings.md` | Two CLOSED lines of investigation, kept because the live code rests on them: the free-term row-sum identity the calibrated diagonal implements, where to collocate P1/P2, and the measured "eps, not h, sets the error". |
 | `docs/fbem-findings.md` | Why the force-element BEM was dropped (it stalls on free-traction rows, and higher order widens the gap). Do not rebuild it without reading this. |
 
@@ -75,6 +75,10 @@ python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set d
 python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 --set rho_substrate=3300 \
     --set edge_near=15 --set edge_interface=22.5 --set eps_substrate=2.25 --set near_field_radius=120 --set sides=window --set half_x=300 --set depth_box=200 \
     --set fault_half_len=100 --set t_max=100 --set backend=dense --set lower=creep --set route=step --sweep creep_law=viscous,friction,power   # ... STEPPED IN TIME, under laws that are not linear
+python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=45 --set rho_plate=2700 --set rho_substrate=3300 \
+    --set edge_near=15 --set edge_interface=22.5 --set eps_substrate=2.25 --set near_field_radius=120 --set sides=window --set half_x=300 --set depth_box=200 \
+    --set fault_half_len=100 --set t_max=100 --set backend=hmat --set lower=creep --set route=step --set creep_law=friction \
+    --set eps_lower=0.3225 --sweep edge_lower=1.25,0.625   # ... the reach REFINED under the same box, on its compressed kernel: 35,128 and 142,092 slip unknowns
 python -m mbem run configs/plate_substrate.py --set dip=20 --set rake=90 --set depth=30 --set rho_plate=3300 --set rho_substrate=3300 \
     --set edge_near=10 --set near_field_radius=150 --set sides=window --set half_x=500 --set depth_box=300 --set fault_half_len=100 --set t_max=100 --sweep slab_depth=0,150   # ... the plate subducting: a slab
 python -m mbem run configs/fault_box.py --set walls=window     # the elastic box on a half-space
@@ -300,8 +304,9 @@ gates FAIL rather than skip without them.
     less its prescribed change), and in time `S` is the Laplace fit's own
     exponentials, one decaying vector per pole: the Laplace route's states
     are the stepper's precompute, and a run costs what the linear one
-    costs. Dense backend only, every solved fault given a law, and a law in
-    `stepper.faults` or `laplace.faults`, never both. Three things it rests
+    costs. That reduction is the dense backend's (the compressed kernel
+    below is the other way to a body); every solved fault is given a law,
+    and a law is in `stepper.faults` or `laplace.faults`, never both. Three things it rests
     on. **The fit's relaxed limit is made passive** (`Body`): as fitted it
     misses by 1e-3 with the wrong sign where a fault sits in a region that
     relaxes completely, and modes GROW by 2-5 % over the window. **The
@@ -313,19 +318,39 @@ gates FAIL rather than skip without them.
     slip. A law is a `rate` for a traction in the fault's row frame, with no
     state variable yet; its result is `history.npz`, every slot at every
     time, and no state to `mbem sample`.
-    **A fault in the whole space steps with nothing dense**
+    **P0 faults inside a region step on their own compressed kernel**
     (`stepper.KernelBody`, `la.faultkernel.FaultKernel`; `backend=hmat`):
-    its own traction kernel is `mu` times a function affine in `g`, so two
-    compressed matrices at the ends of the run's range of `g` are every
-    state, and a stage is two products whatever the number of states. The
-    relaxed limit is then two numbers, corrected in `H_lo` and `H_hi -
-    H_lo` and NOT weight by weight (the two fitted limits all but cancel).
-    Its far blocks are built by SPAWNED processes, the traction kernel
-    being a parallel numba function (rule 9): a script that starts a build
-    keeps its work under `if __name__ == "__main__"`. Explicit steps grow
-    with the fault's resolution (4.3 times the evaluations for four times
-    the elements a radius): past 1e5 elements the integrator, not the
-    product, is the limit. A fault in a BODY is still reduced densely.
+    the kernel is `mu` times a function affine in `g`, so two compressed
+    matrices at the ends of the run's range of `g` are every state, and a
+    stage is two products whatever the number of states. Its far blocks
+    are built by SPAWNED processes, the traction kernel being a parallel
+    numba function (rule 9): a script that starts a build keeps its work
+    under `if __name__ == "__main__"`. **In a body with a boundary** the
+    faults' stiffness has a second part, what the boundary returns of a
+    slip, `-A_fb A_bb^-1 A_bf`. As a matrix on the fault it is not low
+    rank; as a product THROUGH the boundary it is, at a rank set by the
+    boundary's mesh and not the fault's (`la.coupling.Coupling`: 1,193 and
+    1,764 at 1e-6 under 17,778 boundary unknowns, the same at 4,260 and at
+    68,024 slip unknowns), so a state is the body's dense factorization
+    and one solve per column of a basis, not per slip unknown. The body's
+    boundary stays dense; the fault stops being the limit (71,046 elements
+    on a megathrust's reach: 22 minutes, 35 GB). Not for a slip ON an
+    interface (rule 21), whose stiffness is all the body's. **Two things
+    about the fit's relaxed limit there.** The kernel's is two numbers,
+    corrected in `H_lo` and `H_hi - H_lo` and NOT weight by weight (the
+    two fitted limits all but cancel). And where the faults' region has
+    relaxed to a FLUID within the fit's error the whole limit is moved to
+    the slowest pole, kernel and boundary alike, because a fluid carries
+    no shear; where it has not, the boundary's part is left as fitted and
+    the run warns that nothing checks it.
+    **A fine fault is stiff, and `mbem.rkc` is its integrator.** An
+    embedded pair's step is bounded by the fault's shortest wavelength
+    (4.3 times the evaluations for four times the elements a radius), a
+    Chebyshev method's stages buy stability instead of order, and the
+    count then grows as the square root or not at all (3,342 and 3,355
+    evaluations at 2,164 and 142,092 slip unknowns of the megathrust's
+    reach). `march` gives a `KernelBody` RKC and a dense `Body` the pair,
+    which is as good or better on a small fault; the report says which.
 21. **Slip between two regions is slip ON AN INTERFACE, not a fault**
     (`Patch.slip` on an INTERFACE patch, `"prescribed"` or `"solved"`;
     `model/equations.py`; `verify_interface_slip`). The traction stays one

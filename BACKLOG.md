@@ -190,19 +190,73 @@ mesh (the surface to 7e-6, mean afterslip to four figures) and then 35,128
 slip unknowns in 6 minutes and 142,092 in 22 (35 GB; 727 GB a state
 dense), with 3,342 to 3,355 evaluations of the law at every size.
 
+IN BLOCKS (2026-11-18). The body a stepped fault sits in, factored without
+a dense matrix (`la.blr`, `Stepper.factor`; `verify_hbackend`,
+`verify_stepper` [j]): the compressed backend's operator read off as
+blocks on clusters that hold every slot of their patch, block low-rank LU
+with pivoting inside a diagonal block, left-looking so that a far block is
+compressed once from a sketch of all its updates, many right-hand sides a
+solve. On the megathrust's body at its softest a solve is 2e-6 to 4e-6
+off dense LU at a tolerance of 1e-6 (17,778 and 62,472 unknowns; 9.6 GB
+of factors for 31), stable at every state with no pivoting between
+blocks; stepped, the 17,564-element reach is the run with dense factors
+to 7e-7 in its slip under 16,092 boundary unknowns and to 3e-5 under
+44,085. Truncation is per block: against the matrix's norm a smooth
+density loses its far field.
+
 OPEN, in the order they bite:
 
-* **The body's boundary is dense.** The faults are no longer the limit of
-  a stepped run; the boundary they sit in is, assembled and factored at
-  every state (some 1e5 unknowns here). A state needs a solve per column of
-  the coupling's basis, some 700 to 1,200 of them, so an iterative solve
-  on the compressed backend is not the way; a fast direct solver for the
-  boundary is. Not built.
+* **The box's faces set the afterslip, and the ladder has two rungs.**
+  The 17,564-element reach under friction, the plate's two faces and the
+  substrate's width halved (`refine=2`: 44,085 boundary unknowns for
+  16,092): mean afterslip 0.058 of the slip at 0.3 tau for 0.042, and
+  0.235 at 100 tau for 0.208, the same under dense factors and under
+  blocks (3e-5 in the slip). Every afterslip number above is at the
+  coarser box. A third rung (`refine=3`, some 1e5 boundary unknowns, the
+  blocks' size) says whether it converges; the two-mesh limit of a plate
+  that bends is the precedent, and second-order faces the other remedy.
+* **The blocks cost N^2, and in numpy.** `la.blr` is flat: every pair of
+  far clusters is a block, so the work is p^2 blocks of N/p. Measured, a
+  state: 70 s of factoring after 55 s of reading the blocks off the
+  operator at 62,472 unknowns (dense LU: 120 s), and at 44,085 with 1,939
+  right-hand sides 108 s against 69 dense. It pays above some 60,000
+  unknowns and is hours a state at a few 1e5. The same factorization on
+  the operator's own hierarchy is N log^2 N; and the reading, a Python
+  loop over the operator's blocks, is half the time at these sizes.
+* **The coupling's sweeps grow with BOTH meshes** (fault elements times
+  boundary unknowns, twice): 590 s of the 44,085-unknown run, where its
+  ranks are 1,939 and 2,757 and the first 2,048 vectors did not hold it.
+  The fault-to-boundary blocks are kernel blocks and compress.
 * **A slip ON an interface is all the body's.** The megathrust under a
   slab runs down the slab's face (rule 21): no kernel of its own, a
   stiffness of full rank through the boundary, and so the dense reduction,
   one solve per slip unknown. The models of the ve site that have a slab
-  are these.
+  are these. MEASURED, not built: that stiffness is the Schur complement a
+  block factorization of the body leaves when the slip's own rows are put
+  last (`BlockLU.factor(stop)`, `schur`): 1e-6 against `condense` at a
+  tolerance of 1e-6 on the gate's slab with its reach at 5 and 2.5 km
+  (1,180 and 4,820 slip unknowns, the width at or under the element), far
+  blocks of rank 83-139 in 300; 2e-4 with the width over the element (3 km
+  on 2.5), where the body's condition estimate is ten times higher. What
+  the stepper then needs is a body whose states are block operators and a
+  relaxed limit made passive without their eigenvalues.
+* **A reduced stepper.** MEASURED, not built. A stepped afterslip history
+  lives on a few slip patterns: 4 modes hold one to 1e-3 and 13 hold seven
+  earthquakes from 1 cm to 10 m to 1e-4 (the gate's reach, 992 unknowns).
+  Projecting the fault's equations on modes taken from OTHER runs, the law
+  still evaluated at every node, reproduces a run never made: 20 modes
+  from the two end sizes give every size between to 8e-5 to 2.5e-3 in the
+  history and 7e-4 in mean afterslip. On 17,220 slip unknowns (compressed
+  kernel) a reduced run is 2 to 5 s for 48 to 69 s, after 4 to 13 s for
+  the reduced operator (a product per mode and pole); as many evaluations
+  as the full run, each without a kernel product. Interpolating the modes'
+  coefficients over the parameter instead (the emulator of Magen, May &
+  Gabriel 2026, Geophys. J. Int. 245) misses the mean afterslip by 0.4 to
+  9 % from six runs half a decade apart: the law's non-linearity is what
+  it has to interpolate. For many runs of one body under changing laws
+  (an inversion) the projection is the tool; a law with a state variable
+  and fronts that move is where the emulator's cycle-by-cycle compression
+  would be needed instead.
 * **A region that does not relax completely.** On the compressed kernel the
   boundary's part of a relaxed stiffness is corrected only where the
   faults' region becomes a fluid (the megathrust's substrate). Elsewhere it

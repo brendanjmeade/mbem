@@ -462,9 +462,15 @@ stiffness would be 727 GB a state), with as many evaluations of the law as
 the 2,164 of the study's own mesh, where the run reproduces the dense one.
 In the whole space (`configs/penny.py --set order=0 --set backend=hmat
 --set law=friction --set maxwell=1 --set a_over_h=128`) 124,462 elements
-step to ten relaxation times in 22 minutes.  The body's own boundary is
-still dense, and a slip on an interface (the slab's face, below) has no
-kernel of its own and stays on the dense reduction.
+step to ten relaxation times in 22 minutes.  The body itself is factored at
+every state: densely, or (`--set factor=blocks`) as the compressed operator
+in block low-rank LU (`mbem.la.blr`), which is what a finer box takes.  And
+the box matters: with the plate's two faces at half their elements and the
+substrate's width halved (`--set refine=2`, 44,085 boundary unknowns for
+16,092) the reach's mean afterslip is 0.235 of the slip at 100 relaxation
+times where the box above gives 0.208, under either factorization.  A slip
+on an interface (the slab's face, below) has no kernel of its own and stays
+on the dense reduction.
 
 
 **A slab.**  Layers are what that reference knows; a boundary method is for

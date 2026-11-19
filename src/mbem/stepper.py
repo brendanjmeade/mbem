@@ -50,6 +50,7 @@ compressed, and what a boundary adds to it in low rank.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -453,7 +454,8 @@ class KernelBody:
     @classmethod
     def from_model(cls, model, eps, materials, s=None, tol: float = None,
                    passive: bool = True, log=None, coupling_tol: float = None,
-                   rank: int = None):
+                   rank: int = None, factor: str = None,
+                   factor_tol: float = None):
         """Build one for ``model``: the FAULT_TRACTION faults of ONE region,
         P0, and whatever boundary the model has.
 
@@ -463,11 +465,14 @@ class KernelBody:
         other datum of the model, load the solved ones state by state.
 
         With no boundary nothing but the kernel is built. With one, the
-        body WITHOUT the solved faults is assembled and factored densely at
-        every state, as ``AssembledDense.condense`` factors it, and solved
+        body WITHOUT the solved faults is factored at every state and solved
         for one right-hand side per column of the coupling's slip basis
         (``la.coupling.Coupling``; ``coupling_tol``, ``rank``) where
-        ``condense`` solves one per slip unknown.
+        ``condense`` solves one per slip unknown. ``factor`` says how:
+        ``"dense"``, as ``AssembledDense.condense`` factors it, or
+        ``"blocks"``, the compressed operator in block low-rank LU
+        (``la.blr``) at ``factor_tol``; by default dense up to
+        ``defaults.STEPPER_DENSE_BOUNDARY`` unknowns.
         """
         from types import SimpleNamespace
 
@@ -505,7 +510,7 @@ class KernelBody:
             return cls(kernel, coords, pairs, loads, s=s, passive=passive)
         boundary, loads = cls._boundary(model, eps, states, pairs, coords,
                                         (min(g), max(g)), coupling_tol, rank,
-                                        log)
+                                        log, factor, factor_tol)
         return cls(kernel, coords, pairs, loads, s=s, passive=passive,
                    boundary=boundary)
 
@@ -545,12 +550,10 @@ class KernelBody:
         return loads
 
     @staticmethod
-    def _boundary(model, eps, states, pairs, coords, g_range, tol, rank, log):
+    def _boundary(model, eps, states, pairs, coords, g_range, tol, rank, log,
+                  factor=None, factor_tol=None):
         """``(Boundary, loads)``: the body without its solved faults, state
         by state, through the coupling's two bases."""
-        from scipy.linalg import lu_factor, lu_solve
-
-        from .backends.dense import AssembledDense
         from .la.coupling import Coupling
         from .model import generate_system
         from .model.equations import rhs_terms_at
@@ -560,26 +563,71 @@ class KernelBody:
         cp = Coupling(system, body.layout, coords, eps, g_range, pairs[0][0],
                       [rhs_terms_at(system, st) for st in states], tol=tol,
                       rank=rank, log=log)
-        asm = AssembledDense(body, eps, "direct")
         K, N = len(states), body.layout.n_unknowns
+        if factor is None:
+            factor = ("dense" if N <= defaults.STEPPER_DENSE_BOUNDARY
+                      else "blocks")
         M = np.empty((K, cp.P.shape[1], cp.W.shape[1]))
         Z = np.empty((K, N, cp.W.shape[1]))
         x0 = np.empty((K, N))
         loads = np.empty((K, cp.n))
-        for k, st in enumerate(states):
-            op = asm.rebuild_for_materials(dict(st))
-            lu = lu_factor(op.A, overwrite_a=True, check_finite=False)
+        t0, nbytes = time.time(), 0
+        for k, (b, solve, held_bytes) in enumerate(
+                _factored(body, eps, states, factor, factor_tol)):
             B, E, held = cp.state(*pairs[k], k)
-            Z[k] = lu_solve(lu, B, check_finite=False)
-            x0[k] = lu_solve(lu, op.b, check_finite=False)
+            Z[k] = solve(B)
+            x0[k] = solve(b)
             M[k] = -E @ Z[k]
             loads[k] = -held + cp.P @ (E @ x0[k])
-            op.A = None
+            nbytes = max(nbytes, held_bytes)
             if log is not None:
-                log(f"state {k + 1} of {K}: the body factored and solved "
-                    f"for {cp.W.shape[1]} slips")
+                log(f"state {k + 1} of {K}: the body factored ({factor}) and "
+                    f"solved for {cp.W.shape[1]} slips")
+        report = dict(cp.report, factor=factor, factor_s=time.time() - t0,
+                      factor_bytes=int(nbytes))
         return Boundary(P=cp.P, W=cp.W, M=M, Z=Z, x0=x0, layout=body.layout,
-                        report=cp.report), loads
+                        report=report), loads
+
+
+def _factored(body, eps, states, how: str, tol):
+    """A body's states one after another, each as ``(b, solve, bytes)``: its
+    right-hand side, ``B -> A^-1 B`` for as many columns as are given, and
+    what the factors hold. ``how="dense"`` is LU of the dense operator, what
+    ``AssembledDense.condense`` factors; ``"blocks"`` is the compressed
+    operator factored in blocks (``la.blr``), for a boundary a dense matrix
+    does not hold. Each state's factors are dropped when the next is asked
+    for."""
+    if how == "dense":
+        from scipy.linalg import lu_factor, lu_solve
+
+        from .backends.dense import AssembledDense
+
+        asm = AssembledDense(body, eps, "direct")
+        for st in states:
+            op = asm.rebuild_for_materials(dict(st))
+            lu = lu_factor(op.A, overwrite_a=True, check_finite=False)
+            op.A = None
+            yield (op.b,
+                   lambda B, lu=lu: lu_solve(lu, B, check_finite=False),
+                   lu[0].nbytes)
+            del lu
+        return
+    if how != "blocks":
+        raise ValueError(f"a body is factored 'dense' or in 'blocks', not "
+                         f"{how!r}")
+    from .backends.hmat import HBackend
+    from .la import blr
+
+    tol = defaults.BLR_TOL if tol is None else float(tol)
+    asm = HBackend(tol=tol, storage="basis", sweep=True).assemble(body, eps)
+    clusters = None
+    for st in states:
+        op = asm.rebuild_for_materials(dict(st))
+        lu, clusters = blr.from_assembled(op, tol=tol, clusters=clusters)
+        lu.factor()
+        yield (op.b, lambda B, lu=lu, d=clusters.dofs: lu.solve(B, d),
+               lu.nbytes())
+        del lu
 
 
 def law_rate(body: Body, laws, mu):

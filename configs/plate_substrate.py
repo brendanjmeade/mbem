@@ -11,6 +11,8 @@ A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
     python -m mbem run configs/plate_substrate.py \
         --set tau_K=0.1 --set t_min=0.02 --sweep half_x=400,800   # Burgers
     python -m mbem run configs/plate_substrate.py \
+        --set t_max=100 --sweep andrade_alpha=0.3333,0            # Andrade
+    python -m mbem run configs/plate_substrate.py \
         --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
         --set edge_near=10 --set t_max=100 \
         --sweep refine=1,2 --sweep gravity=0,1                    # a thrust
@@ -49,6 +51,13 @@ keep ``"auto"``.
 the Kelvin spring ``kelvin`` times the unrelaxed modulus; ``tau`` is then its
 steady (Maxwell) time, still 1. Lower ``t_min`` with it: the fit is trusted
 only inside its window, and the transient is over by a few ``tau_K``.
+
+``andrade_alpha > 0`` makes it an Andrade body instead (``rheology.Andrade``):
+transient creep as ``(t / tau_A)^alpha`` on the same steady time, ``tau_A``
+the time at which the transient strain equals the elastic one. It has no
+fastest relaxation, so there is no ``t_min`` to lower for it: the fit is
+given the body's tail instead, by the figures here and by the stepper alike
+(``laplace.run_fit``).
 
 ``rho_plate`` / ``rho_substrate`` (kg/m^3) turn gravity on: buoyancy on the
 free surface and on the interface (docs/viscoelastic.md, section 7). It leaves
@@ -171,7 +180,8 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              thickness: float = 30.0, depth: float = 15.0,
              fault_half_len: float = 0.0, eps_substrate: float = 1.5,
              mu_substrate: float = 30.0, tau_K: float = 0.0,
-             kelvin: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
+             kelvin: float = 1.0, andrade_alpha: float = 0.0,
+             tau_A: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
              per_decade: int = 3, rho_plate: float = 0.0,
              rho_substrate: float = 0.0, gravity: float = 1.0,
              dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
@@ -202,8 +212,13 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     # is first order in, kept in one ratio
     edge_near, edge_interface, eps_substrate = (
         v / refine for v in (edge_near, edge_interface, eps_substrate))
+    if tau_K > 0.0 and andrade_alpha > 0.0:
+        raise ValueError("tau_K is a Burgers substrate and andrade_alpha an "
+                         "Andrade one: give one of them")
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
-                 if tau_K > 0.0 else rheology.Maxwell(tau=1.0))
+                 if tau_K > 0.0 else
+                 rheology.Andrade(tau_M=1.0, tau_A=tau_A, alpha=andrade_alpha)
+                 if andrade_alpha > 0.0 else rheology.Maxwell(tau=1.0))
     eps = dict(top="auto", sides_upper="auto", fault="auto",
                interface=eps_substrate, sides_lower=eps_substrate,
                base=eps_substrate)

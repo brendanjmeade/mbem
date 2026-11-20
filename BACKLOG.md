@@ -87,7 +87,12 @@ DONE. The structure it rests on (every operator of a region is geometry times
 from the model), `mbem.laplace` (collocation points, the fixed-pole fit, rate
 and periodic sums), gated per s and in time against four closed forms. The
 plate-over-substrate case and config, run on a box ladder with a Maxwell and
-with a Burgers substrate. Gravity (`model.Gravity`, rule 17): buoyancy on the
+with a Burgers substrate. `rheology.Andrade` (transient creep as a power of
+time; issue #13): a body with NO FASTEST RELAXATION, which the fixed-pole fit
+as it stood misses by 8-28 % through the window; fitted with the spectrum's
+tail (`Prony(tails=...)`, one term for the fastest pole, no more solves) it
+is at 1e-4 to 7e-3, and the stepper carries a decade of that tail as memory
+(`verify_viscoelastic` [f]-[h], `verify_stepper` [k]). Gravity (`model.Gravity`, rule 17): buoyancy on the
 free surface and on density interfaces as a condition on the boundary, on the
 dense and both compressed backends, gated against loaded shells on a rigid
 core (exact) elastically, per s and in time, and against hydrostatics on a
@@ -286,6 +291,13 @@ OPEN, in the order they bite:
   the finer mesh of the pair; a solved fault is on the dense backend, where
   the finer mesh is ~35,000 unknowns and the plate's faces 10 km. A
   FAULT_TRACTION fault on the compressed backend would lift that.
+* **Further linear rheologies.** Any `shear_ratio(s)` is a rheology
+  (`rheology.KINDS`), and one with a `tail` is fitted with it. Not written:
+  an extended Burgers body (a band of Kelvin elements: a fastest time, so no
+  tail where the window reaches below it, and a power law CUT OFF where it
+  does not); a second tail term at twice the exponent (measured: 1e-4 to
+  4e-4 with two more states, for 1e-4 to 7e-3). The `ve` site's payload
+  script builds its own time maps and must pass a run's tails.
 * **Rate and state.** The stepper takes any law of the traction; a law
   with a STATE variable, radiation damping (a law exponential in traction
   is refused where it starts over a hundred times its scale) and a normal

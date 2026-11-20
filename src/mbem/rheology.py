@@ -75,6 +75,53 @@ class Burgers:
 
 
 @dataclass(frozen=True)
+class Andrade:
+    """Transient creep that follows a power of time (Andrade 1910), on top of
+    the elastic and the steady response:
+
+        strain / (stress / mu) = 1 + (t / tau_A)^alpha + t / tau_M
+        1/mu(s) = (1/mu) [1 + Gamma(1 + alpha) (tau_A s)^(-alpha)
+                            + 1 / (tau_M s)]
+
+    ``tau_M = eta / mu`` is the steady relaxation time, as in ``Burgers``;
+    ``tau_A`` is the time at which the transient strain equals the elastic
+    one (the usual ``beta`` is ``1 / (mu tau_A^alpha)``); ``alpha`` is the
+    exponent, a third for the laboratory's olivine, and 1 is ``Maxwell`` at
+    the two rates summed. A fluid.
+
+    NO FASTEST RELAXATION: its spectrum runs on to short times as a power
+    law, ``tail`` being the exponent, and a fit by exponentials that end at a
+    window's short end is 8-28 % off throughout the window unless it is told
+    (``laplace.Prony(tails=...)``, ``tails`` below). The elastic instant is
+    exact all the same.
+    """
+    tau_M: float
+    tau_A: float
+    alpha: float
+    kind: str = field(default="andrade", init=False)
+
+    def __post_init__(self):
+        for name in ("tau_M", "tau_A"):
+            v = getattr(self, name)
+            if not (v > 0.0 and math.isfinite(v)):
+                raise ValueError(f"Andrade {name} {v} must be positive")
+        if not 0.0 < self.alpha <= 1.0:
+            raise ValueError(f"Andrade alpha {self.alpha} must be in (0, 1]: "
+                             f"a creep that slows, at most linear in time")
+
+    @property
+    def tail(self):
+        """The exponent of the power law its relaxation spectrum ends in at
+        short times; None at ``alpha = 1``, which is Maxwell and has none."""
+        return None if self.alpha == 1.0 else float(self.alpha)
+
+    def shear_ratio(self, s):
+        return 1.0 / (1.0 + math.gamma(1.0 + self.alpha)
+                      * (self.tau_A * s) ** (-self.alpha)
+                      + 1.0 / (self.tau_M * s))
+
+
+@dataclass(frozen=True)
 class ViscousFault:
     """A fault that resists its slip RATE: shear traction ``eta_f`` times the
     rate, the +n side dragging the other along. Stated as the shear zone it
@@ -198,7 +245,7 @@ class RateStrengtheningFault:
         return ViscousFault(tau=self.a_sigma / (self.v0 * mu), width=1.0)
 
 
-KINDS = {"maxwell": Maxwell, "burgers": Burgers,
+KINDS = {"maxwell": Maxwell, "burgers": Burgers, "andrade": Andrade,
          "viscous_fault": ViscousFault, "power_law_fault": PowerLawFault,
          "rate_strengthening_fault": RateStrengtheningFault}
 
@@ -212,6 +259,16 @@ def from_spec(spec):
     if kind not in KINDS:
         raise KeyError(f"unknown rheology kind {kind!r}; known: {sorted(KINDS)}")
     return KINDS[kind](**d)
+
+
+def tails(rheologies) -> tuple:
+    """The exponents of the power laws a body's relaxation spectrum ends in
+    at short times, sorted: one for every distinct ``tail`` among
+    ``rheologies`` (rheologies, or the dicts a dump holds), and none for a
+    body whose every relaxation has a fastest time. What the fit in time is
+    given (``laplace.Prony(tails=...)``)."""
+    found = {getattr(from_spec(r), "tail", None) for r in rheologies}
+    return tuple(sorted(float(a) for a in found if a is not None))
 
 
 def moduli(rheology, mu, lam, s):

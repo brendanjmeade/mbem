@@ -32,7 +32,7 @@ This package contains only the elastic full-space machinery: the point-source
 kernel, the triangular displacement-discontinuity solution, the `mbem` BEM
 solver (region model + calibrated dense backend), and worked examples.  There is
 **no half-space / Mindlin code and no LaTeX** here.  Linear viscoelasticity
-(Maxwell, Burgers) is available by the Laplace route, and gravity as buoyancy
+(Maxwell, Burgers, Andrade) is available by the Laplace route, and gravity as buoyancy
 on the boundary, both with no volume mesh; see "Viscoelastic relaxation" and
 "Gravity" below.  A box can be a WINDOW on a layered half-space, its walls
 carrying the far field ("The box as a window" below).
@@ -142,7 +142,7 @@ is indefinite at eps/h <= 0.1, which the dense LU does not mind.  The
 ## Viscoelastic relaxation
 
 A region may relax: its shear modulus becomes a function of the Laplace
-parameter `s` (`mbem.rheology.Maxwell`, `Burgers`) while its bulk modulus stays
+parameter `s` (`mbem.rheology.Maxwell`, `Burgers`, `Andrade`) while its bulk modulus stays
 elastic, so Poisson's ratio moves in time.  By the correspondence principle the
 problem at each real `s` is an ELASTIC one at `(mu(s), lam(s))`, on the same
 mesh, with the same boundary unknowns -- there is no volume mesh and no stored
@@ -190,6 +190,12 @@ box a result needs.
 
 A Burgers substrate (`--set tau_K=0.1 --set t_min=0.02`) converges on the same
 ladder at the same rate.
+
+An Andrade substrate (`--set andrade_alpha=0.3333`: transient creep as a power
+of time) has no fastest relaxation, and a fit by exponentials that end at the
+window's short end is then 8-28 % off through the window. The fit is given the
+body's tail instead, one more term and no more solves, which puts it back at
+1e-3: `laplace.run_fit(run_dir)` is the fit of a stored run, tails included.
 
 All of this is linear. A fault whose law is not -- friction that is not
 linearized, a power-law shear zone -- is stepped in time instead, the body
@@ -519,8 +525,8 @@ src/mbem/                 region-model BEM solver: dense and block-compressed
                           crack, the plate over a substrate, and that plate
                           in three dimensions: layered_space, a finite fault
                           at the surface and at depth)
-  rheology.py, laplace.py linear viscoelasticity by correspondence: Maxwell
-                          and Burgers shear moduli, a fault that creeps, and
+  rheology.py, laplace.py linear viscoelasticity by correspondence: Maxwell,
+                          Burgers and Andrade shear moduli, a fault that creeps, and
                           the fit that turns per-s elastic solves into a
                           function of time
   figures/                the figure makers, in a lazy registry

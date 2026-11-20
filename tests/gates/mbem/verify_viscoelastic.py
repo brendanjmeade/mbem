@@ -47,14 +47,26 @@ the real-axis fit under test.
   f  the rheologies: s = inf is exactly the unrelaxed solid, the bulk modulus
      does not move, Maxwell's mu(s) and g(s) are their closed forms (g has ONE
      pole, at tau (3K + 4mu)/(3K)), a Burgers body sits on its transient
-     plateau mu kelvin/(1 + kelvin) between its two times.
+     plateau mu kelvin/(1 + kelvin) between its two times. ``Andrade``,
+     whose mu(s) holds a FRACTIONAL power of s: inverted on the contour its
+     compliance is the creep law it states, 1 + (t/tau_A)^alpha + t/tau_M,
+     which is also what says the contour takes such a power; at alpha = 1
+     it is Maxwell at the two rates summed; and it alone has a ``tail``.
   g  the inversion, on transforms that are known exactly: poles OFF the
      collocation grid, value and rate, a creeping response (which needs the
      term linear in t, and is visibly wrong without it), and the closed-form
      sum over an infinite train of repeating steps -- with it the velocity
      of a fault LOCKED between them, whose mean over the cycle is back slip.
-  h  a dislocation in a relaxing FULL SPACE, Maxwell and Burgers: the fault
-     inside a viscoelastic region. Kernel parity against the clq oracle AT
+     Then a spectrum with NO FASTEST TIME, the Andrade body's own mu(t),
+     g(t) and their product against the contour: the fit as it stands is
+     8 % off through the window (tripwire), and with the body's tail
+     (``Prony(tails=...)``) it is where a Maxwell body's is, and holds a
+     hundred times BELOW the window too; a creeping response and its rate;
+     the periodic sum against the sum itself; and the fit as memory
+     (``Prony.memory``), which with what has ``gone`` is the elastic
+     instant.
+  h  a dislocation in a relaxing FULL SPACE, Maxwell, Burgers and Andrade
+     (fitted with its tail): the fault inside a viscoelastic region. Kernel parity against the clq oracle AT
      nu(s), which reaches 0.49 where no other gate goes; then u(t) and the
      elastic stress sigma(t), which relaxes to nothing while u moves to its
      incompressible value.
@@ -199,6 +211,7 @@ MISS_PER_ELEMENT = 1.0e-5   # ... and what per-element eps must break them by
 LAM = 45.0                                   # with MU = 30: nu = 0.30
 MAXWELL = rheology.Maxwell(tau=1.0)
 BURGERS = rheology.Burgers(tau_M=5.0, tau_K=0.4, kelvin=1.5)
+ANDRADE = rheology.Andrade(tau_M=1.0, tau_A=1.0, alpha=1.0 / 3.0)
 WINDOW = (0.1, 10.0)                         # the times the solved clauses read
 
 TOL_RHEOLOGY = 1.0e-13   # closed forms of mu(s), g(s), K; 2e-16
@@ -210,6 +223,21 @@ TOL_INV_VALUE = 2.0e-3
 TOL_INV_RATE = 2.0e-2
 TOL_INV_CYCLE = 5.0e-3
 TOL_INV_IDENTITY = 1.0e-9    # the cycle's mean is back slip: the fit's own algebra
+# [f], [g] a spectrum with no fastest time (ANDRADE), three points a decade
+# over (0.1, 100). The creep law off the contour: 2e-16. mu, g, mu g with
+# the tail: 1.1e-3 in value, 1.3e-2 in t d/dt; WITHOUT it 7.8e-2. Below the
+# window, at t_min / 100 .. t_min / 3: 4.8e-3 (1.2e-1 without). The
+# compliance, which creeps: 7.8e-5, its steady rate 3.8e-3. The periodic
+# sum: 1.5e-3. [h] in that body: u(t) 7e-5, sigma(t) 6e-4.
+TOL_CREEP_LAW = 1.0e-12
+TOL_TAIL_VALUE = 3.0e-3
+TOL_TAIL_RATE = 3.0e-2
+MISS_NO_TAIL = 3.0e-2
+TOL_TAIL_BELOW = 1.0e-2
+MISS_BELOW = 5.0e-2
+TOL_TAIL_CREEP = (1.0e-3, 1.0e-2)
+TOL_TAIL_CYCLE = 5.0e-3
+TOL_MEMORY = 1.0e-10         # C summed plus what has gone: the elastic row; 1e-13
 MISS_NO_SECULAR = 1.0e-2     # a creeping response fitted without c t; 6.8e-2
 # [h] parity with clq at nu(s): 6e-14 (u), 8e-12 (sigma) measured, the stress
 # losing digits to lam = 2 mu nu/(1 - 2 nu) inside the ORACLE as nu -> 1/2.
@@ -566,11 +594,12 @@ def f_rheology() -> None:
     K = LAM + 2.0 * MU / 3.0
     g_e = rheology.g_of(MU, LAM)
     tau2 = MAXWELL.tau * (3.0 * K + 4.0 * MU) / (3.0 * K)
-    check("s = inf is exactly the unrelaxed solid (Maxwell, Burgers)",
-          MAXWELL.shear_ratio(np.inf) == 1.0 == BURGERS.shear_ratio(np.inf))
+    check("s = inf is exactly the unrelaxed solid (Maxwell, Burgers, Andrade)",
+          MAXWELL.shear_ratio(np.inf) == 1.0 == BURGERS.shear_ratio(np.inf)
+          and ANDRADE.shear_ratio(np.inf) == 1.0)
     worst_k = worst_mu = worst_g = 0.0
     for s in (1e-3, 0.3, 7.0, 1e4, 0.5 + 2.0j):
-        for rheo in (MAXWELL, BURGERS):
+        for rheo in (MAXWELL, BURGERS, ANDRADE):
             mu, lam = rheology.moduli(rheo, MU, LAM, s)
             worst_k = max(worst_k, abs(lam + 2.0 * mu / 3.0 - K) / K)
         mu, lam = rheology.moduli(MAXWELL, MU, LAM, s)
@@ -584,10 +613,31 @@ def f_rheology() -> None:
     wide = rheology.Burgers(tau_M=1e7, tau_K=1e-7, kelvin=1.5)
     close("Burgers: the transient plateau is mu kelvin/(1 + kelvin)",
           abs(wide.shear_ratio(1.0) - 1.5 / 2.5), 1.0e-6)
+    # the transform IS the creep law's: a fractional power of s on the
+    # contour, and Gamma(1 + alpha) with it
+    t = np.logspace(-3, 3, 13)
+    worst = 0.0
+    for a in (ANDRADE, rheology.Andrade(tau_M=3.0, tau_A=0.2, alpha=0.2),
+              rheology.Andrade(tau_M=0.5, tau_A=8.0, alpha=0.8)):
+        creep = 1.0 + (t / a.tau_A) ** a.alpha + t / a.tau_M
+        worst = max(worst, float(np.abs(step_response(
+            lambda sv: 1.0 / a.shear_ratio(sv), t) / creep - 1.0).max()))
+    close("Andrade: its compliance off the contour is 1 + (t/tau_A)^alpha "
+          "+ t/tau_M", worst, TOL_CREEP_LAW)
+    one = rheology.Andrade(tau_M=2.0, tau_A=3.0, alpha=1.0)
+    both = rheology.Maxwell(tau=1.0 / (1.0 / 2.0 + 1.0 / 3.0))
+    close("Andrade at alpha = 1 is Maxwell at the two rates summed",
+          max(abs(one.shear_ratio(s) - both.shear_ratio(s))
+              for s in (1e-3, 0.3, 7.0, 1e4, 0.5 + 2.0j)), TOL_RHEOLOGY)
+    check("only a body with no fastest relaxation has a tail",
+          rheology.tails([MAXWELL, BURGERS, one]) == ()
+          and rheology.tails([MAXWELL, ANDRADE, ANDRADE]) == (ANDRADE.alpha,))
     check("a rheology round-trips through the dict a dump holds",
           rheology.from_spec({"kind": "burgers", "tau_M": 5.0, "tau_K": 0.4,
                               "kelvin": 1.5}) == BURGERS
-          and rheology.from_spec({"kind": "maxwell", "tau": 1.0}) == MAXWELL)
+          and rheology.from_spec({"kind": "maxwell", "tau": 1.0}) == MAXWELL
+          and rheology.from_spec({"kind": "andrade", "tau_M": 1.0,
+                                  "tau_A": 1.0, "alpha": 1.0 / 3.0}) == ANDRADE)
 
 
 def g_inversion() -> None:
@@ -657,6 +707,82 @@ def g_inversion() -> None:
         refused = True
     check("a creeping response has no periodic state: refused", refused)
 
+    # A spectrum with no fastest time. The transforms are the Andrade body's
+    # own mu(s), g(s) and their product: what a fault inside it radiates.
+    base = mb.ElasticMaterial(mu=MU, lam=LAM)
+    tails = rheology.tails([ANDRADE])
+
+    def body(fn):
+        return lambda sv: fn(relaxed(ANDRADE, base, sv))
+    forms = (body(lambda m: m.mu / MU),
+             body(lambda m: rheology.g_of(m.mu, m.lam)),
+             body(lambda m: m.mu / MU * rheology.g_of(m.mu, m.lam)))
+    below = t_min * np.array([0.01, 0.03, 0.1, 0.3])
+    h = 1.0e-4
+    plain, fitted = laplace.Prony(s), laplace.Prony(s, tails=tails)
+    miss = val = rate = low = low_plain = 0.0
+    for F in forms:
+        col = np.array([float(F(np.inf))] + [float(F(v)) for v in s])
+        u = step_response(F, t)
+        tdu = (step_response(F, t * (1.0 + h))
+               - step_response(F, t * (1.0 - h))) / (2.0 * h)
+        ub = step_response(F, below)
+        top = np.abs(u).max()
+        miss = max(miss, float(np.abs(plain.weights(t) @ col - u).max() / top))
+        val = max(val, float(np.abs(fitted.weights(t) @ col - u).max() / top))
+        rate = max(rate, float(np.abs(fitted.rate_weights(t) @ col * t
+                                      - tdu).max() / np.abs(tdu).max()))
+        low = max(low, float(np.abs(fitted.weights(below) @ col - ub).max()
+                             / top))
+        low_plain = max(low_plain, float(
+            np.abs(plain.weights(below) @ col - ub).max() / top))
+    above("TRIPWIRE: no fastest time, fitted as if there were one", miss,
+          MISS_NO_TAIL)
+    close("... and with the body's tail: mu(t), g(t), (mu g)(t)", val,
+          TOL_TAIL_VALUE)
+    close("... their rates, t d/dt", rate, TOL_TAIL_RATE)
+    close("... and a hundred times BELOW the window", low, TOL_TAIL_BELOW)
+    above("    (where the fit without it has nothing: tripwire)", low_plain,
+          MISS_BELOW)
+    close("the elastic instant is exact with a tail",
+          float(np.abs(fitted.weights(0.0)[0]
+                       - np.eye(1 + len(s))[0]).max()), TOL_INV_IDENTITY)
+    # the compliance creeps: 1 + (t/tau_A)^alpha + t/tau_M, and c = 1/tau_M
+    col = np.array([1.0] + [float(1.0 / ANDRADE.shear_ratio(v)) for v in s])
+    creep = 1.0 + (t / ANDRADE.tau_A) ** ANDRADE.alpha + t / ANDRADE.tau_M
+    pr = laplace.Prony(s, secular=True, tails=tails)
+    close("a creeping response with a tail: the creep law itself",
+          float(np.abs(pr.weights(t) @ col / creep - 1.0).max()),
+          TOL_TAIL_CREEP[0])
+    close("... and its steady rate, 1 / tau_M",
+          abs(float(pr.creep_rate_weights() @ col) * ANDRADE.tau_M - 1.0),
+          TOL_TAIL_CREEP[1])
+    # a step every `period`: the sum itself, of exact responses
+    F, period = forms[0], 5.0
+    col = np.array([1.0] + [float(F(v)) for v in s])
+    tc = np.array([0.1, 0.2, 0.5, 0.9]) * period
+    direct = sum(step_response(F, tc + n * period)
+                 - (step_response(F, [n * period])[0] if n else 1.0)
+                 for n in range(12))
+    close("a step every 5 in that body: displacement since the last one",
+          float(np.abs(fitted.cycle_weights(tc, period) @ col - direct).max()
+                / np.abs(direct).max()), TOL_TAIL_CYCLE)
+    # the fit as memory: exponentials, and what has gone by any lag > 0
+    tau, C, gone = fitted.memory()
+    check("as memory a tail is its poles within a decade, faster than "
+          "every fitted one",
+          tau.size > fitted.tau.size
+          and tau[fitted.tau.size:].max() < fitted.tau.min()
+          and tau.min() >= 0.1 * fitted.tau.min() * (1.0 - 1.0e-9),
+          f"{tau.size - fitted.tau.size} poles")
+    close("... which with what has gone is the elastic instant",
+          float(np.abs(C.sum(axis=0) + gone - np.eye(1 + len(s))[0]).max()),
+          TOL_MEMORY)
+    tau0, C0, gone0 = plain.memory()
+    check("with no tail the memory is the fit, and nothing has gone",
+          tau0 is plain.tau and C0 is plain.coefficients()
+          and not gone0.any())
+
 
 def h_full_space() -> None:
     print("\n[h] a dislocation in a relaxing full space: the fault in a "
@@ -685,7 +811,7 @@ def h_full_space() -> None:
                   for n in (n1, n2))
         uB, sB = (u2 - u1) / (g2 - g1), (s2 - s1) / (g2 - g1)
         uA, sA = u1 - g1 * uB, s1 - g1 * sB
-        for rheo in (MAXWELL, BURGERS):
+        for rheo in (MAXWELL, BURGERS, ANDRADE):
             s, mats = states(rheo, base)
             U, S, par_u, par_s = [], [], 0.0, 0.0
             for m in mats:
@@ -704,7 +830,7 @@ def h_full_space() -> None:
             close(f"{tag}: u == clq at nu(s), to nu = {nu_of(mats[-1]):.3f}",
                   par_u, TOL_PARITY_U)
             close(f"{tag}: elastic stress == clq at nu(s)", par_s, TOL_PARITY_S)
-            W = laplace.Prony(s).weights(t)
+            W = laplace.Prony(s, tails=rheology.tails([rheo])).weights(t)
 
             def of(fn):
                 return step_response(lambda sv: fn(relaxed(rheo, base, sv)), t)

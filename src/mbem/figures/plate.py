@@ -94,7 +94,7 @@ def reference(run, s, x, t):
         stack = np.array([lb.image_series(x, depth, thick, mu_p,
                                           mu_s * rheo.shear_ratio(sv))
                           for sv in [np.inf, *s]])
-        out = laplace.Prony(s).weights(t) @ stack
+        out = laplace.run_fit(run.run_dir).weights(t) @ stack
     out[t <= 0.0] = lb.image_series(x, depth, thick, mu_p, mu_s)
     return out
 
@@ -105,7 +105,7 @@ def in_time(run, t):
 
     s, x, u = profile(run)
     t = np.atleast_1d(np.asarray(t, float))
-    ut = laplace.Prony(s).weights(np.maximum(t, 1e-300)) @ u
+    ut = laplace.run_fit(run.run_dir).weights(np.maximum(t, 1e-300)) @ u
     ut[t <= 0.0] = u[0]
     return x, ut, reference(run, s, x, t)
 
@@ -404,7 +404,7 @@ def in_plane_in_time(run, t, x_ref=None, z_bottom=None, coarse=None):
     s, x, u = in_plane(run, coarse)
     x_ref = x if x_ref is None else x_ref
     t = np.atleast_1d(np.asarray(t, float))
-    w = laplace.Prony(s).weights(np.maximum(t, 1e-300))
+    w = laplace.run_fit(run.run_dir).weights(np.maximum(t, 1e-300))
     w[t <= 0.0] = np.eye(1 + len(s))[0]
     return (x, np.tensordot(w, u, axes=1), x_ref,
             np.tensordot(w, in_plane_reference(run, s, x_ref, z_bottom), axes=1))
@@ -586,7 +586,7 @@ def in_plane_locked(run, phase, period, x_ref=None, coarse=None):
 
     s, x, u = in_plane(run, coarse)
     x_ref = x if x_ref is None else x_ref
-    w = laplace.Prony(s).locked_rate_weights(
+    w = laplace.run_fit(run.run_dir).locked_rate_weights(
         np.atleast_1d(np.asarray(phase, float)) * period, period)
     return (x, np.tensordot(w, u, axes=1), x_ref,
             np.tensordot(w, in_plane_reference(run, s, x_ref), axes=1))
@@ -777,7 +777,7 @@ def plate_creep(study):
     mid = np.abs(cen[:, 1]) < 0.25 * gp["fault_half_len"]
     depth = -cen[:, 2]
     edges = np.linspace(depth.min() - 1e-9, depth.max() + 1e-9, 9)
-    w = laplace.Prony(s).weights(np.array(when))
+    w = laplace.run_fit(first.run_dir).weights(np.array(when))
     top = 0.0
     for k, (t, shade) in enumerate(zip(when, ("0.75", "0.45", "k"))):
         z, b = [], []
@@ -809,7 +809,7 @@ def plate_creep(study):
     for tau, color in zip(taus, colors):
         run = run_of(tau)
         s, cen, area, slip = creep_on(run)
-        mean = laplace.Prony(s).weights(t) @ (slip @ area / area.sum())
+        mean = laplace.run_fit(run.run_dir).weights(t) @ (slip @ area / area.sum())
         a1.plot(t, mean, "-", color=color, lw=1.0,
                 label=None if tau is None else law(tau))
         top = max(top, float(mean.max()))

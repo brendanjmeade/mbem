@@ -403,6 +403,10 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         t0 = time.perf_counter()
         s_run = [st.s for st in states[1:]] if run.laplace is not None \
             else None
+        # a body with no fastest relaxation: its fit, and so its memory,
+        # has a tail (rheology.tails)
+        tails = (rheology.tails(relaxing.values())
+                 if run.laplace is not None else ())
         if kernel_route:
             mats = [{**base, **{k: m.build() for k, m in
                                 overrides[cfg.slug(st.label)].items()}}
@@ -412,7 +416,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 coupling_tol=run.stepper.boundary_tol,
                 rank=run.stepper.boundary_rank,
                 factor=run.stepper.factor,
-                factor_tol=run.stepper.factor_tol,
+                factor_tol=run.stepper.factor_tol, tails=tails,
                 log=lambda msg: print(f"  {msg}", flush=True))
             phases["kernel"] = body.kernel.report["build_s"]
             report["kernel"] = body.kernel.report
@@ -420,7 +424,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 phases["boundary"] = body.boundary.report["build_s"]
                 report["boundary"] = body.boundary.report
         else:
-            body = stp.Body(condensed, s=s_run)
+            body = stp.Body(condensed, s=s_run, tails=tails)
         rate = stp.law_rate(body, {k: v[0] for k, v in stepped.items()},
                             {k: v[1] for k, v in stepped.items()})
         history = stp.march(body, rate, run.stepper.t,
@@ -430,6 +434,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         phases["march"] = time.perf_counter() - t0
         report["stepper"] = {
             "slip_unknowns": body.n, "poles": int(body.tau.size),
+            "tails": list(tails),
             "window": body.window, "law_evaluations": history.nfev,
             "method": history.method,
             "growing_modes_removed": body.growing,

@@ -17,6 +17,11 @@ and that part over the reference at fixed distance, against the box size, for
 clamped and free plate sides. Free sides let the plate float as the substrate
 relaxes; clamped sides hold it. Neither is a half-space, and they need not
 bracket it.
+
+A study that did not sweep the box (a rheology against its twin, say) has
+nothing to put on that axis: the third panel is then the postseismic part at
+that distance through TIME, every run of the study against its own closed
+form.
 """
 
 from __future__ import annotations
@@ -94,7 +99,7 @@ def reference(run, s, x, t):
         stack = np.array([lb.image_series(x, depth, thick, mu_p,
                                           mu_s * rheo.shear_ratio(sv))
                           for sv in [np.inf, *s]])
-        out = laplace.Prony(s).weights(t) @ stack
+        out = laplace.run_fit(run.run_dir).weights(t) @ stack
     out[t <= 0.0] = lb.image_series(x, depth, thick, mu_p, mu_s)
     return out
 
@@ -105,7 +110,7 @@ def in_time(run, t):
 
     s, x, u = profile(run)
     t = np.atleast_1d(np.asarray(t, float))
-    ut = laplace.Prony(s).weights(np.maximum(t, 1e-300)) @ u
+    ut = laplace.run_fit(run.run_dir).weights(np.maximum(t, 1e-300)) @ u
     ut[t <= 0.0] = u[0]
     return x, ut, reference(run, s, x, t)
 
@@ -114,12 +119,18 @@ def plate_substrate(study):
     import matplotlib.pyplot as plt
     set_paper_style()
 
-    boxes = sorted(study.axis("half_x"), key=float)
+    ladder = "half_x" in study.swept
+    boxes = sorted(study.axis("half_x"), key=float) if ladder else [None]
     sides = study.axis("sides") if "sides" in study.swept else [None]
+    # whatever else was swept (a rheology, say): the ladder is drawn for its
+    # first value
+    first = {k: study.axis(k)[0] for k in study.swept
+             if k not in ("half_x", "sides")}
 
     def run_of(half_x, side):
-        return study.one(half_x=half_x, **({} if side is None
-                                           else {"sides": side}))
+        sel = {k: v for k, v in (("half_x", half_x), ("sides", side))
+               if v is not None}
+        return study.one(**sel, **first)
 
     lead = "clamped" if "clamped" in sides else sides[0]
     big = run_of(boxes[-1], lead)
@@ -150,12 +161,20 @@ def plate_substrate(study):
         ax.legend(frameon=False, loc="upper right" if ax is a0 else "lower right",
                   bbox_to_anchor=(0.9, 0.9) if ax is a0 else None,
                   handletextpad=0.2)
-    name = f"half-width {float(boxes[-1]):g} km" + (
+    half = big.resolved["spec"]["model"]["geometry"]["params"]["half_x"]
+    name = f"half-width {float(half):g} km" + (
         "" if lead is None else f", {lead} sides")
     a0.text(0.05, 0.05, name, transform=a0.transAxes, ha="left", va="bottom",
             fontsize=8)
     a0.text(0.95, 0.95, "a", transform=a0.transAxes, ha="right", va="top")
     a1.text(0.95, 0.95, "b", transform=a1.transAxes, ha="right", va="top")
+
+    if not ladder:
+        _through_time(study, a2, lead)
+        fig.tight_layout(w_pad=1.6)
+        out = save_figure(fig, study.study_dir, "plate_substrate")
+        plt.close(fig)
+        return out
 
     lo = 1.0
     for side, color in zip(sides, (BLUE, ORANGE)):
@@ -191,6 +210,61 @@ def plate_substrate(study):
     out = save_figure(fig, study.study_dir, "plate_substrate")
     plt.close(fig)
     return out
+
+
+def _rheology_name(run) -> str:
+    """What relaxes under a run's plate, as a legend names it."""
+    from mbem.cases import layered_box as lb
+
+    r = run.resolved["spec"]["laplace"]["rheology"][lb.SUBSTRATE]
+    if r["kind"] == "burgers":
+        return rf"Burgers, $\tau_K = {r['tau_K']:g}\,\tau$"
+    if r["kind"] == "andrade":
+        return rf"Andrade, $\alpha = {r['alpha']:.2g}$"
+    return r["kind"].capitalize()
+
+
+def _through_time(study, ax, side) -> None:
+    """Panel c of a study with no ladder of boxes: the postseismic part at
+    ``PROBE`` through the fit's window, each run (of the side drawn) as
+    points over its own closed form."""
+    from mbem import laplace
+
+    rows = [(pr, r) for pr, r in study.rows
+            if side is None or str(pr.get("sides")) == str(side)]
+    names = [_rheology_name(r) for _pr, r in rows]
+    if len(set(names)) < len(names):        # not a sweep of the rheology
+        names = [", ".join(f"{k} = {pr[k]}" for k in study.swept
+                           if k != "sides") for pr, _r in rows]
+    t0, t1 = laplace.window(profile(rows[0][1])[0])
+    t = np.geomspace(t0, t1, 1 + 4 * int(round(np.log10(t1 / t0))))
+    top = 0.0
+    colors = (BLUE, ORANGE, "0.35", "#2a8f5c")
+    for k, ((_pr, run), label) in enumerate(zip(rows, names)):
+        x, u, ref = in_time(run, np.concatenate([[0.0], t]))
+        sel = (x >= PROBE[0]) & (x < PROBE[1])
+        got = (u[1:] - u[0])[:, sel].mean(axis=1)
+        want = (ref[1:] - ref[0])[:, sel].mean(axis=1)
+        color = colors[k % len(colors)]
+        ax.plot(t, want, "-", color=color, lw=0.8)
+        ax.plot(t, got, "o", color=color, ms=3.6, mec="k", mew=0.3,
+                label=label)
+        top = max(top, float(got.max()), float(want.max()))
+    ax.set_xscale("log")
+    ax.set_xlim(t0, t1)
+    ax.set_xticks([t0, t1])
+    ax.set_xticklabels([f"{t0:g}", f"{t1:g}"])
+    ax.minorticks_off()
+    top = np.ceil(top * 20.0) / 20.0
+    ax.set_ylim(0.0, top)
+    ax.set_yticks([0.0, top / 2.0, top])
+    ax.set_xlabel(r"$t\,/\,\tau$")
+    ax.set_ylabel(r"$[u(t) - u(0^+)]\,/\,s$")
+    ax.set_box_aspect(1)
+    ax.legend(frameon=False, loc="lower right")
+    ax.text(0.05, 0.95, rf"$x$ = {PROBE[0]:g}-{PROBE[1]:g} km",
+            transform=ax.transAxes, ha="left", va="top", fontsize=8)
+    ax.text(0.95, 0.95, "c", transform=ax.transAxes, ha="right", va="top")
 
 
 # ---------------------------------------------------------------------
@@ -404,7 +478,7 @@ def in_plane_in_time(run, t, x_ref=None, z_bottom=None, coarse=None):
     s, x, u = in_plane(run, coarse)
     x_ref = x if x_ref is None else x_ref
     t = np.atleast_1d(np.asarray(t, float))
-    w = laplace.Prony(s).weights(np.maximum(t, 1e-300))
+    w = laplace.run_fit(run.run_dir).weights(np.maximum(t, 1e-300))
     w[t <= 0.0] = np.eye(1 + len(s))[0]
     return (x, np.tensordot(w, u, axes=1), x_ref,
             np.tensordot(w, in_plane_reference(run, s, x_ref, z_bottom), axes=1))
@@ -586,7 +660,7 @@ def in_plane_locked(run, phase, period, x_ref=None, coarse=None):
 
     s, x, u = in_plane(run, coarse)
     x_ref = x if x_ref is None else x_ref
-    w = laplace.Prony(s).locked_rate_weights(
+    w = laplace.run_fit(run.run_dir).locked_rate_weights(
         np.atleast_1d(np.asarray(phase, float)) * period, period)
     return (x, np.tensordot(w, u, axes=1), x_ref,
             np.tensordot(w, in_plane_reference(run, s, x_ref), axes=1))
@@ -777,7 +851,7 @@ def plate_creep(study):
     mid = np.abs(cen[:, 1]) < 0.25 * gp["fault_half_len"]
     depth = -cen[:, 2]
     edges = np.linspace(depth.min() - 1e-9, depth.max() + 1e-9, 9)
-    w = laplace.Prony(s).weights(np.array(when))
+    w = laplace.run_fit(first.run_dir).weights(np.array(when))
     top = 0.0
     for k, (t, shade) in enumerate(zip(when, ("0.75", "0.45", "k"))):
         z, b = [], []
@@ -809,7 +883,7 @@ def plate_creep(study):
     for tau, color in zip(taus, colors):
         run = run_of(tau)
         s, cen, area, slip = creep_on(run)
-        mean = laplace.Prony(s).weights(t) @ (slip @ area / area.sum())
+        mean = laplace.run_fit(run.run_dir).weights(t) @ (slip @ area / area.sum())
         a1.plot(t, mean, "-", color=color, lw=1.0,
                 label=None if tau is None else law(tau))
         top = max(top, float(mean.max()))

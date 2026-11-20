@@ -75,6 +75,62 @@ class Burgers:
 
 
 @dataclass(frozen=True)
+class Andrade:
+    """Transient creep that follows a power of time (Andrade 1910), on top of
+    the elastic and the steady response:
+
+        strain / (stress / mu) = 1 + (t / tau_A)^alpha + t / tau_M
+        1/mu(s) = (1/mu) [1 + Gamma(1 + alpha) (tau_A s)^(-alpha)
+                            + 1 / (tau_M s)]
+
+    ``tau_M = eta / mu`` is the steady relaxation time, as in ``Burgers``;
+    ``tau_A`` is the time at which the transient strain equals the elastic
+    one (the usual ``beta`` is ``1 / (mu tau_A^alpha)``); ``alpha`` is the
+    exponent, a third for the laboratory's olivine, and 1 is ``Maxwell`` at
+    the two rates summed. A fluid.
+
+    NO FASTEST RELAXATION: its spectrum runs on to short times as a power
+    law, ``tail`` being the exponent, and a fit by exponentials that end at a
+    window's short end is 3-21 % off throughout the window unless it is told
+    (``laplace.Prony(tails=...)``, ``tails`` below). The elastic instant is
+    exact all the same. The power law is the spectrum's end only at times
+    short of ``tau_A`` (``tail_from``): a window must reach down to it
+    (``warn_window``).
+    """
+    tau_M: float
+    tau_A: float
+    alpha: float
+    kind: str = field(default="andrade", init=False)
+
+    def __post_init__(self):
+        for name in ("tau_M", "tau_A"):
+            v = getattr(self, name)
+            if not (v > 0.0 and math.isfinite(v)):
+                raise ValueError(f"Andrade {name} {v} must be positive")
+        if not 0.0 < self.alpha <= 1.0:
+            raise ValueError(f"Andrade alpha {self.alpha} must be in (0, 1]: "
+                             f"a creep that slows, at most linear in time")
+
+    @property
+    def tail(self):
+        """The exponent of the power law its relaxation spectrum ends in at
+        short times; None at ``alpha = 1``, which is Maxwell and has none."""
+        return None if self.alpha == 1.0 else float(self.alpha)
+
+    @property
+    def tail_from(self):
+        """The time below which ``tail`` IS the spectrum, to leading order:
+        ``tau_A``, where the transient strain is still under the elastic one.
+        A fit's window reaches down to it or its tail is the wrong shape."""
+        return None if self.alpha == 1.0 else float(self.tau_A)
+
+    def shear_ratio(self, s):
+        return 1.0 / (1.0 + math.gamma(1.0 + self.alpha)
+                      * (self.tau_A * s) ** (-self.alpha)
+                      + 1.0 / (self.tau_M * s))
+
+
+@dataclass(frozen=True)
 class ViscousFault:
     """A fault that resists its slip RATE: shear traction ``eta_f`` times the
     rate, the +n side dragging the other along. Stated as the shear zone it
@@ -198,7 +254,7 @@ class RateStrengtheningFault:
         return ViscousFault(tau=self.a_sigma / (self.v0 * mu), width=1.0)
 
 
-KINDS = {"maxwell": Maxwell, "burgers": Burgers,
+KINDS = {"maxwell": Maxwell, "burgers": Burgers, "andrade": Andrade,
          "viscous_fault": ViscousFault, "power_law_fault": PowerLawFault,
          "rate_strengthening_fault": RateStrengtheningFault}
 
@@ -212,6 +268,54 @@ def from_spec(spec):
     if kind not in KINDS:
         raise KeyError(f"unknown rheology kind {kind!r}; known: {sorted(KINDS)}")
     return KINDS[kind](**d)
+
+
+def tails(rheologies) -> tuple:
+    """The exponents of the power laws a body's relaxation spectrum ends in
+    at short times, sorted: one for every distinct ``tail`` among
+    ``rheologies`` (rheologies, or the dicts a dump holds), and none for a
+    body whose every relaxation has a fastest time. What the fit in time is
+    given (``laplace.Prony(tails=...)``)."""
+    found = {getattr(from_spec(r), "tail", None) for r in rheologies}
+    return tuple(sorted(float(a) for a in found if a is not None))
+
+
+def warn_window(regions, s) -> list:
+    """Warn of a window whose short end is above a tail's own time
+    (``tail_from``), and return what was said. ``regions`` maps a name to
+    its rheology, ``s`` are the run's collocation points.
+
+    The fit's tail is a pure power law from the window's short end on. A
+    body whose transient is already past the elastic strain there (Andrade:
+    ``t_min > tau_A``) has a spectrum that bends before it, and the fit is
+    off through the window by more than its own error. Worst of mu(t), g(t)
+    and their product over the function's maximum, alpha = 1/3, three
+    points a decade (it depends on ``t_min / tau_A`` alone):
+        t_min / tau_A      0.1      1        3        10       100
+        the three          1.1e-3   6.5e-3   1.6e-2   3.5e-2   1.4e-1
+        g(t), a displacement's    1.1e-4   3.5e-4   7.4e-4   1.4e-3   3.9e-3
+    A warning and not a refusal: a displacement is still at the fit's own
+    error two decades past the rule, and a stress is not.
+    """
+    import warnings
+
+    from . import laplace
+
+    t_min = laplace.window(s)[0]
+    said = []
+    for name, rheo in regions.items():
+        reach = getattr(rheo, "tail_from", None)
+        if reach is not None and reach < t_min * (1.0 - 1.0e-9):
+            said.append(
+                f"region {name!r}: the transient time tau_A = {reach:g} is "
+                f"below the window's short end ({t_min:g}), where the fit's "
+                f"tail is the wrong shape. At alpha = 1/3 a stress is off "
+                f"through the window by 1.6 % with t_min at three times "
+                f"tau_A, 3.5 % at ten and 14 % at a hundred, a displacement "
+                f"by a tenth of that or less. Lay the window out from "
+                f"t_min <= tau_A (rheology.warn_window)")
+            warnings.warn(said[-1], stacklevel=2)
+    return said
 
 
 def moduli(rheology, mu, lam, s):

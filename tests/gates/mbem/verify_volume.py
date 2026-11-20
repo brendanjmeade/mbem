@@ -49,7 +49,9 @@ part of it fails quietly rather than loudly:
      map whose weights sum to ~200 in magnitude, so what a reader may combine
      is not the states: it is an orthonormal basis of them, with the weights
      already applied here. The decode a reader does must reproduce
-     ``Prony``'s value, rate and locked-fault velocity; the obvious payload
+     ``Prony``'s value, rate and locked-fault velocity, for a fit with a
+     tail and for one without, and the tables are refused where the tails
+     are not STATED (a default would be the plain fit); the obvious payload
      -- each state quantised, combined in the page -- is shown losing it; and
      the sheet a viewer warps must not average a displacement across the
      fault it jumps on.
@@ -637,31 +639,44 @@ def i_time_payload() -> None:
           float(np.abs(flat @ flat.T - np.eye(flat.shape[0])).max()), 1.0e-6)
 
     periods = (5.0, 20.0)
-    tables = W.time_tables(s, C, periods=periods)
-    pr = laplace.Prony(s)
     elastic = np.eye(1 + s.size)[0]
-    check("the times stay inside the fit's window",
-          all(tb["at"][-1] <= laplace.window(s)[1] * (1.0 + 1e-12)
-              and tb["at"][tb["at"] > 0.0][0] >= laplace.window(s)[0]
-              * (1.0 - 1e-12)
-              for tb in tables.values() if tb["axis"] == "time"))
-    worst = {}
-    for name, tb in tables.items():
-        at = tb["at"]
-        if name in ("total", "since"):
-            w = np.vstack([elastic, pr.weights(at[1:])])
-            w = w - elastic if name == "since" else w
-            check(f"{name}: t = 0 is the elastic state", at[0] == 0.0)
-        elif name == "rate":
-            w = pr.rate_weights(at)
-        else:
-            w = pr.locked_rate_weights(at * tb["period"], tb["period"])
-        want = np.tensordot(w, stack, axes=1)
-        got = W.decode_modes(modes, tb["rows"])
-        worst[name] = float(np.abs(got - want).max() / np.abs(want).max())
-        close(f"decode == Prony: {name}", worst[name], TOL_WEB_MODES)
-    check("a table per period asked for",
-          {f"locked:{p:g}" for p in periods} <= set(tables))
+    try:
+        W.time_tables(s, C, periods=periods)
+        stated = False
+    except TypeError:
+        stated = True
+    check("a fit's tails are stated, never defaulted: refused without",
+          stated)
+    # the tables are the run's own fit: with the tail of a body that has
+    # none fastest, then without (which the checks below go on with)
+    for tails in ((1.0 / 3.0,), ()):
+        tag = " (a fit with a tail)" if tails else ""
+        tables = W.time_tables(s, C, periods=periods, tails=tails)
+        pr = laplace.Prony(s, tails=tails)
+        check("the times stay inside the fit's window" + tag,
+              all(tb["at"][-1] <= laplace.window(s)[1] * (1.0 + 1e-12)
+                  and tb["at"][tb["at"] > 0.0][0] >= laplace.window(s)[0]
+                  * (1.0 - 1e-12)
+                  for tb in tables.values() if tb["axis"] == "time"))
+        worst = {}
+        for name, tb in tables.items():
+            at = tb["at"]
+            if name in ("total", "since"):
+                w = np.vstack([elastic, pr.weights(at[1:])])
+                w = w - elastic if name == "since" else w
+                check(f"{name}: t = 0 is the elastic state" + tag,
+                      at[0] == 0.0)
+            elif name == "rate":
+                w = pr.rate_weights(at)
+            else:
+                w = pr.locked_rate_weights(at * tb["period"], tb["period"])
+            want = np.tensordot(w, stack, axes=1)
+            got = W.decode_modes(modes, tb["rows"])
+            worst[name] = float(np.abs(got - want).max() / np.abs(want).max())
+            close(f"decode == Prony: {name}" + tag, worst[name],
+                  TOL_WEB_MODES)
+        check("a table per period asked for" + tag,
+              {f"locked:{p:g}" for p in periods} <= set(tables))
 
     # What would look reasonable and is not: quantise each STATE as the other
     # payload does, and let the page apply the weights.

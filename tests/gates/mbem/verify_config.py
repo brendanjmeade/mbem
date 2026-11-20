@@ -45,9 +45,12 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      per s, each recorded with its s and its moduli; those moduli are the
      rheology's at that s, with the bulk modulus unmoved; the elastic state is
      bitwise the same model run with no rheology at all; ``laplace.run_stack``
-     returns the stack in the order the fit takes it; a stored Laplace state is
-     read back at its own moduli; and the run is REFUSED when the relaxing
-     region is not on one scalar eps, or names a region the model lacks.
+     returns the stack in the order the fit takes it and ``laplace.run_fit``
+     the fit, with the tail of an Andrade substrate read from the run's own
+     record (and its window, short of ``tau_A``, warned of in the report); a
+     stored Laplace state is read back at its own moduli; and the run is
+     REFUSED when the relaxing region is not on one scalar eps, or names a
+     region the model lacks, or is given a negative ``andrade_alpha``.
   k  GRAVITY reaches a run through the builder's parameters and nowhere else
      (``rho_plate`` / ``rho_substrate`` of the layered box): the dump records
      the ``Gravity`` the model carried, and null when it carried none; the
@@ -91,6 +94,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import warnings
 
 import numpy as np
 
@@ -516,6 +520,33 @@ def j_laplace_run(tmp: pathlib.Path) -> None:
     except ValueError:
         refused = True
     check("run_stack refuses a run that is not a Laplace run", refused)
+    fit = laplace.run_fit(d)
+    check("run_fit: the stored run's fit, a Maxwell body's with no tail",
+          fit.tails == () and np.array_equal(fit.s, s)
+          and "warnings" not in rep)
+    # An Andrade substrate by the same path: the tail its fit needs is read
+    # back from the run's own record, and a window that stops above tau_A
+    # is warned of, in the report too.
+    soft = cfg.load(path, **small, andrade_alpha=0.25, tau_A=0.03)
+    da = tmp / "andrade"
+    da.mkdir()
+    with warnings.catch_warnings(record=True) as heard:
+        warnings.simplefilter("always")
+        rep_a = runner.execute(soft, da, path)
+    check("an Andrade substrate: the stored run's fit carries its tail",
+          rep_a["status"] == "OK" and laplace.run_fit(da).tails == (0.25,),
+          f"{laplace.run_fit(da).tails}")
+    check("... and its window, short of tau_A, is warned of and reported",
+          len(rep_a.get("warnings", [])) == 1
+          and any("tau_A" in str(w.message) for w in heard),
+          f"{len(rep_a.get('warnings', []))} in the report")
+    try:
+        cfg.load(path, **small, andrade_alpha=-0.25)
+        refused = False
+    except ValueError:
+        refused = True
+    check("REFUSED: a negative andrade_alpha, which would be a Maxwell "
+          "body unsaid", refused)
 
     _b, model, _e = cli._rebuild(resolved)
     last = rows[-1]

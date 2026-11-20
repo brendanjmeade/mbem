@@ -102,6 +102,24 @@ is FLAT in time.
       unknown of the box (7e-7) are the dense body's, and stepped under the
       viscous law the two agree as two corrections of one fit can (1.6e-3
       in the slip, 4e-4 in its mean).
+  [k] a body with NO FASTEST RELAXATION (``rheology.Andrade``, alpha = 1/3):
+      the crack of [b]-[e] in it. Its memory is the fit's exponentials AND
+      the fit's tail (``Prony.memory``: three poles more, a decade beyond
+      the fastest fitted). Linear law, against the contour inversion of the
+      closed form (0.9944 .. 0.9948, the crack's own bias) and against the
+      Laplace route (3e-4); stepped on the fit WITHOUT the tail it wanders
+      by 1.9 % through the window (tripwire). The exponential law, against
+      a scalar equation whose kernel is the crack's k_E(t) off the contour,
+      held in time on 85 poles from 1e-4 to 1e10 (1e-9 between its points),
+      which shares nothing with the real-axis fit: 0.9949 .. 0.9958, the
+      body's relaxation multiplying the slip by 5.4 by the window's end. No
+      mode grows. A body with a tail is stepped with the stabilised method
+      whatever it is: the tail's decade is ten times the fastest rate, and
+      the embedded pair gives the same moments at over twice the
+      evaluations. And the same equation as a SCALAR on three decades of
+      window, where the fit's relaxed limit pushes and is moved (rule 20):
+      4e-5 to a tenth of the window, 3e-3 at its end (tripwire: that is
+      what the correction costs the last decade).
 """
 
 from __future__ import annotations
@@ -155,6 +173,13 @@ TOL_STATE = 1.0e-5       # a state's stiffness and loads, coupling vs dense; 3e-
 TOL_UNKNOWNS = 1.0e-4    # ... every unknown of the boundary; 1e-7, 7e-7
 TOL_MEAN = 1.0e-3        # mean afterslip, two corrections of one fit; 4e-4
 TOL_BLOCKS = 5.0e-4      # the boundary's unknowns, its body factored in blocks; 4e-5
+FLAT_TAIL = 2.0e-3       # [k] spread of a ratio in an Andrade body; 5e-4, 9e-4
+NO_TAIL = 1.0e-2         # ... stepped on the fit without its tail; 1.9e-2
+TOL_KERNEL_TIME = 1.0e-7    # the reference's k_E(t) between its own points; 1e-9
+TOL_PAIR = 1.0e-4        # the pair's moments over the stabilised method's; 2e-5
+PAIR_COSTS = 2.0         # ... its evaluations over the other's; 2.5
+TOL_LATE = (5.0e-4, 6.0e-3)     # a scalar on (0.1, 100): to t = 10, and at
+END_COSTS = 1.0e-3              # 100; 4.4e-5, 2.9e-3 -- which is not small
 
 CHECKS = []
 
@@ -279,17 +304,22 @@ class Penny:
         model = penny.build_model(penny.penny_mesh(a=A, h=A / ah), self.base,
                                   drop=self.drop, order=order)
         self.fault = model.regions[0].faults[0]
-        asm = quiet(AssembledDense, generate_system(model), "auto", "direct")
+        self._asm = quiet(AssembledDense, generate_system(model), "auto",
+                          "direct")
         self.s = laplace.s_grid(*WINDOW)
-        self.cond = [asm.rebuild_for_materials({"space": VV.elastic(VV.relaxed(
-            VV.MAXWELL, self.base, sv))}).condense()
-            for sv in (np.inf,) + self.s]
+        self.cond = self.reduced(VV.MAXWELL)
         f = self.cond[0].faults[0]
         x = self.fault.collocation_points()[f.free]
         shape = np.sqrt(np.clip(1.0 - (x[:, 0] ** 2 + x[:, 1] ** 2) / A ** 2,
                                 1.0e-12, None))
         self.grade = np.repeat(shape, 2)              # per coordinate
         self.eta0 = MU * VV.CREEP_TAU / A             # ViscousFault(tau, width=a)
+
+    def reduced(self, rheo) -> list:
+        """The crack reduced at every state of a body of ``rheo``."""
+        return [self._asm.rebuild_for_materials({"space": VV.elastic(
+            VV.relaxed(rheo, self.base, sv))}).condense()
+            for sv in (np.inf,) + self.s]
 
     def moment(self, beta) -> float:
         return float(self.fault.integrate(
@@ -418,6 +448,110 @@ def e_maxwell_exponential(P, body):
     elastic = (a_s / P.k_e) * np.log1p(t / 0.01)
     check_gt("the body's relaxation matters by the window's end (tripwire)",
              float(ref[-1] / elastic[-1]), 1.2)
+
+
+# ---- [k] a body with no fastest relaxation ----------------------------
+
+def k_andrade(P):
+    print("\n[k] an Andrade body: the fit's tail as memory, both laws")
+    from scipy.integrate import solve_ivp
+
+    rheo = VV.ANDRADE
+    tails = rheology.tails([rheo])
+    cond = P.reduced(rheo)
+    t = times()
+
+    def k_of(sv):
+        m = VV.relaxed(rheo, P.base, sv)
+        return np.pi * m.mu * (1.0 + rheology.g_of(m.mu, m.lam)) / (8.0 * A)
+
+    body = stepper.Body(cond, s=P.s, tails=tails)
+    check_bool("the memory is the fit's poles and a decade of its tail's",
+               body.tau.size == len(P.s) - 1 + 3 and np.isclose(
+                   body.tau.min(), 0.1 * np.sort(1.0 / np.asarray(P.s))[1]),
+               f"{body.tau.size} poles")
+    stepped = stepper.march(body, P.linear, t)
+    got = P.moments(stepped)
+    pair = stepper.march(body, P.linear, t, method="RK45")
+    check_bool("a body with a tail is stepped with the stabilised method",
+               stepped.method == "RKC", stepped.method)
+    check("... the embedded pair gives the same moments",
+          float(np.abs(P.moments(pair) / got - 1.0).max()), TOL_PAIR)
+    check_gt("... at this many times the evaluations of the law",
+             pair.nfev / stepped.nfev, PAIR_COSTS)
+    ref = VV.step_response(lambda sv: penny.eshelby_moment(
+        P.drop / (k_of(sv) + P.eta0 * sv), A), t)
+    check_band("linear law: moment over the contour inversion of the closed "
+               "form", got / ref, FLAT_TAIL)
+    lap = np.array([0.0] + [P.moment(c.dragged(P.eta0 * sv / P.grade))
+                            for sv, c in zip(P.s, cond[1:])])
+    check("... and against the Laplace route's fit of the same operators",
+          float(np.abs(got / (laplace.Prony(P.s, secular=True, tails=tails)
+                              .weights(t) @ lap) - 1.0).max()), TOL_ROUTES)
+    bare = P.moments(stepper.march(stepper.Body(cond, s=P.s), P.linear, t))
+    check_gt("TRIPWIRE: stepped on the fit without its tail, the ratio "
+             "wanders", float(np.ptp(bare / ref)), NO_TAIL)
+    small = Penny(ah=5.0, order=0)
+    check("no mode grows under the linear law (P0, a/h = 5)",
+          stepper.Body(small.reduced(rheo), s=small.s, tails=tails).growth(
+              small.grade / small.eta0), TOL_GROWTH)
+
+    # The exponential law. The reference is one scalar equation, as in [e],
+    # but this body has no exact poles to write it with: its kernel is
+    # k_E(t) off the CONTOUR, held in time on many exponentials -- a fit of
+    # values in time, not of the transform on the real axis.
+    k_e = float(k_of(np.inf))
+    tg = np.logspace(-9.0, 3.0, 145)
+    rates = np.logspace(-4.0, 10.0, 85)
+
+    def basis(tt):
+        return np.column_stack([np.ones(tt.size)]
+                               + [np.exp(-r * tt) for r in rates])
+    k_t = VV.step_response(lambda sv: k_of(sv) / k_e, tg)
+    # ... with k_E(0) = k_E held hard: the elastic instant
+    c = np.linalg.lstsq(np.vstack([basis(tg), 1.0e3 * np.ones(1 + rates.size)]),
+                        np.concatenate([k_t, [1.0e3]]), rcond=1.0e-13)[0]
+    between = np.sqrt(tg[1:] * tg[:-1])[::3]
+    check("the reference's k_E(t), between the points it was fitted at",
+          float(np.abs(basis(between) @ c - VV.step_response(
+              lambda sv: k_of(sv) / k_e, between)).max()), TOL_KERNEL_TIME)
+    a_s = P.drop / 5.0
+    v0 = a_s / (P.k_e * np.exp(5.0) * 0.01)
+
+    def scalar(_t, y):
+        rate = v0 * np.exp((P.drop - k_e * (c[0] * y[0] + c[1:] @ y[1:])) / a_s)
+        return np.concatenate([[rate], rate - rates * y[1:]])
+
+    ref = solve_ivp(scalar, (0.0, t[-1]), np.zeros(1 + rates.size),
+                    method="Radau", t_eval=t, rtol=1.0e-10, atol=1.0e-18).y[0]
+    h = stepper.march(body, P.exponential(v0, a_s), t)
+    check_band("exponential law: moment over the scalar equation's",
+               P.moments(h) / penny.eshelby_moment(1.0, A) / ref, FLAT_TAIL)
+    check_gt("the body's relaxation matters by the window's end (tripwire)",
+             float(ref[-1] / ((a_s / P.k_e) * np.log1p(t[-1] / 0.01))), 3.0)
+
+    # The crack as a SCALAR (its stiffness k_E(s), the same closed form) on
+    # the megathrust's window, three decades. There the fit's relaxed limit
+    # pushes, by 1.3e-3 of the elastic stiffness; it is moved to the slowest
+    # pole as rule 20 has it, and that costs the window's last decade.
+    long = laplace.s_grid(0.1, 100.0)
+    one = stepper.Body(
+        [types.SimpleNamespace(S=np.array([[-float(k_of(sv)) / k_e]]),
+                               L=np.ones(1), faults=(), layout=None, n=1,
+                               x0=np.zeros(1), X=np.zeros((1, 1)))
+         for sv in (np.inf,) + tuple(long)], s=long, tails=tails)
+    tl = np.logspace(-1.0, 2.0, 7)
+    err = np.abs(stepper.march(one, lambda tr: tr, tl).slip[:, 0]
+                 / VV.step_response(lambda sv: 1.0 / (k_of(sv) / k_e + sv), tl)
+                 - 1.0)
+    check_bool("on three decades of window the fit's relaxed limit pushes, "
+               "and is moved", one.growing == 1,
+               f"{one.removed:.1e} of the elastic stiffness")
+    check("... a scalar crack stepped on it: to a tenth of the window",
+          float(err[tl <= 10.0].max()), TOL_LATE[0])
+    check("... and at its end", float(err[-1]), TOL_LATE[1])
+    check_gt("    (what moving the limit costs the last decade: tripwire)",
+             float(err[-1]), END_COSTS)
 
 
 # ---- [f] the megathrust ----------------------------------------------
@@ -869,6 +1003,7 @@ def main():
     c_elastic_exponential(P, body_e)
     body_m = d_maxwell_linear(P)
     e_maxwell_exponential(P, body_m)
+    k_andrade(P)
     reach = f_megathrust()
     g_refusals(P, body_m, reach.body)
     i_stabilised(*h_compressed_kernel())

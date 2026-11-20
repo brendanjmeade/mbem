@@ -310,11 +310,14 @@ def decode_modes(modes, rows) -> np.ndarray:
 
 
 def time_weights(s, periods=(), per_decade: int = None,
-                 phases: int = None) -> dict:
+                 phases: int = None, *, tails) -> dict:
     """``{quantity: {"axis", "at", "w"}}``: every quantity of time a viewer
     shows, as the weights ``(n, n_states)`` that take a stack to it.
 
-    ``s`` are the finite collocation points of the run. The times are
+    ``s`` are the finite collocation points of the run and ``tails`` its
+    fit's (``rheology.tails`` of what relaxes in it), which has NO default:
+    left out, a body with no fastest relaxation would be given the fit of
+    one that has, and still look smooth. The times are
     log-spaced over the fit's own window (``laplace.window``), never beyond
     it:
 
@@ -330,7 +333,7 @@ def time_weights(s, periods=(), per_decade: int = None,
     per_decade = (defaults.WEB_TIMES_PER_DECADE if per_decade is None
                   else per_decade)
     phases = defaults.WEB_CYCLE_PHASES if phases is None else phases
-    pr = laplace.Prony(s)
+    pr = laplace.Prony(s, tails=tails)
     t0, t1 = laplace.window(s)
     t = np.geomspace(t0, t1, 1 + int(round(np.log10(t1 / t0) * per_decade)))
     elastic = np.eye(1 + len(pr.s))[0]
@@ -348,11 +351,12 @@ def time_weights(s, periods=(), per_decade: int = None,
 
 
 def time_tables(s, C, periods=(), per_decade: int = None,
-                phases: int = None) -> dict:
+                phases: int = None, *, tails) -> dict:
     """``time_weights`` applied to the coefficients ``encode_modes`` returned
     for a stack: ``rows = w @ C``, what a reader multiplies into the modes.
     A stack too small to need modes is shipped whole and takes ``w`` itself.
     """
     return {name: {**{k: v for k, v in q.items() if k != "w"},
                    "rows": q["w"] @ C}
-            for name, q in time_weights(s, periods, per_decade, phases).items()}
+            for name, q in time_weights(s, periods, per_decade, phases,
+                                        tails=tails).items()}

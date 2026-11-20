@@ -42,6 +42,19 @@ Two things the fit owes a consumer that FEEDS BACK through it:
   fit's fastest pole (about 3.3 of its relaxation times) and by the fault's
   shortest wavelength, not by the law.
 
+A body with NO FASTEST RELAXATION (``rheology.Andrade``) is fitted with a
+tail, every pole beyond the window's short end in one term
+(``laplace.Prony(tails=...)``). Here the tail is memory like the rest: its
+poles within a decade of the fastest fitted one are carried, one decaying
+vector each, and what lies beyond has gone by any lag greater than zero
+(``Prony.memory``). So a step's LOAD is the elastic one at its own instant
+and has lost that part an instant later (``load`` at ``t == te``, which is
+what a history records there and what ``march`` sizes its first step by),
+and the stiffness a fault slips against is the elastic one LESS that part
+throughout: a tenth to a fifth of the modulus, wrong only at lags the
+window does not hold. A decade of tail is ten times the fastest rate, so
+such a body is stepped with the stabilised method whatever its faults.
+
 The reduction is the dense backend's: a compressed operator solves no slip,
 and ``condense`` is one right-hand side per slip unknown. ``KernelBody`` is
 the way past both for P0 faults inside a region: their own kernel
@@ -80,10 +93,11 @@ class Body:
     ``Prony`` takes them, the elastic one first, and ``s`` their finite
     Laplace parameters; ``s=None`` is a body that does not relax (one
     state). ``passive=False`` keeps the fit's relaxed limit as fitted: for a
-    gate that shows what that costs.
+    gate that shows what that costs. ``tails`` are the fit's
+    (``rheology.tails`` of what relaxes).
     """
 
-    def __init__(self, states, s=None, passive: bool = True):
+    def __init__(self, states, s=None, passive: bool = True, tails=()):
         states = list(states)
         self.states = states
         self.faults = states[0].faults
@@ -94,20 +108,23 @@ class Body:
                 raise ValueError(f"a body that does not relax is ONE state; "
                                  f"got {len(states)} and no s")
             self.tau, self.C, self.window = np.zeros(0), np.ones((1, 1)), None
+            self._gone, tails = np.zeros(1), ()
         else:
             s = np.asarray(s, float)
             if len(states) != 1 + s.size:
                 raise ValueError(f"{s.size} Laplace parameters want "
                                  f"{1 + s.size} states (the elastic one "
                                  f"first), got {len(states)}")
-            pr = laplace.Prony(s)
-            self.tau, self.C = pr.tau, pr.coefficients()
+            self.tau, self.C, self._gone = laplace.Prony(
+                s, tails=tails).memory()
             self.window = laplace.window(s)
+        self.tails = tuple(tails)
         K, n = len(states), self.n
         S = np.stack([c.S for c in states])
         # traction = _S @ c.ravel(), c the (K, n) slip each state is asked for
         self._S = np.ascontiguousarray(S.transpose(1, 0, 2).reshape(n, K * n))
         self._aL = self.C @ np.stack([c.L for c in states])
+        self._goneL = self._gone @ np.stack([c.L for c in states])
         self._slow = int(np.argmax(self.tau)) if self.tau.size else -1
         self._D, self.growing, self.removed = None, 0, 0.0
         if passive and self.tau.size:
@@ -149,6 +166,8 @@ class Body:
         for te, amp in events:
             if t >= te:
                 out += amp * (self._basis(t - te) @ self._aL)
+            if t == te:                 # a tail's far end, not yet gone
+                out += amp * self._goneL
         return out
 
     def traction(self, Y, load) -> np.ndarray:
@@ -168,6 +187,8 @@ class Body:
         for te, amp in events:
             if t >= te:
                 w += amp * (self._basis(t - te) @ self.C)
+            if t == te:
+                w += amp * self._gone
         c = self.C.T @ Y
         x = np.zeros(self.states[0].x0.shape[0])
         for k, st in enumerate(self.states):
@@ -252,7 +273,7 @@ class KernelBody:
     """
 
     def __init__(self, kernel, faults, materials, loads, s=None,
-                 passive: bool = True, boundary=None):
+                 passive: bool = True, boundary=None, tails=()):
         self.kernel, self.faults = kernel, tuple(faults)
         self.boundary = boundary
         self.n = int(self.faults[-1].stop)
@@ -262,20 +283,23 @@ class KernelBody:
                 raise ValueError(f"a body that does not relax is ONE state; "
                                  f"got {len(materials)} and no s")
             self.tau, self.C, self.window = np.zeros(0), np.ones((1, 1)), None
+            self._gone, tails = np.zeros(1), ()
         else:
             s = np.asarray(s, float)
             if len(materials) != 1 + s.size:
                 raise ValueError(f"{s.size} Laplace parameters want "
                                  f"{1 + s.size} states (the elastic one "
                                  f"first), got {len(materials)}")
-            pr = laplace.Prony(s)
-            self.tau, self.C = pr.tau, pr.coefficients()
+            self.tau, self.C, self._gone = laplace.Prony(
+                s, tails=tails).memory()
             self.window = laplace.window(s)
+        self.tails = tuple(tails)
         self.materials = materials
         W = np.array([kernel.weights(m, lam) for m, lam in materials])  # (K, B)
         self._a = (self.C @ W).T.copy()                  # (B, 1 + m)
         self.loads = np.asarray(loads, float)            # (K, n)
         self._aL = self.C @ self.loads
+        self._goneL = self._gone @ self.loads
         self._L0 = self.loads[0]
         self.growing, self.removed = 0, 0.0
         if passive and self.tau.size:
@@ -402,6 +426,8 @@ class KernelBody:
             for te, amp in events:
                 if t >= te:
                     w += amp * (self._basis(t - te) @ self.C)
+                if t == te:
+                    w += amp * self._gone
             c = (self.C.T @ Y) @ b.W                    # (K, r_w)
             x = w @ b.x0
             for k in range(len(self.materials)):
@@ -455,7 +481,7 @@ class KernelBody:
     def from_model(cls, model, eps, materials, s=None, tol: float = None,
                    passive: bool = True, log=None, coupling_tol: float = None,
                    rank: int = None, factor: str = None,
-                   factor_tol: float = None):
+                   factor_tol: float = None, tails=()):
         """Build one for ``model``: the FAULT_TRACTION faults of ONE region,
         P0, and whatever boundary the model has.
 
@@ -507,12 +533,13 @@ class KernelBody:
                 f"dense, built in {r['build_s']:.0f} s")
         if len(model.regions) == 1 and not region.patches:
             loads = cls._whole_space_loads(region, solved, coords, eps, pairs)
-            return cls(kernel, coords, pairs, loads, s=s, passive=passive)
+            return cls(kernel, coords, pairs, loads, s=s, passive=passive,
+                       tails=tails)
         boundary, loads = cls._boundary(model, eps, states, pairs, coords,
                                         (min(g), max(g)), coupling_tol, rank,
                                         log, factor, factor_tol)
         return cls(kernel, coords, pairs, loads, s=s, passive=passive,
-                   boundary=boundary)
+                   boundary=boundary, tails=tails)
 
     @staticmethod
     def _whole_space_loads(region, solved, coords, eps, pairs) -> np.ndarray:
@@ -715,7 +742,9 @@ def march(body: Body, rate, t, events=(0.0,), rtol: float = None,
     ``method`` is ``scipy.integrate.solve_ivp``'s, or ``"RKC"``, the
     stabilised method of ``mbem.rkc``; left ``None`` it is the one that
     suits the body, the embedded pair for a dense ``Body`` and RKC for a
-    ``KernelBody``, whose faults are fine enough to be stiff.
+    ``KernelBody``, whose faults are fine enough to be stiff, and for any
+    body whose fit has a tail, whose memory is stiff whatever the fault
+    (``defaults.STEPPER_TAIL_DECADES``).
 
     A relaxing body is refused past the end of its fit's window, counted
     from the first event: beyond it nothing constrains the kernel.
@@ -727,7 +756,8 @@ def march(body: Body, rate, t, events=(0.0,), rtol: float = None,
     rtol = defaults.STEPPER_RTOL if rtol is None else rtol
     atol = defaults.STEPPER_ATOL if atol is None else atol
     if method is None:
-        method = (defaults.STEPPER_METHOD_KERNEL if isinstance(body, KernelBody)
+        method = (defaults.STEPPER_METHOD_KERNEL
+                  if isinstance(body, KernelBody) or body.tails
                   else defaults.STEPPER_METHOD)
     solver = {"RKC": RKC}.get(method, method)
     events = _events(events)

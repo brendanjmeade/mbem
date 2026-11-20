@@ -1038,6 +1038,28 @@ LAPLACE_POINTS_PER_DECADE = 3
 # of its relaxation times, and half a decade is what keeps the ends of the
 # window as good as its middle (the table above was measured with it).
 LAPLACE_PAD_DECADES = 0.5
+# A body with no fastest relaxation (rheology.Andrade): the poles beyond the
+# grid that stand for the power-law end of its spectrum (Prony's ``tails``)
+# run on for this many decades, and what is left past them is summed in
+# closed form. Measured on mu(t), g(t) and their product against a contour
+# inversion, worst of the three over the function's maximum, window
+# (0.1, 100), tau_M = 1:
+#     alpha, tau_A    3 a decade, no tail   with it    4 a decade, with it
+#     1/3,   1             7.7e-2           1.1e-3          6.4e-4
+#     1/3,   0.1           2.1e-1           6.5e-3          3.9e-3
+#     0.2,   1             1.7e-1           3.4e-3          2.0e-3
+#     0.5,   1             2.6e-2           1.2e-4          4.0e-5
+# (Maxwell and Burgers on the same footing: 1.5e-3 and 6.7e-4.) What is left
+# is the tail's shape, a power law to leading order only: it is worst where
+# the transient is strongest at the window's short end, and falls with the
+# window (from 0.02: 3.3e-4, 1.8e-3, 1.7e-3, 2.4e-5). Without the tail four
+# points a decade give 6.6e-2 for the first row and thirteen more states at
+# the short end 4e-3; with it the fit also holds a hundred times BELOW the
+# window (5e-3, 3.0e-2, 2.0e-2, 1.8e-4 down the rows). The table is of
+# windows that reach down to tau_A. Above it the spectrum has bent away from
+# the power law and the same measure is 1.6e-2, 3.5e-2 and 1.4e-1 with t_min
+# at 3, 10 and 100 times tau_A (rheology.warn_window has the table).
+LAPLACE_TAIL_DECADES = 12.0
 # Singular values of the fit matrix below this fraction of the largest are
 # dropped. The matrix is square and its condition number is 1e5-1e7, so this
 # changes nothing at the default resolution; it is what keeps a much finer
@@ -1053,6 +1075,31 @@ PRONY_RCOND = 1.0e-13
 # on a megathrust's reach to 100 relaxation times in a window from 0.1, and
 # 1,100-1,260 under laws whose peak rate is 5 to 3e13 times the linear one's.
 STEPPER_METHOD = "RK45"
+# A stepped fault in a body with no fastest relaxation carries the tail of
+# its fit (LAPLACE_TAIL_DECADES) as memory too: the tail's poles within this
+# many decades of the fastest fitted one, and the rest of it gone at once
+# (``Prony.memory``). On the penny's scalar equation under a linear law,
+# against its contour inversion, window (0.1, 10), the fault's own time 1,
+# 0.1 and 0.01 of the body's:
+#     Andrade 1/3, tau_A = 1     fitted with no tail   1.3e-2  2.7e-2  3.7e-2
+#                                none of it kept       1.9e-3  1.3e-2  1.5e-2
+#                                one decade (3 poles)  1.5e-4  7.7e-4  6.2e-4
+#                                two (6 poles)         1.5e-4  2.9e-4  4.5e-4
+#     ... tau_A = 0.1            one decade            6.1e-4  2.1e-3  2.9e-3
+#     Andrade 0.2, tau_A = 1     one decade            3.7e-4  1.2e-3  1.6e-3
+# (Maxwell, whose relaxed limit is moved on that window: 4.5e-4, 1.0e-3,
+# 1.2e-3.) On a window of three decades, (0.1, 100), an Andrade body's
+# relaxed limit is the one that pushes and is moved, and the last decade
+# carries what that costs: 2.9e-3 and 5.9e-3 at t = 100 for the first row's
+# fault times 1 and 0.01, 1.3e-2 and 2.9e-2 at tau_A = 0.1, 8.4e-3 and
+# 1.7e-2 at alpha = 0.2, each 1e-4 to 3e-3 up to a tenth of the window.
+# A decade is ten times the fastest rate, and that rate bounds the embedded
+# pair's step: 3,134 evaluations of the law for the stabilised method's
+# 1,236 on the gate's penny (1,250 with no tail), 30,044 for 4,823 on the
+# megathrust's reach densely (2,164 slip unknowns; the Maxwell twin: 6,518),
+# with one answer. So ``march`` steps a body whose fit has a tail with
+# STEPPER_METHOD_KERNEL whatever it is.
+STEPPER_TAIL_DECADES = 1.0
 # Relative tolerance of a step. With the step bounded as above a tight one
 # is nearly free: 1e-4 and 1e-6 take 1,059 and 1,108 steps there and agree
 # to four figures, so this sits well under the fit's own 1e-3.
@@ -1074,7 +1121,8 @@ STEPPER_FIRST_STEP = 1.0e-6
 # refused: friction at a traction over a hundred times its a_sigma.
 STEPPER_REJECT = 1.0e60
 # The integrator of a ``KernelBody``, whose faults are fine enough to be
-# stiff: the stabilised Chebyshev method of rkc.py.
+# stiff, and of any body whose fit has a tail (STEPPER_TAIL_DECADES): the
+# stabilised Chebyshev method of rkc.py.
 STEPPER_METHOD_KERNEL = "RKC"
 # A ``KernelBody`` in a body with a boundary: the faults' region counts as
 # having relaxed to a FLUID where the fitted limit of their own kernel is

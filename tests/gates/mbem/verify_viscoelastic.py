@@ -61,10 +61,15 @@ the real-axis fit under test.
      g(t) and their product against the contour: the fit as it stands is
      8 % off through the window (tripwire), and with the body's tail
      (``Prony(tails=...)``) it is where a Maxwell body's is, and holds a
-     hundred times BELOW the window too; a creeping response and its rate;
-     the periodic sum against the sum itself; and the fit as memory
-     (``Prony.memory``), which with what has ``gone`` is the elastic
-     instant.
+     hundred times BELOW the window too; the other bodies of ``defaults``'
+     table; the edge of the tail's own regime, a window ten times short of
+     ``tau_A`` (tripwire, and ``rheology.warn_window`` says so) against one
+     laid out from below it; a creeping response and its rate through the
+     window;
+     the periodic sum against the sum itself, its rate and a locked fault's
+     velocity against the same sums (the plain fit is 80 % off: tripwire);
+     and the fit as memory (``Prony.memory``), which is the fit at every lag
+     the window holds and with what has ``gone`` the elastic instant.
   h  a dislocation in a relaxing FULL SPACE, Maxwell, Burgers and Andrade
      (fitted with its tail): the fault inside a viscoelastic region. Kernel parity against the clq oracle AT
      nu(s), which reaches 0.49 where no other gate goes; then u(t) and the
@@ -167,6 +172,7 @@ from __future__ import annotations
 import sys
 import time
 import types
+import warnings
 
 import mpmath as mp
 import numpy as np
@@ -227,17 +233,32 @@ TOL_INV_IDENTITY = 1.0e-9    # the cycle's mean is back slip: the fit's own alge
 # over (0.1, 100). The creep law off the contour: 2e-16. mu, g, mu g with
 # the tail: 1.1e-3 in value, 1.3e-2 in t d/dt; WITHOUT it 7.8e-2. Below the
 # window, at t_min / 100 .. t_min / 3: 4.8e-3 (1.2e-1 without). The
-# compliance, which creeps: 7.8e-5, its steady rate 3.8e-3. The periodic
-# sum: 1.5e-3. [h] in that body: u(t) 7e-5, sigma(t) 6e-4.
+# compliance, which creeps: 7.8e-5, its rate through the window 3.7e-4
+# (4.2e-1 without the tail). The periodic sum: 1.5e-3; its rate and the
+# locked fault's velocity 1.0e-2 and 1.1e-2 (8.1e-1 without). [h] in that
+# body: u(t) 7e-5, sigma(t) 6e-4.
 TOL_CREEP_LAW = 1.0e-12
 TOL_TAIL_VALUE = 3.0e-3
 TOL_TAIL_RATE = 3.0e-2
 MISS_NO_TAIL = 3.0e-2
 TOL_TAIL_BELOW = 1.0e-2
 MISS_BELOW = 5.0e-2
-TOL_TAIL_CREEP = (1.0e-3, 1.0e-2)
+TOL_TAIL_CREEP = (1.0e-3, 2.0e-3)
+MISS_CREEP_RATE = 1.0e-1
 TOL_TAIL_CYCLE = 5.0e-3
-TOL_MEMORY = 1.0e-10         # C summed plus what has gone: the elastic row; 1e-13
+TOL_TAIL_CYCLE_RATE = 3.0e-2
+MISS_CYCLE_RATE = 3.0e-1
+# the other bodies of defaults' table, (alpha, tau_A): what they measure,
+# on a third of the times; 6.5e-3, 3.4e-3, 1.1e-4
+TAIL_ROWS = (((1.0 / 3.0, 0.1), 2.0e-2), ((0.2, 1.0), 1.0e-2),
+             ((0.5, 1.0), 5.0e-4))
+# a window ten times short of tau_A, the tail and all: 3.5e-2; laid out
+# from a decade below tau_A and read at the same times: 2.6e-3
+MISS_SHORT_OF_TAU_A = 2.0e-2
+TOL_BELOW_TAU_A = 1.0e-2
+TOL_TAIL_SUMS = 1.0e-9       # the fit's own periodic sums, weights of 70; 2e-12
+TOL_MEMORY = 1.0e-9          # the memory is the fit, weights of 200: 5e-14 at
+                             # a lag, 1.4e-11 in the elastic row
 MISS_NO_SECULAR = 1.0e-2     # a creeping response fitted without c t; 6.8e-2
 # [h] parity with clq at nu(s): 6e-14 (u), 8e-12 (sigma) measured, the stress
 # losing digits to lam = 2 mu nu/(1 - 2 nu) inside the ORACLE as nu -> 1/2.
@@ -747,16 +768,61 @@ def g_inversion() -> None:
     close("the elastic instant is exact with a tail",
           float(np.abs(fitted.weights(0.0)[0]
                        - np.eye(1 + len(s))[0]).max()), TOL_INV_IDENTITY)
-    # the compliance creeps: 1 + (t/tau_A)^alpha + t/tau_M, and c = 1/tau_M
+
+    def worst(rheo, grid, at):
+        """The three functions of ``rheo`` fitted on ``grid`` with its tail,
+        against the contour at ``at``, over each one's maximum there."""
+        pr = laplace.Prony(grid, tails=rheology.tails([rheo]))
+        out = 0.0
+        for fn in (lambda m: m.mu / MU,
+                   lambda m: rheology.g_of(m.mu, m.lam),
+                   lambda m: m.mu / MU * rheology.g_of(m.mu, m.lam)):
+            def G(sv):
+                return fn(relaxed(rheo, base, sv))
+            col = np.array([float(G(np.inf))] + [float(G(v)) for v in grid])
+            u = step_response(G, at)
+            out = max(out, float(np.abs(pr.weights(at) @ col - u).max()
+                                 / np.abs(u).max()))
+        return out
+
+    some = t[::3]
+    for (alpha, tau_A), tol in TAIL_ROWS:
+        close(f"... alpha = {alpha:.2g}, tau_A = {tau_A:g}, with its tail",
+              worst(rheology.Andrade(tau_M=1.0, tau_A=tau_A, alpha=alpha),
+                    s, some), tol)
+    # The tail is the spectrum's end only at times short of tau_A. A window
+    # that stops ten times above it is fitted all the same, and is off.
+    short = rheology.Andrade(tau_M=1.0, tau_A=0.1 * t_min, alpha=1.0 / 3.0)
+    above("TRIPWIRE: a window ten times short of tau_A, tail and all",
+          worst(short, s, some), MISS_SHORT_OF_TAU_A)
+    close("... and one laid out from a decade below tau_A, at the same "
+          "times", worst(short, laplace.s_grid(0.1 * short.tau_A, t_max),
+                         some), TOL_BELOW_TAU_A)
+    with warnings.catch_warnings(record=True) as heard:
+        warnings.simplefilter("always")
+        said = rheology.warn_window({"body": short}, s)
+        quiet = rheology.warn_window(
+            {"body": ANDRADE, "other": rheology.Maxwell(tau=1.0)}, s)
+    check("warn_window says so of the first, and nothing of a window that "
+          "reaches tau_A", len(said) == 1 and len(heard) == 1
+          and "tau_A" in said[0] and quiet == [])
+
+    # the compliance creeps: 1 + (t/tau_A)^alpha + t/tau_M. It never
+    # becomes steady, so what is held is its rate through the window
     col = np.array([1.0] + [float(1.0 / ANDRADE.shear_ratio(v)) for v in s])
     creep = 1.0 + (t / ANDRADE.tau_A) ** ANDRADE.alpha + t / ANDRADE.tau_M
+    rate = (ANDRADE.alpha * t ** (ANDRADE.alpha - 1.0)
+            / ANDRADE.tau_A ** ANDRADE.alpha + 1.0 / ANDRADE.tau_M)
     pr = laplace.Prony(s, secular=True, tails=tails)
     close("a creeping response with a tail: the creep law itself",
           float(np.abs(pr.weights(t) @ col / creep - 1.0).max()),
           TOL_TAIL_CREEP[0])
-    close("... and its steady rate, 1 / tau_M",
-          abs(float(pr.creep_rate_weights() @ col) * ANDRADE.tau_M - 1.0),
+    close("... and its rate through the window",
+          float(np.abs(pr.rate_weights(t) @ col / rate - 1.0).max()),
           TOL_TAIL_CREEP[1])
+    above("    (which the fit without the tail has not: tripwire)",
+          float(np.abs(laplace.Prony(s, secular=True).rate_weights(t) @ col
+                       / rate - 1.0).max()), MISS_CREEP_RATE)
     # a step every `period`: the sum itself, of exact responses
     F, period = forms[0], 5.0
     col = np.array([1.0] + [float(F(v)) for v in s])
@@ -767,6 +833,40 @@ def g_inversion() -> None:
     close("a step every 5 in that body: displacement since the last one",
           float(np.abs(fitted.cycle_weights(tc, period) @ col - direct).max()
                 / np.abs(direct).max()), TOL_TAIL_CYCLE)
+    # ... its rate, the derivative of that sum, and the velocity of a fault
+    # locked between the steps: the modulus relaxes to nothing, u(inf) = 0
+    def since(at):
+        return sum(step_response(F, at + n * period) for n in range(12))
+    exact = (since(tc * (1.0 + h)) - since(tc * (1.0 - h))) / (2.0 * h * tc)
+    close("... its rate",
+          float(np.abs(fitted.cycle_rate_weights(tc, period) @ col
+                       - exact).max() / np.abs(exact).max()),
+          TOL_TAIL_CYCLE_RATE)
+    close("... and a fault locked between them",
+          float(np.abs(fitted.locked_rate_weights(tc, period) @ col
+                       - period * exact).max()
+                / np.abs(period * exact).max()), TOL_TAIL_CYCLE_RATE)
+    above("    (the rate without the tail: tripwire)",
+          float(np.abs(plain.cycle_rate_weights(tc, period) @ col
+                       - exact).max() / np.abs(exact).max()),
+          MISS_CYCLE_RATE)
+    # the closed-form sums against the fit's own values summed, at an
+    # exponent small enough for what lies past the tail's last pole to
+    # count (6 % of it at alpha = 0.1): gone at once, in every term
+    low, far = laplace.Prony(s, tails=(0.1,)), 50.0
+    at = np.array([0.1, 0.5, 0.9]) * far
+    back = np.arange(700)[:, None] * far
+    shape = (back.size, at.size, -1)
+    close("the periodic sum is the fit's own, summed: what lies past the "
+          "tail's last pole included",
+          float(np.abs(low.cycle_weights(at, far) - (
+              low.weights((at + back).ravel()).reshape(shape)
+              - low.weights(back.ravel())[:, None, :]).sum(axis=0)).max()),
+          TOL_TAIL_SUMS)
+    close("... and so is its rate",
+          float(np.abs(low.cycle_rate_weights(at, far) - low.rate_weights(
+              (at + back).ravel()).reshape(shape).sum(axis=0)).max()),
+          TOL_TAIL_SUMS)
     # the fit as memory: exponentials, and what has gone by any lag > 0
     tau, C, gone = fitted.memory()
     check("as memory a tail is its poles within a decade, faster than "
@@ -778,6 +878,19 @@ def g_inversion() -> None:
     close("... which with what has gone is the elastic instant",
           float(np.abs(C.sum(axis=0) + gone - np.eye(1 + len(s))[0]).max()),
           TOL_MEMORY)
+
+    def at_lag(lag, tau, C):
+        return np.column_stack([np.ones(lag.size),
+                                np.exp(-lag[:, None] / tau[None, :])]) @ C
+    close("... and is the fit at every lag the window holds",
+          float(np.abs(at_lag(t, tau, C) - fitted.weights(t)).max()),
+          TOL_MEMORY)
+    every = np.concatenate([np.logspace(-9.0, -1.0, 9) * t_min, t])
+    tau_all, C_all, _gone = fitted.memory(
+        decades=defaults.LAPLACE_TAIL_DECADES)
+    close("with every pole of the tail kept it is the fit at ANY lag > 0",
+          float(np.abs(at_lag(every, tau_all, C_all)
+                       - fitted.weights(every)).max()), TOL_MEMORY)
     tau0, C0, gone0 = plain.memory()
     check("with no tail the memory is the fit, and nothing has gone",
           tau0 is plain.tau and C0 is plain.coefficients()

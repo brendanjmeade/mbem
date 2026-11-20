@@ -111,9 +111,15 @@ is FLAT in time.
       by 1.9 % through the window (tripwire). The exponential law, against
       a scalar equation whose kernel is the crack's k_E(t) off the contour,
       held in time on 85 poles from 1e-4 to 1e10 (1e-9 between its points),
-      which shares nothing with the real-axis fit: 0.9949 .. 0.9959, the
+      which shares nothing with the real-axis fit: 0.9949 .. 0.9958, the
       body's relaxation multiplying the slip by 5.4 by the window's end. No
-      mode grows.
+      mode grows. A body with a tail is stepped with the stabilised method
+      whatever it is: the tail's decade is ten times the fastest rate, and
+      the embedded pair gives the same moments at over twice the
+      evaluations. And the same equation as a SCALAR on three decades of
+      window, where the fit's relaxed limit pushes and is moved (rule 20):
+      4e-5 to a tenth of the window, 3e-3 at its end (tripwire: that is
+      what the correction costs the last decade).
 """
 
 from __future__ import annotations
@@ -170,6 +176,10 @@ TOL_BLOCKS = 5.0e-4      # the boundary's unknowns, its body factored in blocks;
 FLAT_TAIL = 2.0e-3       # [k] spread of a ratio in an Andrade body; 5e-4, 9e-4
 NO_TAIL = 1.0e-2         # ... stepped on the fit without its tail; 1.9e-2
 TOL_KERNEL_TIME = 1.0e-7    # the reference's k_E(t) between its own points; 1e-9
+TOL_PAIR = 1.0e-4        # the pair's moments over the stabilised method's; 2e-5
+PAIR_COSTS = 2.0         # ... its evaluations over the other's; 2.5
+TOL_LATE = (5.0e-4, 6.0e-3)     # a scalar on (0.1, 100): to t = 10, and at
+END_COSTS = 1.0e-3              # 100; 4.4e-5, 2.9e-3 -- which is not small
 
 CHECKS = []
 
@@ -460,7 +470,15 @@ def k_andrade(P):
                body.tau.size == len(P.s) - 1 + 3 and np.isclose(
                    body.tau.min(), 0.1 * np.sort(1.0 / np.asarray(P.s))[1]),
                f"{body.tau.size} poles")
-    got = P.moments(stepper.march(body, P.linear, t))
+    stepped = stepper.march(body, P.linear, t)
+    got = P.moments(stepped)
+    pair = stepper.march(body, P.linear, t, method="RK45")
+    check_bool("a body with a tail is stepped with the stabilised method",
+               stepped.method == "RKC", stepped.method)
+    check("... the embedded pair gives the same moments",
+          float(np.abs(P.moments(pair) / got - 1.0).max()), TOL_PAIR)
+    check_gt("... at this many times the evaluations of the law",
+             pair.nfev / stepped.nfev, PAIR_COSTS)
     ref = VV.step_response(lambda sv: penny.eshelby_moment(
         P.drop / (k_of(sv) + P.eta0 * sv), A), t)
     check_band("linear law: moment over the contour inversion of the closed "
@@ -511,6 +529,29 @@ def k_andrade(P):
                P.moments(h) / penny.eshelby_moment(1.0, A) / ref, FLAT_TAIL)
     check_gt("the body's relaxation matters by the window's end (tripwire)",
              float(ref[-1] / ((a_s / P.k_e) * np.log1p(t[-1] / 0.01))), 3.0)
+
+    # The crack as a SCALAR (its stiffness k_E(s), the same closed form) on
+    # the megathrust's window, three decades. There the fit's relaxed limit
+    # pushes, by 1.3e-3 of the elastic stiffness; it is moved to the slowest
+    # pole as rule 20 has it, and that costs the window's last decade.
+    long = laplace.s_grid(0.1, 100.0)
+    one = stepper.Body(
+        [types.SimpleNamespace(S=np.array([[-float(k_of(sv)) / k_e]]),
+                               L=np.ones(1), faults=(), layout=None, n=1,
+                               x0=np.zeros(1), X=np.zeros((1, 1)))
+         for sv in (np.inf,) + tuple(long)], s=long, tails=tails)
+    tl = np.logspace(-1.0, 2.0, 7)
+    err = np.abs(stepper.march(one, lambda tr: tr, tl).slip[:, 0]
+                 / VV.step_response(lambda sv: 1.0 / (k_of(sv) / k_e + sv), tl)
+                 - 1.0)
+    check_bool("on three decades of window the fit's relaxed limit pushes, "
+               "and is moved", one.growing == 1,
+               f"{one.removed:.1e} of the elastic stiffness")
+    check("... a scalar crack stepped on it: to a tenth of the window",
+          float(err[tl <= 10.0].max()), TOL_LATE[0])
+    check("... and at its end", float(err[-1]), TOL_LATE[1])
+    check_gt("    (what moving the limit costs the last decade: tripwire)",
+             float(err[-1]), END_COSTS)
 
 
 # ---- [f] the megathrust ----------------------------------------------

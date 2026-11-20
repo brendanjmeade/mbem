@@ -160,7 +160,7 @@ python -m mbem run configs/plate_substrate.py --sweep half_x=400,800 --sweep sid
 ```python
 from mbem import laplace
 s, stack = laplace.run_stack(run_dir)            # elastic state, then one per s
-u_top = np.tensordot(laplace.Prony(s).weights(t), stack["u:top"], axes=1)
+u_top = np.tensordot(laplace.run_fit(run_dir).weights(t), stack["u:top"], axes=1)
 ```
 
 `Prony` fits a constant plus exponentials whose relaxation times are the
@@ -193,9 +193,10 @@ ladder at the same rate.
 
 An Andrade substrate (`--set andrade_alpha=0.3333`: transient creep as a power
 of time) has no fastest relaxation, and a fit by exponentials that end at the
-window's short end is then 8-28 % off through the window. The fit is given the
+window's short end is then 3-21 % off through the window. The fit is given the
 body's tail instead, one more term and no more solves, which puts it back at
-1e-3: `laplace.run_fit(run_dir)` is the fit of a stored run, tails included.
+1e-3 where the window reaches down to `tau_A` (the run warns where it does
+not): `laplace.run_fit(run_dir)` is the fit of a stored run, tails included.
 
 All of this is linear. A fault whose law is not -- friction that is not
 linearized, a power-law shear zone -- is stepped in time instead, the body
@@ -294,7 +295,7 @@ periodic, and the fit sums it in closed form:
 
 ```python
 s, stack = laplace.run_stack(run_dir)
-v = np.tensordot(laplace.Prony(s).locked_rate_weights(t, period),
+v = np.tensordot(laplace.run_fit(run_dir).locked_rate_weights(t, period),
                  stack["u:top"], axes=1)       # per unit slip RATE
 ```
 

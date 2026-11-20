@@ -250,11 +250,12 @@ Three is the default: the inversion then sits well under the spatial error. A
 rate wants four.
 
 **A body with no fastest relaxation** (Andrade) breaks that fit as it stands.
-By the fastest $\tau_j$ a tenth to a third of its response has already
+By the fastest $\tau_j$ a fifth to two fifths of its modulus has already
 relaxed; the elastic row pins $u(0^+)$ all the same, and the poles nearest
-the short end take the difference up in the wrong shape. The error is 8-28 %
-THROUGH the window, not at its short end, it hardly falls with more points a
-decade, and it falls only as $t_{\min}^\alpha$ as the window is lowered. So
+the short end take the difference up in the wrong shape. The error is 3-21 %
+THROUGH the window (the table below), not at its short end, it hardly falls
+with more points a decade, and it falls only as $t_{\min}^\alpha$ as the
+window is lowered (thirteen more states at the short end for 4e-3). So
 each exponent a body's spectrum ends in (`rheology.tails`) gets one more term
 in the fit, in place of the fastest pole: every pole BEYOND the grid, on the
 grid's own spacing, their amplitudes tied to the power law,
@@ -277,12 +278,36 @@ $(0.1,100)$, $\tau_M=1$:
 
 (Maxwell and Burgers on the same footing: 1.5e-3, 6.7e-4.) What is left is
 the tail's shape, worst where the transient is strongest at the window's
-short end. With the tail the fit also holds a hundred times BELOW the window
-(5e-3), where the plain fit knows nothing, and a rate, a creeping response
-and the periodic sums carry it too. **A stored run's fit is
-`laplace.run_fit(run_dir)`**, which reads the tails from the run's own
-record: a consumer that built `Prony(s)` itself would give this body the
-plain fit and still look smooth.
+short end.
+
+**The window reaches down to $\tau_A$.** The power law is the spectrum's
+end only at times short of $\tau_A$, where the transient strain is still
+under the elastic one. A window that stops above it is fitted with a tail of
+the wrong shape, and the table no longer holds. The error depends on
+$t_{\min}/\tau_A$ alone; at $\alpha=1/3$, three points a decade:
+
+| $t_{\min}/\tau_A$ | 0.1 | 1 | 3 | 10 | 100 |
+|---|---|---|---|---|---|
+| worst of the three | 1.1e-3 | 6.5e-3 | 1.6e-2 | 3.5e-2 | 1.4e-1 |
+| $g(t)$ alone | 1.1e-4 | 3.5e-4 | 7.4e-4 | 1.4e-3 | 3.9e-3 |
+
+A stress, which follows $\mu(t)$, loses it first; a displacement, which
+follows $g(t)$, is still at the fit's own error two decades past the rule.
+So a run whose window stops above $\tau_A$ is warned of
+(`rheology.warn_window`, and its `report.json`), not refused, and unlike a
+Burgers transient the cure is the same: lower `t_min`.
+
+With the tail the fit also holds a hundred times BELOW the window, where the
+plain fit knows nothing: 5e-3 on the table's first row, 2e-4 to 3e-2 over
+the four. A rate, a creeping response and the periodic sums carry the tail
+too: the rate of a train of steps and a locked fault's velocity are within
+1 % of the sums themselves where the plain fit is 80 % off. An Andrade body
+never creeps steadily, so the constant of a fit with the secular term is the
+fit's own there and not $1/\tau_M$; what holds is the creep rate through
+the window (4e-4). **A stored run's fit is `laplace.run_fit(run_dir)`**,
+which reads the tails from the run's own record: a consumer that built
+`Prony(s)` itself would give this body the plain fit and still look smooth
+(`webexport`'s time tables take `tails` with no default for that reason).
 
 **Time has no unit here.** A rheology is stated in relaxation times and
 modulus ratios, never in viscosities, so a run is in units of whatever its
@@ -436,18 +461,56 @@ times its $a\sigma$: there the law wants its radiation damping.
 an Andrade body has a tail (section 5), and the stepper's memory is the
 fit's: the tail's poles within a decade of the fastest fitted one are
 carried as memory like the rest, three more decaying vectors, and what lies
-beyond has gone by any lag greater than zero (`Prony.memory`), which leaves
-a step's own instant the elastic one. On the penny's scalar equation, a
-linear law, against its contour inversion: 1.3-3.7 % stepped on the plain
-fit, 0.2-1.5 % with the tail gone at once, 1.5e-4 to 8e-4 with a decade of
-it, and no better with two ($\alpha=1/3$, $\tau_A=\tau_M$, the fault's own
-time 1 to 0.01 of the body's). On the gate's crack (1,838 slip unknowns):
-moment over the contour inversion 0.9944-0.9948 under the linear law, and
-0.9949-0.9959 under the exponential one against a scalar equation whose
-kernel is $k_E(t)$ off the contour, the body's relaxation multiplying the
-slip by 5.4; on the plain fit the first ratio wanders by 1.9 %. A decade is
-ten times the fastest rate, which bounds the embedded pair's step: 3,134
-evaluations for 1,250 (the stabilised method: 1,236).
+beyond has gone by any lag greater than zero (`Prony.memory`). A step's
+LOAD is then the elastic one at its own instant and has lost that part an
+instant later, and the stiffness a fault slips against is the elastic one
+less that part from the start: 0.11 of the modulus at $\alpha=1/3$,
+$\tau_A=\tau_M$, 0.21 at a tenth of that $\tau_A$. It is wrong only at
+lags the window does not hold (an exponential law with the fault's own time
+down to $10^{-6}$ of the body's, against a scalar equation on the kernel
+off the contour: within 1.3e-3, and 3.4e-3 at that smaller $\tau_A$). On the penny's scalar equation, a linear
+law, against its contour inversion, window $(0.1,10)$: 1.3-3.7 % stepped
+on the plain fit, 0.2-1.5 % with the tail gone at once, 1.5e-4 to 8e-4 with
+a decade of it, and 1.5e-4 to 5e-4 with two, at ten times the stiffness
+again ($\alpha=1/3$, $\tau_A=\tau_M$, the fault's own time 1 to 0.01 of the
+body's; a Maxwell body there is at 5e-4 to 1.2e-3). On the gate's crack
+(1,838 slip unknowns): moment over the contour inversion 0.9944-0.9948
+under the linear law, and 0.9949-0.9958 under the exponential one against a
+scalar equation whose kernel is $k_E(t)$ off the contour, the body's
+relaxation multiplying the slip by 5.4; on the plain fit the first ratio
+wanders by 1.9 %.
+
+*A tail is stiff whatever the fault, so such a body is stepped with the
+stabilised method.* A decade of tail is ten times the fastest rate, which
+bounds the embedded pair's step: 3,134 evaluations for the stabilised
+method's 1,236 on the gate's crack, and on the megathrust's reach densely
+(2,164 slip unknowns, linear law) 30,044 for 4,823, with one answer; the
+Maxwell twin takes the pair 6,518. `march` therefore gives RKC to any body
+whose fit has a tail.
+
+*The last decade of a long window is the relaxed limit's.* Where the fit's
+relaxed limit pushes it is moved to the slowest pole (above), and what that
+costs grows to the window's end. On three decades, $(0.1,100)$, an Andrade
+body's limit pushes by 1.3e-3 to 7e-3 of the elastic stiffness (the report's
+`removed_over_elastic`), and the scalar equation is where the paragraph
+above has it to a tenth of the window, and at two to five times what was
+moved by its end:
+
+| body | fault's time 1, at $100\,\tau$ | fault's time 0.01 |
+|---|---|---|
+| Andrade 1/3, $\tau_A=1$ | 2.9e-3 | 5.9e-3 |
+| Andrade 1/3, $\tau_A=0.1$ | 1.3e-2 | 2.9e-2 |
+| Andrade 0.2, $\tau_A=1$ | 8.4e-3 | 1.7e-2 |
+| Maxwell, $\tau=2$ (its limit pushes there too) | 2.6e-3 | 3.9e-3 |
+
+Whether a limit pushes turns on the window (a Maxwell body's does on
+$(0.1,10)$ and not on $(0.1,100)$), so a longer window is no cure by rule;
+the report says how much was moved, and the Laplace route on the same
+states, which needs no such correction, is at 3e-5 to 8e-5 where its window
+holds the fault's own time. On the megathrust's reach in an Andrade
+substrate under the LINEAR law the two routes agree to 7e-4 at
+$0.1\,\tau$, 3e-4 or better from $0.2$ to $20\,\tau$, and 3e-3 at
+$100\,\tau$.
 
 **The anchor is in closed form, in time.** The penny of section 9 with the
 MOBILITY of its faces graded as $\sqrt{1-r^2/a^2}$ keeps Eshelby's slip under
@@ -656,11 +719,14 @@ the element is what a freed reach's slip is quoted with.
 for thirteen, 4,882 evaluations for 3,350, 516 s for 501). The mean
 afterslip is 0.014 / 0.036 / 0.081 / 0.144 / 0.189 / 0.203 of the slip at
 $0.1$ / $0.3$ / $1$ / $3$ / $10$ / $100\,\tau$ where the Maxwell substrate has
-0.016 / 0.042 / 0.095 / 0.164 / 0.203 / 0.208: an eighth less early, because
-the substrate's own transient takes the reach's stress first, and the same
-in the end. The free surface moves the other way, 4.2, 2.4 and 1.6 times
-the Maxwell run's postseismic displacement at $0.1$, $0.3$ and $1\,\tau$.
-Nothing independent checks this run; what is checked is the crack above.
+0.016 / 0.042 / 0.095 / 0.164 / 0.203 / 0.208: an eighth less early, the
+substrate's own transient relaxing the reach's stress before the reach can
+slip on it (a reading, not a measurement), and 2 % under at the window's
+end, where the stepper's own last decade carries 0.3 to 0.6 % (above). The
+free surface moves the other way, 4.2, 2.4 and 1.6 times the Maxwell run's
+postseismic displacement at $0.1$, $0.3$ and $1\,\tau$. Nothing independent
+checks this run under friction; what is checked is the crack above, and the
+same reach under the linear law against the Laplace route.
 
 **The body factored in blocks.** What is left dense above is the body: at
 every state its boundary operator is factored, for a solve per column of
@@ -1592,14 +1658,19 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
 - Nonlinear rheology is out of scope: it needs the viscous strain in the
   volume.
 - **A spectrum's end is a power law to leading order only** (section 5). The
-  tail's one term leaves 1e-4 to 7e-3 by how strong the transient is at the
-  window's short end; a second term at twice the exponent, with two more
-  states there, was measured at 1e-4 to 4e-4 and is not built. A spectrum
+  tail's one term leaves 1e-4 to 7e-3 where the window reaches down to
+  $\tau_A$, by how strong the transient is at its short end, and 2-14 % in
+  a stress where it stops ten to a hundred times above; a second term at
+  twice the exponent, with two more states there, was measured at 1e-4 to
+  4e-4 and is not built. **A stepped run's last decade is its relaxed
+  limit's** (section 6): moving a limit that pushes to the slowest pole
+  costs two to five times what is moved by the window's end, 0.3 % to 3 %
+  for an Andrade body on three decades, and a correction that left the
+  window alone is not written. A spectrum
   that is a BAND (an extended Burgers body, its Kelvin elements spread
   between two times) has a fastest time and needs no tail if the window
   reaches below it; where it does not, its tail is a power law cut off, and
-  that is not written. The `ve` site's payload script builds its own time
-  maps and would have to pass a run's tails (`webexport.time_tables`).
+  that is not written.
 
 *The floating plate.* As $\tilde\mu(s)\to0$ only the shear of the substrate
 holds a plate with free sides against a rigid horizontal translation. A

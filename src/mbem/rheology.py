@@ -91,9 +91,11 @@ class Andrade:
 
     NO FASTEST RELAXATION: its spectrum runs on to short times as a power
     law, ``tail`` being the exponent, and a fit by exponentials that end at a
-    window's short end is 8-28 % off throughout the window unless it is told
+    window's short end is 3-21 % off throughout the window unless it is told
     (``laplace.Prony(tails=...)``, ``tails`` below). The elastic instant is
-    exact all the same.
+    exact all the same. The power law is the spectrum's end only at times
+    short of ``tau_A`` (``tail_from``): a window must reach down to it
+    (``warn_window``).
     """
     tau_M: float
     tau_A: float
@@ -114,6 +116,13 @@ class Andrade:
         """The exponent of the power law its relaxation spectrum ends in at
         short times; None at ``alpha = 1``, which is Maxwell and has none."""
         return None if self.alpha == 1.0 else float(self.alpha)
+
+    @property
+    def tail_from(self):
+        """The time below which ``tail`` IS the spectrum, to leading order:
+        ``tau_A``, where the transient strain is still under the elastic one.
+        A fit's window reaches down to it or its tail is the wrong shape."""
+        return None if self.alpha == 1.0 else float(self.tau_A)
 
     def shear_ratio(self, s):
         return 1.0 / (1.0 + math.gamma(1.0 + self.alpha)
@@ -269,6 +278,44 @@ def tails(rheologies) -> tuple:
     given (``laplace.Prony(tails=...)``)."""
     found = {getattr(from_spec(r), "tail", None) for r in rheologies}
     return tuple(sorted(float(a) for a in found if a is not None))
+
+
+def warn_window(regions, s) -> list:
+    """Warn of a window whose short end is above a tail's own time
+    (``tail_from``), and return what was said. ``regions`` maps a name to
+    its rheology, ``s`` are the run's collocation points.
+
+    The fit's tail is a pure power law from the window's short end on. A
+    body whose transient is already past the elastic strain there (Andrade:
+    ``t_min > tau_A``) has a spectrum that bends before it, and the fit is
+    off through the window by more than its own error. Worst of mu(t), g(t)
+    and their product over the function's maximum, alpha = 1/3, three
+    points a decade (it depends on ``t_min / tau_A`` alone):
+        t_min / tau_A      0.1      1        3        10       100
+        the three          1.1e-3   6.5e-3   1.6e-2   3.5e-2   1.4e-1
+        g(t), a displacement's    1.1e-4   3.5e-4   7.4e-4   1.4e-3   3.9e-3
+    A warning and not a refusal: a displacement is still at the fit's own
+    error two decades past the rule, and a stress is not.
+    """
+    import warnings
+
+    from . import laplace
+
+    t_min = laplace.window(s)[0]
+    said = []
+    for name, rheo in regions.items():
+        reach = getattr(rheo, "tail_from", None)
+        if reach is not None and reach < t_min * (1.0 - 1.0e-9):
+            said.append(
+                f"region {name!r}: the transient time tau_A = {reach:g} is "
+                f"below the window's short end ({t_min:g}), where the fit's "
+                f"tail is the wrong shape. At alpha = 1/3 a stress is off "
+                f"through the window by 1.6 % with t_min at three times "
+                f"tau_A, 3.5 % at ten and 14 % at a hundred, a displacement "
+                f"by a tenth of that or less. Lay the window out from "
+                f"t_min <= tau_A (rheology.warn_window)")
+            warnings.warn(said[-1], stacklevel=2)
+    return said
 
 
 def moduli(rheology, mu, lam, s):

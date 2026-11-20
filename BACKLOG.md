@@ -89,9 +89,10 @@ and periodic sums), gated per s and in time against four closed forms. The
 plate-over-substrate case and config, run on a box ladder with a Maxwell and
 with a Burgers substrate. `rheology.Andrade` (transient creep as a power of
 time; issue #13): a body with NO FASTEST RELAXATION, which the fixed-pole fit
-as it stood misses by 8-28 % through the window; fitted with the spectrum's
+as it stood misses by 3-21 % through the window; fitted with the spectrum's
 tail (`Prony(tails=...)`, one term for the fastest pole, no more solves) it
-is at 1e-4 to 7e-3, and the stepper carries a decade of that tail as memory
+is at 1e-4 to 7e-3 where the window reaches down to `tau_A`, and the stepper
+carries a decade of that tail as memory, on the stabilised method
 (`verify_viscoelastic` [f]-[h], `verify_stepper` [k]). Gravity (`model.Gravity`, rule 17): buoyancy on the
 free surface and on density interfaces as a condition on the boundary, on the
 dense and both compressed backends, gated against loaded shells on a rigid
@@ -296,8 +297,15 @@ OPEN, in the order they bite:
   an extended Burgers body (a band of Kelvin elements: a fastest time, so no
   tail where the window reaches below it, and a power law CUT OFF where it
   does not); a second tail term at twice the exponent (measured: 1e-4 to
-  4e-4 with two more states, for 1e-4 to 7e-3). The `ve` site's payload
-  script builds its own time maps and must pass a run's tails.
+  4e-4 with two more states, for 1e-4 to 7e-3); a tail for a window that
+  stops ABOVE `tau_A`, where the spectrum has bent (2-14 % in stress today,
+  and a warning).
+* **The stepper's relaxed limit.** Moving a limit that pushes to the
+  slowest pole costs the last decade of a long window two to five times
+  what is moved: 0.3 % on the megathrust's reach in an Andrade substrate at
+  100 tau, 1-3 % for a stronger transient, 0.3-0.4 % for a Maxwell body
+  whose limit happens to push. A correction that left the window alone
+  (a fit constrained to a limit that resists) is not written.
 * **Rate and state.** The stepper takes any law of the traction; a law
   with a STATE variable, radiation damping (a law exponential in traction
   is refused where it starts over a hundred times its scale) and a normal

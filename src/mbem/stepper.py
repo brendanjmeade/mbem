@@ -47,7 +47,13 @@ tail, every pole beyond the window's short end in one term
 (``laplace.Prony(tails=...)``). Here the tail is memory like the rest: its
 poles within a decade of the fastest fitted one are carried, one decaying
 vector each, and what lies beyond has gone by any lag greater than zero
-(``Prony.memory``), so a step's own instant is still the elastic one.
+(``Prony.memory``). So a step's LOAD is the elastic one at its own instant
+and has lost that part an instant later (``load`` at ``t == te``, which is
+what a history records there and what ``march`` sizes its first step by),
+and the stiffness a fault slips against is the elastic one LESS that part
+throughout: a tenth to a fifth of the modulus, wrong only at lags the
+window does not hold. A decade of tail is ten times the fastest rate, so
+such a body is stepped with the stabilised method whatever its faults.
 
 The reduction is the dense backend's: a compressed operator solves no slip,
 and ``condense`` is one right-hand side per slip unknown. ``KernelBody`` is
@@ -102,7 +108,7 @@ class Body:
                 raise ValueError(f"a body that does not relax is ONE state; "
                                  f"got {len(states)} and no s")
             self.tau, self.C, self.window = np.zeros(0), np.ones((1, 1)), None
-            self._gone = np.zeros(1)
+            self._gone, tails = np.zeros(1), ()
         else:
             s = np.asarray(s, float)
             if len(states) != 1 + s.size:
@@ -112,6 +118,7 @@ class Body:
             self.tau, self.C, self._gone = laplace.Prony(
                 s, tails=tails).memory()
             self.window = laplace.window(s)
+        self.tails = tuple(tails)
         K, n = len(states), self.n
         S = np.stack([c.S for c in states])
         # traction = _S @ c.ravel(), c the (K, n) slip each state is asked for
@@ -276,7 +283,7 @@ class KernelBody:
                 raise ValueError(f"a body that does not relax is ONE state; "
                                  f"got {len(materials)} and no s")
             self.tau, self.C, self.window = np.zeros(0), np.ones((1, 1)), None
-            self._gone = np.zeros(1)
+            self._gone, tails = np.zeros(1), ()
         else:
             s = np.asarray(s, float)
             if len(materials) != 1 + s.size:
@@ -286,6 +293,7 @@ class KernelBody:
             self.tau, self.C, self._gone = laplace.Prony(
                 s, tails=tails).memory()
             self.window = laplace.window(s)
+        self.tails = tuple(tails)
         self.materials = materials
         W = np.array([kernel.weights(m, lam) for m, lam in materials])  # (K, B)
         self._a = (self.C @ W).T.copy()                  # (B, 1 + m)
@@ -734,7 +742,9 @@ def march(body: Body, rate, t, events=(0.0,), rtol: float = None,
     ``method`` is ``scipy.integrate.solve_ivp``'s, or ``"RKC"``, the
     stabilised method of ``mbem.rkc``; left ``None`` it is the one that
     suits the body, the embedded pair for a dense ``Body`` and RKC for a
-    ``KernelBody``, whose faults are fine enough to be stiff.
+    ``KernelBody``, whose faults are fine enough to be stiff, and for any
+    body whose fit has a tail, whose memory is stiff whatever the fault
+    (``defaults.STEPPER_TAIL_DECADES``).
 
     A relaxing body is refused past the end of its fit's window, counted
     from the first event: beyond it nothing constrains the kernel.
@@ -746,7 +756,8 @@ def march(body: Body, rate, t, events=(0.0,), rtol: float = None,
     rtol = defaults.STEPPER_RTOL if rtol is None else rtol
     atol = defaults.STEPPER_ATOL if atol is None else atol
     if method is None:
-        method = (defaults.STEPPER_METHOD_KERNEL if isinstance(body, KernelBody)
+        method = (defaults.STEPPER_METHOD_KERNEL
+                  if isinstance(body, KernelBody) or body.tails
                   else defaults.STEPPER_METHOD)
     solver = {"RKC": RKC}.get(method, method)
     events = _events(events)

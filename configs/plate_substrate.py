@@ -55,9 +55,10 @@ only inside its window, and the transient is over by a few ``tau_K``.
 ``andrade_alpha > 0`` makes it an Andrade body instead (``rheology.Andrade``):
 transient creep as ``(t / tau_A)^alpha`` on the same steady time, ``tau_A``
 the time at which the transient strain equals the elastic one. It has no
-fastest relaxation, so there is no ``t_min`` to lower for it: the fit is
-given the body's tail instead, by the figures here and by the stepper alike
-(``laplace.run_fit``).
+fastest relaxation for a window to reach below: the fit is given the body's
+tail instead, by the figures here and by the stepper alike
+(``laplace.run_fit``). The tail is the body's only at times short of
+``tau_A``, so keep ``t_min <= tau_A`` (the run warns otherwise).
 
 ``rho_plate`` / ``rho_substrate`` (kg/m^3) turn gravity on: buoyancy on the
 free surface and on the interface (docs/viscoelastic.md, section 7). It leaves
@@ -212,6 +213,10 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     # is first order in, kept in one ratio
     edge_near, edge_interface, eps_substrate = (
         v / refine for v in (edge_near, edge_interface, eps_substrate))
+    if tau_K < 0.0 or andrade_alpha < 0.0:
+        raise ValueError(f"tau_K = {tau_K:g} and andrade_alpha = "
+                         f"{andrade_alpha:g} are zero (a Maxwell substrate) "
+                         f"or positive")
     if tau_K > 0.0 and andrade_alpha > 0.0:
         raise ValueError("tau_K is a Burgers substrate and andrade_alpha an "
                          "Andrade one: give one of them")

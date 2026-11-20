@@ -310,12 +310,14 @@ def decode_modes(modes, rows) -> np.ndarray:
 
 
 def time_weights(s, periods=(), per_decade: int = None,
-                 phases: int = None, tails=()) -> dict:
+                 phases: int = None, *, tails) -> dict:
     """``{quantity: {"axis", "at", "w"}}``: every quantity of time a viewer
     shows, as the weights ``(n, n_states)`` that take a stack to it.
 
     ``s`` are the finite collocation points of the run and ``tails`` its
-    fit's (``rheology.tails`` of what relaxes in it). The times are
+    fit's (``rheology.tails`` of what relaxes in it), which has NO default:
+    left out, a body with no fastest relaxation would be given the fit of
+    one that has, and still look smooth. The times are
     log-spaced over the fit's own window (``laplace.window``), never beyond
     it:
 
@@ -349,7 +351,7 @@ def time_weights(s, periods=(), per_decade: int = None,
 
 
 def time_tables(s, C, periods=(), per_decade: int = None,
-                phases: int = None, tails=()) -> dict:
+                phases: int = None, *, tails) -> dict:
     """``time_weights`` applied to the coefficients ``encode_modes`` returned
     for a stack: ``rows = w @ C``, what a reader multiplies into the modes.
     A stack too small to need modes is shipped whole and takes ``w`` itself.
@@ -357,4 +359,4 @@ def time_tables(s, C, periods=(), per_decade: int = None,
     return {name: {**{k: v for k, v in q.items() if k != "w"},
                    "rows": q["w"] @ C}
             for name, q in time_weights(s, periods, per_decade, phases,
-                                        tails).items()}
+                                        tails=tails).items()}

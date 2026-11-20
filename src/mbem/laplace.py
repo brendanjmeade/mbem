@@ -22,20 +22,23 @@ outside, nothing constrains the fit.
 
 A body WITH NO FASTEST RELAXATION (``rheology.Andrade``: a spectrum that runs
 on to short times as ``rate^-alpha``) breaks that fit as it stands. What has
-relaxed faster than the fastest ``tau_j`` is then a tenth to a third of the
-response, the elastic row pins it all the same, and the poles nearest the
-short end take it up in the wrong shape: 8-28 % throughout the window, hardly
+relaxed faster than the fastest ``tau_j`` is then a fifth to two fifths of
+the modulus, the elastic row pins it all the same, and the poles nearest the
+short end take it up in the wrong shape: 3-21 % throughout the window, hardly
 better at more points a decade, and falling only as ``t_min^alpha`` as the
 window is lowered. So each exponent in ``tails`` gets one more term, in place
-of the fastest pole: every pole BEYOND the grid, on the grid's own spacing,
-their amplitudes tied to the power law,
+of the fastest pole: every pole from that one's place on, on the grid's own
+spacing, their amplitudes tied to the power law,
 
     sum_k (rate_k / rate_0)^-alpha  s / (s + rate_k)       [one unknown]
 
 which is what the spectrum is there to leading order. No more solves, the
 elastic instant still exact, and the fit is back near where a body with a
 fastest time has it: 1e-4 to 7e-3 at three points a decade, by how strong
-the transient is at the window's short end (``defaults``).
+the transient is at the window's short end (``defaults``). That holds where
+the window reaches down to the transient's own time (Andrade's ``tau_A``):
+above it the spectrum has bent away from the power law, and a stress is off
+by 2-14 % (``rheology.warn_window``).
 """
 
 from __future__ import annotations
@@ -214,7 +217,9 @@ class Prony:
 
     def creep_rate_weights(self) -> np.ndarray:
         """``(n_states,)``: the steady creep rate ``c`` of a response fitted
-        with the secular term, ``c = creep_rate_weights() @ stack``."""
+        with the secular term, ``c = creep_rate_weights() @ stack``. A body
+        whose creep never becomes steady (Andrade) has none: ``c`` is then
+        the fit's own, and ``rate_weights`` is what holds."""
         if not self.secular:
             raise ValueError("fitted without the secular term: no creep rate")
         return self._pinv[-1]
@@ -250,7 +255,10 @@ class Prony:
         velocity between early and late in it. What the response does long
         after a period enters the sum and the limit alike and all but
         cancels, so this asks less of the window than the limit itself does:
-        a few periods."""
+        a few periods. (With a tail, what lies past its last pole relaxes
+        AT the earthquake and is in no velocity after it: the mean over
+        ``(0, T]`` is short of the elastic response by that much, 6e-6 of it
+        at alpha = 1/3 and 8e-3 at 0.1.)"""
         return (float(period) * self.cycle_rate_weights(t, period)
                 - self.relaxed_weights()[None, :])
 

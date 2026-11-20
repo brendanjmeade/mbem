@@ -260,6 +260,9 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                            f"{sorted(known)})")
         rheology.require_one_eps(model, run.model.eps, relaxing)
         rheology.require_stable(model)
+        window_notes = rheology.warn_window(relaxing, run.laplace.s)
+        if window_notes:
+            report["warnings"] = window_notes
         creeping = _creeping_faults(model, run)
         states = rheology.laplace_states(
             {r.name: (r.material.mu, r.material.lam) for r in model.regions},

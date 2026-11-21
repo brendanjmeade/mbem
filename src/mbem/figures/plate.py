@@ -221,6 +221,10 @@ def _rheology_name(run) -> str:
         return rf"Burgers, $\tau_K = {r['tau_K']:g}\,\tau$"
     if r["kind"] == "andrade":
         return rf"Andrade, $\alpha = {r['alpha']:.2g}$"
+    if r["kind"] == "extended_burgers":
+        law = r.get("power_law")
+        return (rf"extended Burgers, $\alpha = {law[0]:.2g}$" if law
+                else f"extended Burgers, {len(r['tau_K'])} elements")
     return r["kind"].capitalize()
 
 

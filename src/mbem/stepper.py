@@ -115,8 +115,9 @@ class Body:
                 raise ValueError(f"{s.size} Laplace parameters want "
                                  f"{1 + s.size} states (the elastic one "
                                  f"first), got {len(states)}")
-            self.tau, self.C, self._gone = laplace.Prony(
-                s, tails=tails).memory()
+            fit = laplace.Prony(s, tails=tails)
+            self.tau, self.C, self._gone = fit.memory()
+            tails = fit.tails          # the fit's: a band may have none here
             self.window = laplace.window(s)
         self.tails = tuple(tails)
         K, n = len(states), self.n
@@ -290,8 +291,9 @@ class KernelBody:
                 raise ValueError(f"{s.size} Laplace parameters want "
                                  f"{1 + s.size} states (the elastic one "
                                  f"first), got {len(materials)}")
-            self.tau, self.C, self._gone = laplace.Prony(
-                s, tails=tails).memory()
+            fit = laplace.Prony(s, tails=tails)
+            self.tau, self.C, self._gone = fit.memory()
+            tails = fit.tails          # the fit's: a band may have none here
             self.window = laplace.window(s)
         self.tails = tuple(tails)
         self.materials = materials

@@ -93,7 +93,16 @@ as it stood misses by 3-21 % through the window; fitted with the spectrum's
 tail (`Prony(tails=...)`, one term for the fastest pole, no more solves) it
 is at 1e-4 to 7e-3 where the window reaches down to `tau_A`, and the stepper
 carries a decade of that tail as memory, on the stabilised method
-(`verify_viscoelastic` [f]-[h], `verify_stepper` [k]). Gravity (`model.Gravity`, rule 17): buoyancy on the
+(`verify_viscoelastic` [f]-[h], `verify_stepper` [k]).
+`rheology.ExtendedBurgers` (a Maxwell element and any number of Kelvin
+elements; `band` cuts them from a power law between two times, the
+laboratory's absorption band): Andrade with its two ends cut off, so it HAS
+a fastest relaxation and the fit sees it or not by the window. A band that
+runs on below the window is fitted with a tail that stops where the band
+does (`Prony(tails=...)` takes an exponent and the band's two rates; 0.6-3 %
+with a tail that has no end, 7e-4 to 1e-2 with its own), and where the
+window reaches below the band the tail drops out (`verify_viscoelastic`
+[f]-[h]). Gravity (`model.Gravity`, rule 17): buoyancy on the
 free surface and on density interfaces as a condition on the boundary, on the
 dense and both compressed backends, gated against loaded shells on a rigid
 core (exact) elastically, per s and in time, and against hydrostatics on a
@@ -315,9 +324,11 @@ OPEN, in the order they bite:
   FAULT_TRACTION fault on the compressed backend would lift that.
 * **Further linear rheologies.** Any `shear_ratio(s)` is a rheology
   (`rheology.KINDS`), and one with a `tail` is fitted with it. Not written:
-  an extended Burgers body (a band of Kelvin elements: a fastest time, so no
-  tail where the window reaches below it, and a power law CUT OFF where it
-  does not); a second tail term at twice the exponent (measured: 1e-4 to
+  a spectrum that is not a power law (a peak on the band, as the
+  laboratory's model also has: its elements are `ExtendedBurgers`' already,
+  its tail is not); a band that is over before the window and strong
+  (0.7 % at a strength of one, 11 % at ten, and warned of); a second tail
+  term at twice the exponent (measured: 1e-4 to
   4e-4 with two more states, for 1e-4 to 7e-3); a tail for a window that
   stops ABOVE `tau_A`, where the spectrum has bent (2-14 % in stress today,
   and a warning).

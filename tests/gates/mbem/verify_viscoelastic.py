@@ -51,7 +51,12 @@ the real-axis fit under test.
      whose mu(s) holds a FRACTIONAL power of s: inverted on the contour its
      compliance is the creep law it states, 1 + (t/tau_A)^alpha + t/tau_M,
      which is also what says the contour takes such a power; at alpha = 1
-     it is Maxwell at the two rates summed; and it alone has a ``tail``.
+     it is Maxwell at the two rates summed; and it has a ``tail``.
+     ``ExtendedBurgers``, any number of Kelvin elements: with one it IS
+     ``Burgers``, its compliance off the contour is its elements' creep
+     law, and the elements of a ``band`` are the continuous band's (and at
+     half as many are visibly not: tripwire), whose ``tail`` is the
+     exponent and the two rates it runs between.
   g  the inversion, on transforms that are known exactly: poles OFF the
      collocation grid, value and rate, a creeping response (which needs the
      term linear in t, and is visibly wrong without it), and the closed-form
@@ -66,12 +71,18 @@ the real-axis fit under test.
      ``tau_A`` (tripwire, and ``rheology.warn_window`` says so) against one
      laid out from below it; a creeping response and its rate through the
      window;
+     a power law that STOPS (an ``ExtendedBurgers`` band): from a decade
+     below the window the plain fit and a tail with no end both miss
+     (tripwires) and its own tail holds; from nine decades below it is
+     Andrade's; and where the window reaches below the band the tail is
+     dropped and the fit is the plain one, bitwise;
      the periodic sum against the sum itself, its rate and a locked fault's
      velocity against the same sums (the plain fit is 80 % off: tripwire);
      and the fit as memory (``Prony.memory``), which is the fit at every lag
      the window holds and with what has ``gone`` the elastic instant.
-  h  a dislocation in a relaxing FULL SPACE, Maxwell, Burgers and Andrade
-     (fitted with its tail): the fault inside a viscoelastic region. Kernel parity against the clq oracle AT
+  h  a dislocation in a relaxing FULL SPACE, Maxwell, Burgers, Andrade and
+     an extended Burgers band (the last two fitted with their tails): the
+     fault inside a viscoelastic region. Kernel parity against the clq oracle AT
      nu(s), which reaches 0.49 where no other gate goes; then u(t) and the
      elastic stress sigma(t), which relaxes to nothing while u moves to its
      incompressible value.
@@ -169,6 +180,8 @@ Run from anywhere. PASS:/FAIL:, exit 1 on FAIL.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import sys
 import time
 import types
@@ -218,6 +231,10 @@ LAM = 45.0                                   # with MU = 30: nu = 0.30
 MAXWELL = rheology.Maxwell(tau=1.0)
 BURGERS = rheology.Burgers(tau_M=5.0, tau_K=0.4, kelvin=1.5)
 ANDRADE = rheology.Andrade(tau_M=1.0, tau_A=1.0, alpha=1.0 / 3.0)
+# Andrade's power law between two times: at short times the Andrade body of
+# tau_A = 1, its short end a decade below the windows here, 12 elements
+BAND = dict(tau_M=1.0, strength=1.591, alpha=1.0 / 3.0, tau_H=10.0)
+EXTENDED = rheology.ExtendedBurgers.band(tau_L=1.0e-2, **BAND)
 WINDOW = (0.1, 10.0)                         # the times the solved clauses read
 
 TOL_RHEOLOGY = 1.0e-13   # closed forms of mu(s), g(s), K; 2e-16
@@ -260,6 +277,17 @@ TOL_TAIL_SUMS = 1.0e-9       # the fit's own periodic sums, weights of 70; 2e-12
 TOL_MEMORY = 1.0e-9          # the memory is the fit, weights of 200: 5e-14 at
                              # a lag, 1.4e-11 in the elastic row
 MISS_NO_SECULAR = 1.0e-2     # a creeping response fitted without c t; 6.8e-2
+# [f], [g] an extended Burgers band (EXTENDED). Its creep law off the
+# contour: 1e-16. Its elements against the continuous band, over the band's
+# strength: 1.8e-5 at the default four nodes a decade, 1.6e-3 at two. Fitted
+# over (0.1, 100), on a third of the times: as it stands 6.9e-3, with a tail
+# that has no end 6.9e-3, with its own 6.7e-4; the same band from 1e-9
+# 1.1e-3; from 0.1, where the tail drops out, 1.6e-4. [h] in that body:
+# u(t) 5e-5, sigma(t) 4e-4.
+TOL_BAND_ELEMENTS = 1.0e-4
+MISS_BAND_COARSE = 5.0e-4
+MISS_BAND_NO_END = 3.0e-3
+TOL_BAND_VALUE = 2.0e-3
 # [h] parity with clq at nu(s): 6e-14 (u), 8e-12 (sigma) measured, the stress
 # losing digits to lam = 2 mu nu/(1 - 2 nu) inside the ORACLE as nu -> 1/2.
 TOL_PARITY_U = 1.0e-11
@@ -615,12 +643,14 @@ def f_rheology() -> None:
     K = LAM + 2.0 * MU / 3.0
     g_e = rheology.g_of(MU, LAM)
     tau2 = MAXWELL.tau * (3.0 * K + 4.0 * MU) / (3.0 * K)
-    check("s = inf is exactly the unrelaxed solid (Maxwell, Burgers, Andrade)",
+    check("s = inf is exactly the unrelaxed solid (Maxwell, Burgers, Andrade, "
+          "extended Burgers)",
           MAXWELL.shear_ratio(np.inf) == 1.0 == BURGERS.shear_ratio(np.inf)
-          and ANDRADE.shear_ratio(np.inf) == 1.0)
+          and ANDRADE.shear_ratio(np.inf) == 1.0
+          == EXTENDED.shear_ratio(np.inf))
     worst_k = worst_mu = worst_g = 0.0
     for s in (1e-3, 0.3, 7.0, 1e4, 0.5 + 2.0j):
-        for rheo in (MAXWELL, BURGERS, ANDRADE):
+        for rheo in (MAXWELL, BURGERS, ANDRADE, EXTENDED):
             mu, lam = rheology.moduli(rheo, MU, LAM, s)
             worst_k = max(worst_k, abs(lam + 2.0 * mu / 3.0 - K) / K)
         mu, lam = rheology.moduli(MAXWELL, MU, LAM, s)
@@ -650,15 +680,55 @@ def f_rheology() -> None:
     close("Andrade at alpha = 1 is Maxwell at the two rates summed",
           max(abs(one.shear_ratio(s) - both.shear_ratio(s))
               for s in (1e-3, 0.3, 7.0, 1e4, 0.5 + 2.0j)), TOL_RHEOLOGY)
+    # any number of Kelvin elements: Burgers' two numbers as tuples
+    chain = rheology.ExtendedBurgers(tau_M=BURGERS.tau_M,
+                                     tau_K=(BURGERS.tau_K,),
+                                     kelvin=(BURGERS.kelvin,))
+    check("ExtendedBurgers with one element IS Burgers, bitwise",
+          all(chain.shear_ratio(s) == BURGERS.shear_ratio(s)
+              for s in (1e-3, 0.3, 7.0, 1e4, 0.5 + 2.0j)))
+
+    def transient(rheo, at):
+        """The elements' own creep, over the elastic strain."""
+        return ((1.0 - np.exp(-at[:, None] / np.array(rheo.tau_K)))
+                / np.array(rheo.kelvin)).sum(axis=1)
+    creep = 1.0 + transient(EXTENDED, t) + t / EXTENDED.tau_M
+    close("... its compliance off the contour is its elements' creep law",
+          float(np.abs(step_response(
+              lambda sv: 1.0 / EXTENDED.shear_ratio(sv), t) / creep
+              - 1.0).max()), TOL_CREEP_LAW)
+    # a band's elements against the continuous band, by quadrature
+    alpha, tau_L, tau_H = EXTENDED.power_law
+    with mp.workdps(30):
+        exact = np.array([float(mp.quad(
+            lambda x: alpha * mp.exp(alpha * x) * (1 - mp.exp(-tt / mp.exp(x))),
+            mp.linspace(mp.log(tau_L), mp.log(tau_H), 7))) for tt in t]
+            ) / (tau_H ** alpha - tau_L ** alpha)
+    close("a band's elements sum to its strength",
+          abs(EXTENDED.strength / BAND["strength"] - 1.0), TOL_RHEOLOGY)
+    close(f"... and are the continuous band, {len(EXTENDED.tau_K)} of them "
+          f"({defaults.EXTENDED_BURGERS_PER_DECADE} nodes a decade)",
+          float(np.abs(transient(EXTENDED, t) / EXTENDED.strength
+                       - exact).max()), TOL_BAND_ELEMENTS)
+    coarse = rheology.ExtendedBurgers.band(tau_L=tau_L, per_decade=2, **BAND)
+    above("TRIPWIRE: half as many are not",
+          float(np.abs(transient(coarse, t) / coarse.strength - exact).max()),
+          MISS_BAND_COARSE)
     check("only a body with no fastest relaxation has a tail",
-          rheology.tails([MAXWELL, BURGERS, one]) == ()
+          rheology.tails([MAXWELL, BURGERS, one, chain]) == ()
           and rheology.tails([MAXWELL, ANDRADE, ANDRADE]) == (ANDRADE.alpha,))
+    check("a band's tail is its exponent and the two RATES it runs between",
+          EXTENDED.tail == (alpha, 1.0 / tau_L, 1.0 / tau_H)
+          and rheology.tails([ANDRADE, EXTENDED, MAXWELL])
+          == (EXTENDED.tail, ANDRADE.alpha))
     check("a rheology round-trips through the dict a dump holds",
           rheology.from_spec({"kind": "burgers", "tau_M": 5.0, "tau_K": 0.4,
                               "kelvin": 1.5}) == BURGERS
           and rheology.from_spec({"kind": "maxwell", "tau": 1.0}) == MAXWELL
           and rheology.from_spec({"kind": "andrade", "tau_M": 1.0,
-                                  "tau_A": 1.0, "alpha": 1.0 / 3.0}) == ANDRADE)
+                                  "tau_A": 1.0, "alpha": 1.0 / 3.0}) == ANDRADE
+          and rheology.from_spec(json.loads(json.dumps(
+              dataclasses.asdict(EXTENDED)))) == EXTENDED)
 
 
 def g_inversion() -> None:
@@ -769,10 +839,12 @@ def g_inversion() -> None:
           float(np.abs(fitted.weights(0.0)[0]
                        - np.eye(1 + len(s))[0]).max()), TOL_INV_IDENTITY)
 
-    def worst(rheo, grid, at):
-        """The three functions of ``rheo`` fitted on ``grid`` with its tail,
-        against the contour at ``at``, over each one's maximum there."""
-        pr = laplace.Prony(grid, tails=rheology.tails([rheo]))
+    def worst(rheo, grid, at, tails=None):
+        """The three functions of ``rheo`` fitted on ``grid`` with its tail
+        (or with ``tails``), against the contour at ``at``, over each one's
+        maximum there."""
+        pr = laplace.Prony(grid, tails=rheology.tails([rheo])
+                           if tails is None else tails)
         out = 0.0
         for fn in (lambda m: m.mu / MU,
                    lambda m: rheology.g_of(m.mu, m.lam),
@@ -896,6 +968,49 @@ def g_inversion() -> None:
           tau0 is plain.tau and C0 is plain.coefficients()
           and not gone0.any())
 
+    # A power law that STOPS: an extended Burgers band, Andrade's spectrum
+    # between two rates. Its tail is the poles beyond the grid that the band
+    # holds, and none where the window reaches below it.
+    above("TRIPWIRE: a band from a decade below the window, fitted as it "
+          "stands", worst(EXTENDED, s, some, tails=()), MISS_BAND_NO_END)
+    above("TRIPWIRE: ... and with a tail that has no end",
+          worst(EXTENDED, s, some, tails=(EXTENDED.power_law[0],)),
+          MISS_BAND_NO_END)
+    close("... with its own, which stops where the band does",
+          worst(EXTENDED, s, some), TOL_BAND_VALUE)
+    close("the same band from nine decades below: Andrade's tail, to this "
+          "window", worst(rheology.ExtendedBurgers.band(tau_L=1.0e-9, **BAND),
+                          s, some), TOL_TAIL_VALUE)
+    inside = rheology.ExtendedBurgers.band(tau_L=t_min, **BAND)
+    reached = laplace.Prony(s, tails=rheology.tails([inside]))
+    check("a band the window reaches below has no tail: the plain fit, "
+          "bitwise", reached.tails == ()
+          and np.array_equal(reached.weights(t), plain.weights(t)))
+    close("... which is then the right one", worst(inside, s, some),
+          TOL_INV_VALUE)
+    cut = laplace.Prony(s, tails=rheology.tails([EXTENDED]))
+    tau, C, gone = cut.memory()
+    check("a tail that stops is the fit's, and as memory its poles inside "
+          "the band", cut.tails == (EXTENDED.tail,)
+          and tau.size > cut.tau.size)
+    close("... which with what has gone is the elastic instant",
+          float(np.abs(C.sum(axis=0) + gone - np.eye(1 + len(s))[0]).max()),
+          TOL_MEMORY)
+    close("... and is the fit at every lag the window holds",
+          float(np.abs(at_lag(t, tau, C) - cut.weights(t)).max()), TOL_MEMORY)
+    with warnings.catch_warnings(record=True) as heard:
+        warnings.simplefilter("always")
+        strong = dict(BAND, strength=3.0, tau_H=1.0)
+        said = rheology.warn_window(
+            {"body": rheology.ExtendedBurgers.band(tau_L=1.0e-9, **strong)}, s)
+        quiet = rheology.warn_window(
+            {"body": rheology.ExtendedBurgers.band(tau_L=2.0 * t_min,
+                                                   **strong),
+             "other": EXTENDED}, s)
+    check("warn_window: a band already past the elastic strain at the "
+          "window's short end, and not one the window reaches below",
+          len(said) == 1 and len(heard) == 1 and quiet == [])
+
 
 def h_full_space() -> None:
     print("\n[h] a dislocation in a relaxing full space: the fault in a "
@@ -924,7 +1039,7 @@ def h_full_space() -> None:
                   for n in (n1, n2))
         uB, sB = (u2 - u1) / (g2 - g1), (s2 - s1) / (g2 - g1)
         uA, sA = u1 - g1 * uB, s1 - g1 * sB
-        for rheo in (MAXWELL, BURGERS, ANDRADE):
+        for rheo in (MAXWELL, BURGERS, ANDRADE, EXTENDED):
             s, mats = states(rheo, base)
             U, S, par_u, par_s = [], [], 0.0, 0.0
             for m in mats:

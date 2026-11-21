@@ -47,10 +47,12 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      bitwise the same model run with no rheology at all; ``laplace.run_stack``
      returns the stack in the order the fit takes it and ``laplace.run_fit``
      the fit, with the tail of an Andrade substrate read from the run's own
-     record (and its window, short of ``tau_A``, warned of in the report); a
-     stored Laplace state is read back at its own moduli; and the run is
-     REFUSED when the relaxing region is not on one scalar eps, or names a
-     region the model lacks, or is given a negative ``andrade_alpha``.
+     record (and its window, short of ``tau_A``, warned of in the report),
+     and the band of an extended Burgers one, the exponent and its two
+     rates; a stored Laplace state is read back at its own moduli; and the
+     run is REFUSED when the relaxing region is not on one scalar eps, or
+     names a region the model lacks, or is given a negative
+     ``andrade_alpha``, or two substrates at once.
   k  GRAVITY reaches a run through the builder's parameters and nowhere else
      (``rho_plate`` / ``rho_substrate`` of the layered box): the dump records
      the ``Gravity`` the model carried, and null when it carried none; the
@@ -553,6 +555,30 @@ def j_laplace_run(tmp: pathlib.Path) -> None:
         refused = True
     check("REFUSED: a negative andrade_alpha, which would be a Maxwell "
           "body unsaid", refused)
+    # An extended Burgers substrate: Kelvin elements, which the record holds
+    # as lists, and the band they were cut from, which is the fit's tail
+    band = cfg.load(path, **small, band_strength=0.5, tau_L=1.0e-3)
+    db = tmp / "band"
+    db.mkdir()
+    rep_b = runner.execute(band, db, path)
+    body = rheology.from_spec(json.loads((db / "resolved.json").read_text())
+                              ["spec"]["laplace"]["rheology"]["substrate"])
+    check("an extended Burgers substrate: the record gives the body back, "
+          "and the stored run's fit carries its band",
+          rep_b["status"] == "OK"
+          and body == rheology.ExtendedBurgers.band(
+              tau_M=1.0, strength=0.5, alpha=1.0 / 3.0, tau_L=1.0e-3,
+              tau_H=1.0)
+          and body.tail == (1.0 / 3.0, 1.0 / 1.0e-3, 1.0)
+          and laplace.run_fit(db).tails == (body.tail,)
+          and "warnings" not in rep_b, f"{laplace.run_fit(db).tails}")
+    try:
+        cfg.load(path, **small, band_strength=1.0, andrade_alpha=0.25)
+        refused = False
+    except ValueError:
+        refused = True
+    check("REFUSED: an Andrade substrate and an extended Burgers one at "
+          "once", refused)
 
     _b, model, _e = cli._rebuild(resolved)
     last = rows[-1]

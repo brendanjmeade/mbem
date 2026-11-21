@@ -35,11 +35,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.linalg import lu_factor, lu_solve
-
 from .. import defaults
 from ..kernels import KERNEL_GT, KERNEL_HT, KERNEL_T
 from ..kernels import basis as kb
+from ..la import lu as dense_lu
 from ..model.core import BCType
 from ..model.equations import (BlockSystem, add_block_diagonal,
                                add_jump_rhs, apply_fault_rows,
@@ -63,13 +62,16 @@ class DenseBackend:
     """
 
     def __init__(self, mode: str = "direct", jump: str = "calibrated",
-                 deflate: bool = False):
+                 deflate: bool = False, lu: str | None = None):
         # mode:    "direct" / "legacy" / "basis" (module docstring).
         # jump:    "calibrated" annihilates constant fields exactly; "half"
         #           with eps/h > ~0.5 is NON-convergent (the backends warn).
         # deflate: solve the rigid-translation-bordered system — REQUIRED
         #           for jump="calibrated" on all-Neumann models (assembly
         #           refuses otherwise).
+        # lu:      how the matrix is factored (``la.lu``): "double", or
+        #           single-precision factors refined in double, on the
+        #           host ("single") or a card ("gpu").
         if mode not in ("legacy", "basis", "direct"):
             raise ValueError(mode)
         if jump not in ("half", "calibrated"):
@@ -77,10 +79,11 @@ class DenseBackend:
         self.mode = mode
         self.jump = jump
         self.deflate = deflate
+        self.lu = lu
 
     def assemble(self, system: BlockSystem, eps) -> "AssembledDense":
         return AssembledDense(system, eps, self.mode, jump=self.jump,
-                              deflate=self.deflate)
+                              deflate=self.deflate, lu=self.lu)
 
 
 def needs_direct_mode(model) -> str | None:
@@ -257,9 +260,12 @@ def _checked_drag(system: BlockSystem, drag) -> dict:
 @dataclass
 class DenseSolveReport:
     """``asm.report`` of a dense solve: the 1-norm condition estimate
-    (LAPACK gecon on the LU, essentially free); the compressed backend's
+    (LAPACK gecon on the LU, essentially free) and how the matrix was
+    factored (``la.lu.Factor.report``: of single-precision factors, the
+    corrections a solve took and what was left); the compressed backend's
     counterpart is ``la.solver.SolveReport``."""
     cond_estimate: float
+    lu: dict | None = None
 
     def __str__(self):
         return f"dense LU: cond ~ {self.cond_estimate:.2e}"
@@ -353,9 +359,12 @@ class AssembledDense:
     def __init__(self, system: BlockSystem, eps, mode: str,
                  jump: str = "calibrated", deflate: bool = False,
                  _basis_cache: dict | None = None,
-                 fault_drag: dict | None = None):
+                 fault_drag: dict | None = None, lu: str | None = None):
         if jump not in ("half", "calibrated"):
             raise ValueError(jump)
+        if lu is not None and lu not in dense_lu.HOW:
+            raise ValueError(f"lu {lu!r}: a dense matrix is factored "
+                             f"{dense_lu.HOW}")
         special = needs_direct_mode(system.model)
         if special is not None and mode != "direct":
             raise ValueError(
@@ -378,6 +387,7 @@ class AssembledDense:
         # space (the returned solution is the zero-mean-translation
         # representative).
         self.deflate = deflate
+        self.lu = lu
         self.materials = {r.name: r.material for r in system.model.regions}
         # {fault name: kappa}: the drag of each FAULT_TRACTION fault that
         # resists its slip (equations.py); a number of the state
@@ -538,13 +548,10 @@ class AssembledDense:
                 A_solve = K
             else:
                 A_solve = self.A
-            anorm = float(np.linalg.norm(A_solve, 1))
-            self._lu = lu_factor(A_solve)
-            from scipy.linalg import get_lapack_funcs
-            gecon = get_lapack_funcs(("gecon",), (self._lu[0],))[0]
-            rcond, info = gecon(self._lu[0], anorm, norm="1")
-            cond = (1.0 / rcond) if (info == 0 and rcond > 0) else np.inf
-            self.report = DenseSolveReport(cond_estimate=float(cond))
+            self._lu = dense_lu.factor(A_solve, self.lu)
+            cond = self._lu.cond()
+            self.report = DenseSolveReport(cond_estimate=float(cond),
+                                           lu=self._lu.report)
             if cond > defaults.COND_WARN_THRESHOLD:
                 import warnings
                 warnings.warn(
@@ -555,13 +562,18 @@ class AssembledDense:
                     f"calibrated jump, or discretization resonance)")
         if getattr(self, "_deflate_n", None) is not None:
             rhs = np.concatenate([self.b, np.zeros(3)])
-            x = lu_solve(self._lu, rhs)[:self._deflate_n]
+            x = self._lu.solve(rhs)[:self._deflate_n]
         else:
-            x = lu_solve(self._lu, self.b)
+            x = self._lu.solve(self.b)
         out = {}
         for slot in self.layout.slots:
             out[slot.name] = x[slot.offset:slot.stop].reshape(-1, 3)
         return out
+
+    def release(self):
+        """Drop the factors (``solve`` makes them again). On a card they
+        hold the memory the next state's want."""
+        self._lu = None
 
     # -- the body as its faults see it ---------------------------------
 
@@ -618,21 +630,18 @@ class AssembledDense:
                     X[slot.offset + 3 * c.free + j, k + i] = c.frame[:, i, j]
         rest = np.flatnonzero(~on_fault)
         x0 = np.zeros(N)
-        S, L, cond = AE[rows], -b[rows], 1.0
+        S, L, cond, how = AE[rows], -b[rows], 1.0, None
         if rest.size:
-            A_rr = A[np.ix_(rest, rest)]
-            anorm = float(np.linalg.norm(A_rr, 1))
-            lu = lu_factor(A_rr, overwrite_a=True)
-            from scipy.linalg import get_lapack_funcs
-            gecon = get_lapack_funcs(("gecon",), (lu[0],))[0]
-            rcond, info = gecon(lu[0], anorm, norm="1")
-            cond = (1.0 / rcond) if (info == 0 and rcond > 0) else np.inf
-            X[rest] = -lu_solve(lu, AE[rest])
-            x0[rest] = lu_solve(lu, b[rest])
+            lu = dense_lu.factor(A[np.ix_(rest, rest)], self.lu,
+                                 overwrite_a=True)
+            cond, how = lu.cond(), lu.report
+            X[rest] = -lu.solve(AE[rest])
+            x0[rest] = lu.solve(b[rest])
+            del lu
             A_fr = A[np.ix_(rows, rest)]
             S = S + A_fr @ X[rest]
             L = L + A_fr @ x0[rest]
-        self.report = DenseSolveReport(cond_estimate=float(cond))
+        self.report = DenseSolveReport(cond_estimate=float(cond), lu=how)
         return Condensed(S=S, L=L, X=X, x0=x0, faults=tuple(coords),
                          layout=self.layout, cond_estimate=float(cond))
 
@@ -660,6 +669,7 @@ class AssembledDense:
         new.mode = self.mode
         new.jump = self.jump
         new.deflate = self.deflate
+        new.lu = self.lu
         new.materials = dict(self.materials)
         for name, mat in material_map.items():
             if name not in new.materials:

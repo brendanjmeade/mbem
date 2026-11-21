@@ -120,6 +120,29 @@ is FLAT in time.
       window, where the fit's relaxed limit pushes and is moved (rule 20):
       4e-5 to a tenth of the window, 3e-3 at its end (tripwire: that is
       what the correction costs the last decade).
+  [l] the body factored in SINGLE precision and every solve refined in
+      double (``la.lu``; ``backend.lu``), which is what lets a card factor
+      it: the megathrust's body of [f] at its softest state (17,778 of its
+      unknowns, a 1-norm condition of 2.5e5). Reduced to the reach from
+      single factors on the host, the stiffness, the loads and every
+      unknown of the box are the double reduction's (4e-15, 2e-13, 4e-13),
+      in one correction, with 9e-13 predicted left; the factors alone are
+      off by 1.3e-6 (tripwire); their condition estimate is LAPACK's
+      (1.5 %); and a state solved outright with a drag is the reduction's
+      slip and free surface (2e-13, 1e-13). A matrix single precision does
+      not hold (a condition of 1e9) is factored in double after all, with
+      a warning, and is then LAPACK's answer bitwise. Refused: a way of
+      factoring that is none of the three, and a card asked for where
+      none answers (the probe made to fail: nothing is factored on the
+      host in its place); unasked, the factors are LAPACK's double and a
+      stepped body's dense limit the host's, card or no -- a result must
+      not depend on the machine it was made on. In [j] the box's body
+      factored so is the dense reduction's (2e-8, 1e-7: the coupling's
+      own).
+      WHERE THERE IS A CARD the same eight on it (7e-15, 1e-13, 2e-13;
+      2.1e-6 unrefined; 1e-13, 7e-14), and a matrix it has no room for is
+      refused; where there is none those nine are not run, the line says
+      so, and the gate has 114 checks for 123.
 """
 
 from __future__ import annotations
@@ -134,11 +157,12 @@ import mollified_bem as mb
 import verify_solved_bvp as VB                 # sibling: the anchor-C box
 import verify_viscoelastic as VV               # sibling: the penny, the megathrust
 from local_box_mesh_eq import make_vertical_fault_eq
-from mbem import config as cfg, laplace, rheology, runner, stepper
+from mbem import config as cfg, defaults, laplace, rheology, runner, stepper
 from mbem.backends.dense import AssembledDense
 from mbem.cases import layered_box, penny
 from mbem.evaluate import evaluate_fault_traction
 from mbem.kernels import basis as kb
+from mbem.la import lu as dense_lu
 from mbem.la.faultkernel import FaultKernel, g_of, lam_of
 from mbem.model import BCType, Patch, generate_system
 
@@ -178,6 +202,9 @@ NO_TAIL = 1.0e-2         # ... stepped on the fit without its tail; 1.9e-2
 TOL_KERNEL_TIME = 1.0e-7    # the reference's k_E(t) between its own points; 1e-9
 TOL_PAIR = 1.0e-4        # the pair's moments over the stabilised method's; 2e-5
 PAIR_COSTS = 2.0         # ... its evaluations over the other's; 2.5
+TOL_SINGLE = 1.0e-8      # [l] single factors refined vs double; 4e-15 .. 4e-13
+NOT_REFINED = 1.0e-7     # ... and not refined; 1.3e-6, 2.1e-6
+TOL_COND = 0.05          # their condition estimate vs gecon's; 1.5e-2
 TOL_LATE = (5.0e-4, 6.0e-3)     # a scalar on (0.1, 100): to t = 10, and at
 END_COSTS = 1.0e-3              # 100; 4.4e-5, 2.9e-3 -- which is not small
 
@@ -966,6 +993,18 @@ def j_boundary(reach):
     check("... and every unknown of the boundary", worst_unknown(kc, dense),
           TOL_BLOCKS)
 
+    # ... and densely in single precision, each solve refined ([l])
+    ks = quiet(stepper.KernelBody.from_model, model, eps, states, s=s,
+               lu="single")
+    note = ks.boundary.report["lu"]
+    check_bool("the body factored in single precision and refined",
+               note["how"] == "single" and not note.get("fallback")
+               and rep["lu"]["how"] == "double", f"{note}")
+    check("... every state's stiffness is the dense reduction's still",
+          worst_state(ks, cond), TOL_STATE)
+    check("... and every unknown of the boundary", worst_unknown(ks, dense),
+          TOL_UNKNOWNS)
+
     # the megathrust's reach of [f]
     kb = quiet(stepper.KernelBody.from_model, reach.model, reach.eps,
                reach.states, s=reach.s)
@@ -992,6 +1031,116 @@ def j_boundary(reach):
           float(np.abs(a.slip.mean(1) / b.slip.mean(1) - 1.0).max()), TOL_MEAN)
 
 
+# ---- [l] single-precision factors, refined ------------------------------
+
+def l_single(reach):
+    print("\n[l] the body factored in single precision, each solve refined "
+          "in double")
+    ref = reach.cond[-1]
+    asm = quiet(AssembledDense, generate_system(reach.model), reach.eps,
+                "direct")
+    law = rheology.ViscousFault(tau=VV.CREEP_TAU, width=10.0)
+    kappa = law.drag(MU, reach.s[-1])
+    beta = ref.dragged(kappa)
+    want = dict(ref.cartesian(beta), **ref.slots(ref.x0 + ref.X @ beta))
+    rng = np.random.default_rng(5)
+
+    def held(how):
+        op = asm.rebuild_for_materials(reach.states[-1])
+        op.lu = how
+        c = quiet(op.condense)
+        note = op.report.lu
+        print(f"      {how}: {note['passes']} correction(s) of "
+              f"{note['correction']:.1e}, {note['left']:.1e} predicted left")
+        check(f"{how}: the reach's stiffness is the double reduction's",
+              rel(c.S, ref.S), TOL_SINGLE)
+        check("... what the earthquake loads it with", rel(c.L, ref.L),
+              TOL_SINGLE)
+        check("... and every unknown of the box",
+              max(rel(c.X, ref.X), rel(c.x0, ref.x0)), TOL_SINGLE)
+        check_bool("... refined, and not factored in double after all",
+                   note["how"] == how and not note.get("fallback")
+                   and note["left"] <= defaults.LU_REFINE_TOL,
+                   f"{note}")
+        # the factors alone, and their condition estimate
+        rest = np.setdiff1d(np.arange(op.A.shape[0]), np.concatenate(
+            [np.arange(s.offset, s.stop) for s in op.layout.slots
+             if s.kind == "b" and s.patch.solves_slip]))
+        A = op.A[np.ix_(rest, rest)]
+        B = rng.standard_normal((A.shape[0], 3))
+        exact = dense_lu.factor(A)
+        fac = dense_lu.factor(A, how)
+        x = exact.solve(B)
+        check_gt("... the factors alone are single precision (tripwire)",
+                 rel(fac._single(B), x), NOT_REFINED)
+        check("... and their condition estimate is LAPACK's",
+              abs(fac.cond() / exact.cond() - 1.0), TOL_COND)
+        print(f"      a 1-norm condition of {exact.cond():.1e}, "
+              f"{A.shape[0]} unknowns")
+        del fac, exact
+        # a state solved outright
+        op = asm.rebuild_for_materials(reach.states[-1],
+                                       fault_drag={"fault_lower": kappa})
+        op.lu = how
+        sol = quiet(op.solve)
+        check("a state solved with a drag: the reach's slip",
+              rel(sol["b:fault_lower"], want["fault_lower"]), TOL_SINGLE)
+        check("... and the free surface", rel(sol["u:top"], want["u:top"]),
+              TOL_SINGLE)
+
+    held("single")
+    # a matrix single precision does not hold
+    q1, _ = np.linalg.qr(rng.standard_normal((300, 300)))
+    q2, _ = np.linalg.qr(rng.standard_normal((300, 300)))
+    bad = (q1 * np.logspace(0.0, -9.0, 300)) @ q2.T
+    b = rng.standard_normal(300)
+    with warnings.catch_warnings(record=True) as heard:
+        warnings.simplefilter("always")
+        fac = dense_lu.factor(bad, "single")
+        x = fac.solve(b)
+    check_bool("a condition of 1e9: factored in double after all, and said",
+               bool(fac.report.get("fallback")) and len(heard) == 1
+               and "double" in str(heard[0].message))
+    check_bool("... which is LAPACK's answer (bitwise)",
+               np.array_equal(x, dense_lu.factor(bad).solve(b)))
+    check_bool("REFUSED: a way of factoring that is none of the three",
+               refuses(lambda: dense_lu.factor(bad, "quad"), ValueError)
+               and refuses(lambda: AssembledDense(
+                   generate_system(reach.model), reach.eps, "direct",
+                   lu="quad"), ValueError))
+    # a card is asked for, never looked for: the default is double with one
+    # in the machine, and one asked for that does not answer is refused
+    there = dense_lu._cupy
+
+    def no_card():
+        raise RuntimeError("how='gpu' needs a CUDA device through cupy")
+    dense_lu._cupy = no_card
+    try:
+        check_bool("REFUSED: a card asked for where none answers (nothing "
+                   "is factored on the host in its place)",
+                   not dense_lu.gpu_available()
+                   and refuses(lambda: dense_lu.factor(bad, "gpu"),
+                               RuntimeError))
+    finally:
+        dense_lu._cupy = there
+    check_bool("... and unasked the factors are LAPACK's double, card or no",
+               defaults.DENSE_LU == "double"
+               and dense_lu.factor(bad).report["how"] == "double"
+               and dense_lu.dense_limit() == defaults.STEPPER_DENSE_BOUNDARY)
+    if not dense_lu.gpu_available():
+        print("      no CUDA device here: the card's clauses are NOT run "
+              "(the refinement above is theirs)")
+        return
+    held("gpu")
+    fill = defaults.LU_GPU_FILL
+    defaults.LU_GPU_FILL = 1.0e-12
+    try:
+        check_bool("REFUSED: a matrix the card has no room for",
+                   refuses(lambda: dense_lu.factor(bad, "gpu"), ValueError))
+    finally:
+        defaults.LU_GPU_FILL = fill
+
+
 def main():
     print("=" * 76)
     print("A solved fault stepped in time: the body as the fault's memory")
@@ -1008,6 +1157,7 @@ def main():
     g_refusals(P, body_m, reach.body)
     i_stabilised(*h_compressed_kernel())
     j_boundary(reach)
+    l_single(reach)
     print("-" * 76)
     if all(CHECKS):
         print(f"PASS: stepper ({len(CHECKS)} checks)")

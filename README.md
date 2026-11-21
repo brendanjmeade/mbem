@@ -471,7 +471,12 @@ In the whole space (`configs/penny.py --set order=0 --set backend=hmat
 --set law=friction --set maxwell=1 --set a_over_h=128`) 124,462 elements
 step to ten relaxation times in 22 minutes.  The body itself is factored at
 every state: densely, or (`--set factor=blocks`) as the compressed operator
-in block low-rank LU (`mbem.la.blr`), which is what a finer box takes.  And
+in block low-rank LU (`mbem.la.blr`), which is what a finer box takes.  A
+dense factorization, here or at a state of the Laplace route, can be made on
+a CUDA card (`--set lu=gpu`, `mbem.la.lu`; it needs `cupy`): single-precision
+factors with every solve refined in double, 2 s where LAPACK takes 42 at
+44,085 unknowns, the results the same to 3e-10 at a state.  It is only ever
+asked for: unasked, the factors are LAPACK's double whatever the machine has.  And
 the box matters: with the plate's two faces at half their elements and the
 substrate's width halved (`--set refine=2`, 44,085 boundary unknowns for
 16,092) the reach's mean afterslip is 0.235 of the slip at 100 relaxation

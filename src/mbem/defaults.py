@@ -1206,8 +1206,44 @@ BLR_OVERSAMPLE = 10
 # exact, and up to here the faster. Measured a state: at 44,085 unknowns
 # with 1,939 right-hand sides, 69 s dense against 108 in blocks; at 62,472,
 # a dense factor in 120 s and 31 GB against 70 s of factoring after 55 s of
-# reading the blocks off the operator, and 9.6 GB.
+# reading the blocks off the operator, and 9.6 GB. Factored on a card
+# (DENSE_LU below) a body stays dense up to what the card holds instead
+# (la.lu.dense_limit): 32 s a state at 44,085.
 STEPPER_DENSE_BOUNDARY = 60_000
+
+# --- A dense matrix factored in single precision (la/lu.py) ---
+# How a dense matrix is factored: "double" (LAPACK on the host), "single"
+# (single-precision factors on the host, every solve refined in double) or
+# "gpu" (the same factors on a CUDA card). A run says so with `backend.lu`.
+# Measured on the megathrust body, elastic and at its softest state
+# (mu(s)/mu = 3e-3, a 1-norm condition of 1.6e7), on 24 cores and an RTX PRO
+# 5000: at 44,085 unknowns double takes 42 s (1.4 Tflop/s), single on the
+# host 27 s, the card 2.0 s (28 Tflop/s), and 28 s at 106,000, the most it
+# holds; in DOUBLE the card takes 59 s, which is why the factors are single.
+# "double" on every machine: a card is ASKED FOR by the run and never looked
+# for, so a result does not depend on where it was made (the two are 3e-10
+# apart at a state and 8e-8 through a stepped history, whose integrator
+# then chooses other steps), and one asked for where there is none is
+# refused.
+DENSE_LU = "double"
+# A solve is refined until what is left of its error, relative to the
+# solution, is below this (the worst column, in the norm of ALL its
+# unknowns: a part of them can be further off, 3e-10 in a creeping reach's
+# slip). A solve from single factors alone is off 4e-6 to 5e-6 on that
+# body; one correction leaves 7e-12 (predicted: 2e-11) and a second 2e-14,
+# which is double's own. A body with a slab contracts at 3e-4 and takes two.
+LU_REFINE_TOL = 1.0e-10
+# Corrections a solve may take, and the contraction past which it stops
+# trying: at 1e-2 a correction four times over is the tolerance above, and a
+# matrix that contracts no faster is factored in double instead. The body
+# above contracts at 4e-6.
+LU_REFINE_PASSES = 4
+LU_REFINE_RATE = 1.0e-2
+# The part of the card's free memory a matrix may take (the factorization's
+# own workspace is a thousandth of the matrix), and the part of what is then
+# left that a block of right-hand sides may.
+LU_GPU_FILL = 0.95
+LU_GPU_RHS = 0.5
 
 # --- A Laplace run as a web payload (webexport.py, the fields in time) ---
 # A stack of state solutions is shipped as an orthonormal basis of its rows,

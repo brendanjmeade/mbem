@@ -95,11 +95,15 @@ class Backend:
     tol/min_leaf/eta/max_admissible/min_aca govern far="aca" only;
     fmm_order/domain/m2l govern far="fmm" only. Passing the other family's
     knobs is accepted and has no effect, which is why both are named here.
+    ``lu`` is how a DENSE matrix is factored (``mbem.la.lu``): the dense
+    backend's at a state, and the body of a stepped run on either backend.
     """
     kind: str = "hmat"                  # "dense" | "hmat" | "fmm"
     jump: str = "calibrated"
     deflate: bool = False
     dense_mode: str = "direct"          # dense only
+    lu: str | None = None               # a dense factorization (la.lu):
+    #                                     "double" | "single" | "gpu"
     tol: float | None = None
     min_leaf: int | None = None
     eta: float | None = None
@@ -293,6 +297,10 @@ class Run:
                              f"not in {BACKENDS}")
         if self.backend.jump not in ("half", "calibrated"):
             raise ValueError(f"jump {self.backend.jump!r}")
+        if self.backend.lu not in (None, "double", "single", "gpu"):
+            raise ValueError(
+                f"backend.lu {self.backend.lu!r}: a dense matrix is factored "
+                f"'double', 'single' or 'gpu' (mbem.la.lu)")
         if self.model.geometry.scale <= 0:
             raise ValueError(f"scale {self.model.geometry.scale} must be > 0")
         if not self.states:

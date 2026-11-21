@@ -234,6 +234,11 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     phases: dict = {}
     report: dict = {"name": run.name, "phases": phases, "states": []}
     t_run = time.perf_counter()
+    if run.backend.lu == "gpu":
+        # a card is asked for, never looked for: where none answers the run
+        # is refused here, before anything is built, and not made on the host
+        from mbem.la import lu as dense_lu
+        dense_lu.gpu_capacity()
 
     t0 = time.perf_counter()
     mesh_fn = cfg.resolve(run.model.geometry.builder, cfg.MESH_BUILDERS)
@@ -292,10 +297,13 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
     elif run.backend.kind == "dense":
         from mbem.backends.dense import AssembledDense
         asm = AssembledDense(system, eps, run.backend.dense_mode,
-                             jump=run.backend.jump, deflate=run.backend.deflate)
+                             jump=run.backend.jump, deflate=run.backend.deflate,
+                             lu=run.backend.lu)
         effective_backend = {"kind": "dense", "mode": run.backend.dense_mode,
                              "jump": run.backend.jump,
-                             "deflate": run.backend.deflate}
+                             "deflate": run.backend.deflate,
+                             "lu": run.backend.lu
+                             or prov.defaults_snapshot()["DENSE_LU"]}
     else:
         from mbem.backends import HBackend
         hb = HBackend(**run.backend.kwargs())
@@ -368,8 +376,12 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
         rep = cur.report
         row = {"label": st.label, "solve_s": wall,
                "rss_after_gb": prov.peak_rss_gb()}
+        if run.backend.kind == "dense":
+            # a card holds one matrix: this state's factors go before the
+            # next state's are made
+            cur.release()
         for attr in ("iterations", "converged", "stagnated", "true_relres",
-                     "cond_estimate"):
+                     "cond_estimate", "lu"):
             if getattr(rep, attr, None) is not None:
                 row[attr] = prov.json_safe(getattr(rep, attr))
         if getattr(rep, "precond_summary", None):
@@ -420,6 +432,7 @@ def execute(run: cfg.Run, run_dir: pathlib.Path,
                 rank=run.stepper.boundary_rank,
                 factor=run.stepper.factor,
                 factor_tol=run.stepper.factor_tol, tails=tails,
+                lu=run.backend.lu,
                 log=lambda msg: print(f"  {msg}", flush=True))
             phases["kernel"] = body.kernel.report["build_s"]
             report["kernel"] = body.kernel.report

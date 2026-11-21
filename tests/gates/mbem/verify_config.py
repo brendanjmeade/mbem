@@ -70,7 +70,13 @@ a slip-pairing sign error is invisible at nu = 1/4. So:
      s, infinite in the elastic one, where the fault is locked; a state is
      the dense solve with that drag; the dump round-trips; and it is REFUSED
      on a prescribed slip, on a fault the model lacks and on the compressed
-     backend, which solves no slip.
+     backend, which solves no slip. The same run with ``backend.lu =
+     "single"`` (``la.lu``: single-precision factors, each solve refined in
+     double): the switch is in the dump, every state's row says how it was
+     factored, and the state is the double run's (1e-12); a ``backend.lu``
+     that is none of the three is refused, and so is ``"gpu"`` where no
+     card answers: a card is asked for and never looked for, so the run
+     above is LAPACK's double with one in the machine.
   o  a fault STEPPED IN TIME reaches a run through ``Run.stepper``: the run
      writes ``history.npz`` and no state's fields; the history is
      ``stepper.march`` on the reduction of the same model; the law, one that
@@ -701,6 +707,54 @@ def m_creeping_fault(tmp: pathlib.Path) -> None:
     check("the law comes back from the dump as itself",
           rheology.from_spec(resolved["spec"]["laplace"]["faults"]["penny"])
           == law)
+
+    # the same run with its matrix factored in single precision and every
+    # solve refined in double (la.lu): the switch, recorded and heard
+    single = dataclasses.replace(run, backend=dataclasses.replace(
+        run.backend, lu="single"))
+    ds = tmp / "creep_single"
+    ds.mkdir()
+    rep_s = runner.execute(single, ds, path)
+    how = json.loads((ds / "resolved.json").read_text())["effective"]["backend"]
+    check("backend.lu: recorded, and the run above was LAPACK's double",
+          how["lu"] == "single"
+          and resolved["effective"]["backend"]["lu"] == "double"
+          and rep["states"][-1]["lu"]["how"] == "double",
+          f"{how['lu']}, {resolved['effective']['backend']['lu']}")
+    note = rep_s["states"][-1]["lu"]
+    check("... every state says how it was factored and refined",
+          all(r["lu"]["how"] == "single" and not r["lu"].get("fallback")
+              for r in rep_s["states"]) and note["passes"] >= 1, f"{note}")
+    worst = _rel(np.load(ds / f"fields_{cfg.slug(last['label'])}.npz")["b:penny"],
+                 got)
+    check("... and is the double run's state to 1e-9", worst < 1e-9,
+          f"{worst:.1e}")
+    try:
+        cfg.Run(name="x", model=run.model, backend=cfg.Backend(lu="quad"))
+        ok = False
+    except ValueError as e:
+        ok = "factored" in str(e)
+    check("REFUSED: a backend.lu that is none of the three", ok)
+    # a card is asked for, never looked for: a run that asks where none
+    # answers (the probe made to fail) is refused before anything is built
+    from mbem.la import lu as dense_lu
+    there = dense_lu._cupy
+
+    def no_card():
+        raise RuntimeError("how='gpu' needs a CUDA device through cupy")
+    dense_lu._cupy = no_card
+    dg = tmp / "creep_no_card"
+    dg.mkdir()
+    try:
+        runner.execute(dataclasses.replace(run, backend=dataclasses.replace(
+            run.backend, lu="gpu")), dg, path, save=False)
+        ok = False
+    except RuntimeError as e:
+        ok = "CUDA" in str(e) and not list(dg.glob("fields_*"))
+    finally:
+        dense_lu._cupy = there
+    check("REFUSED: backend.lu = 'gpu' where no card answers (not run on "
+          "the host instead)", ok)
 
     def refused_with(run_bad, exc, fragment):
         dd = tmp / f"creep_refused_{len(list(tmp.iterdir()))}"

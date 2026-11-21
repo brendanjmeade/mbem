@@ -481,7 +481,7 @@ class KernelBody:
     def from_model(cls, model, eps, materials, s=None, tol: float = None,
                    passive: bool = True, log=None, coupling_tol: float = None,
                    rank: int = None, factor: str = None,
-                   factor_tol: float = None, tails=()):
+                   factor_tol: float = None, tails=(), lu: str = None):
         """Build one for ``model``: the FAULT_TRACTION faults of ONE region,
         P0, and whatever boundary the model has.
 
@@ -498,7 +498,9 @@ class KernelBody:
         ``"dense"``, as ``AssembledDense.condense`` factors it, or
         ``"blocks"``, the compressed operator in block low-rank LU
         (``la.blr``) at ``factor_tol``; by default dense up to
-        ``defaults.STEPPER_DENSE_BOUNDARY`` unknowns.
+        ``defaults.STEPPER_DENSE_BOUNDARY`` unknowns. ``lu`` is how a dense
+        one is factored (``la.lu``): on a card (``"gpu"``) dense is the
+        default up to what the card holds.
         """
         from types import SimpleNamespace
 
@@ -537,7 +539,7 @@ class KernelBody:
                        tails=tails)
         boundary, loads = cls._boundary(model, eps, states, pairs, coords,
                                         (min(g), max(g)), coupling_tol, rank,
-                                        log, factor, factor_tol)
+                                        log, factor, factor_tol, lu)
         return cls(kernel, coords, pairs, loads, s=s, passive=passive,
                    boundary=boundary, tails=tails)
 
@@ -578,9 +580,10 @@ class KernelBody:
 
     @staticmethod
     def _boundary(model, eps, states, pairs, coords, g_range, tol, rank, log,
-                  factor=None, factor_tol=None):
+                  factor=None, factor_tol=None, lu=None):
         """``(Boundary, loads)``: the body without its solved faults, state
         by state, through the coupling's two bases."""
+        from .la import lu as dense_lu
         from .la.coupling import Coupling
         from .model import generate_system
         from .model.equations import rhs_terms_at
@@ -592,52 +595,59 @@ class KernelBody:
                       rank=rank, log=log)
         K, N = len(states), body.layout.n_unknowns
         if factor is None:
-            factor = ("dense" if N <= defaults.STEPPER_DENSE_BOUNDARY
-                      else "blocks")
+            factor = "dense" if N <= dense_lu.dense_limit(lu) else "blocks"
         M = np.empty((K, cp.P.shape[1], cp.W.shape[1]))
         Z = np.empty((K, N, cp.W.shape[1]))
         x0 = np.empty((K, N))
         loads = np.empty((K, cp.n))
-        t0, nbytes = time.time(), 0
-        for k, (b, solve, held_bytes) in enumerate(
-                _factored(body, eps, states, factor, factor_tol)):
+        t0, nbytes, notes = time.time(), 0, []
+        for k, (b, solve, held_bytes, note) in enumerate(
+                _factored(body, eps, states, factor, factor_tol, lu)):
             B, E, held = cp.state(*pairs[k], k)
             Z[k] = solve(B)
             x0[k] = solve(b)
+            # a state's factors go before the next state's are made
+            del solve
             M[k] = -E @ Z[k]
             loads[k] = -held + cp.P @ (E @ x0[k])
             nbytes = max(nbytes, held_bytes)
+            notes.append(note)
             if log is not None:
                 log(f"state {k + 1} of {K}: the body factored ({factor}) and "
                     f"solved for {cp.W.shape[1]} slips")
         report = dict(cp.report, factor=factor, factor_s=time.time() - t0,
                       factor_bytes=int(nbytes))
+        if factor == "dense":
+            # the worst of the states, where the factors were single
+            report["lu"] = dict(
+                how=notes[0]["how"],
+                **{key: max(n.get(key, 0) for n in notes)
+                   for key in ("passes", "left") if key in notes[0]},
+                **({"fallback": True}
+                   if any(n.get("fallback") for n in notes) else {}))
         return Boundary(P=cp.P, W=cp.W, M=M, Z=Z, x0=x0, layout=body.layout,
                         report=report), loads
 
 
-def _factored(body, eps, states, how: str, tol):
-    """A body's states one after another, each as ``(b, solve, bytes)``: its
-    right-hand side, ``B -> A^-1 B`` for as many columns as are given, and
-    what the factors hold. ``how="dense"`` is LU of the dense operator, what
+def _factored(body, eps, states, how: str, tol, lu=None):
+    """A body's states one after another, each as ``(b, solve, bytes,
+    note)``: its right-hand side, ``B -> A^-1 B`` for as many columns as are
+    given, what the factors hold, and their own report. ``how="dense"`` is
+    LU of the dense operator (``la.lu``, in the way ``lu`` says), what
     ``AssembledDense.condense`` factors; ``"blocks"`` is the compressed
     operator factored in blocks (``la.blr``), for a boundary a dense matrix
-    does not hold. Each state's factors are dropped when the next is asked
-    for."""
+    does not hold. A state's factors live as long as its ``solve`` does."""
     if how == "dense":
-        from scipy.linalg import lu_factor, lu_solve
-
         from .backends.dense import AssembledDense
+        from .la import lu as dense_lu
 
         asm = AssembledDense(body, eps, "direct")
         for st in states:
             op = asm.rebuild_for_materials(dict(st))
-            lu = lu_factor(op.A, overwrite_a=True, check_finite=False)
+            fac = dense_lu.factor(op.A, lu, overwrite_a=True)
             op.A = None
-            yield (op.b,
-                   lambda B, lu=lu: lu_solve(lu, B, check_finite=False),
-                   lu[0].nbytes)
-            del lu
+            yield op.b, fac.solve, fac.nbytes, fac.report
+            del fac
         return
     if how != "blocks":
         raise ValueError(f"a body is factored 'dense' or in 'blocks', not "
@@ -653,7 +663,7 @@ def _factored(body, eps, states, how: str, tol):
         lu, clusters = blr.from_assembled(op, tol=tol, clusters=clusters)
         lu.factor()
         yield (op.b, lambda B, lu=lu, d=clusters.dofs: lu.solve(B, d),
-               lu.nbytes())
+               lu.nbytes(), {})
         del lu
 
 

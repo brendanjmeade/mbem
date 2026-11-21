@@ -776,6 +776,52 @@ $N^2$ with a small constant where dense LU costs $N^3$, and the two cross
 near 60,000 unknowns (`defaults.STEPPER_DENSE_BOUNDARY`). A factorization
 on the operator's own hierarchy would cost $N\log^2N$; not built.
 
+**The body factored on a card.** Below what a card holds, the dense
+factorization need not be the host's. A workstation GPU has no fast double
+precision (this one, an RTX PRO 5000, factors in double at 0.96 Tflop/s
+where the host's 24 cores give 1.4), but in single precision it factors at
+28: 2.0 s at 44,085 unknowns for the host's 42, and 28 s at 106,000, the
+largest matrix its 48 GB hold. So the factors are made in SINGLE precision
+and every solve is refined against the double-precision matrix, which stays
+on the host (`la.lu`; `--set lu=gpu`, and `lu=single` for the same on the
+host). The bodies here allow it. On the megathrust's body, elastic and at
+its softest state ($\tilde\mu/\mu=3\times10^{-3}$, a 1-norm condition of
+1.6e7, most of it the unequal scales of its unknowns), a solve from the
+single factors alone is off by 4e-6, one correction leaves 7e-12, and a
+second 2e-14, which is double's own. The refinement is stopped on the size
+of the correction: the contraction it shows says what is left (2e-11
+predicted where 7e-12 was), so a state costs ONE product of the matrix
+with its right-hand sides beyond the solves. A matrix whose corrections do
+not contract is factored in double after all, with a warning. Scaling the
+rows and columns changed nothing and is not done. A card is ASKED FOR by
+the run and never looked for: unasked, the factors are LAPACK's double on
+every machine, so a result does not depend on where it was made, and a run
+that asks where no card answers is refused, not made on the host.
+
+What a state costs is then no longer its factorization. At 44,085
+unknowns and 1,939 right-hand sides, 42 s of factoring and 7 of solving
+become 2.0 and 0.8, with 0.7 s to put the matrix on the card and 4.8 for
+the refinement's product, beside 17 s of assembly, which is now most of a
+state. Three runs whole, each against the same run in double:
+
+| run | unknowns | factor and solve, a state | the run | results agree to |
+|---|---|---|---|---|
+| the megathrust's reach creeping, Laplace route (section 9) | 31,179 | 19 s to 1.5 | 404 s to 173 | 3e-10 |
+| a slab's face under friction, stepped (section 10) | 42,078 | 76 s to 17 | 1,939 s to 764 | 8e-8 |
+| the reach on its kernel in the finer box (above) | 44,085 | 69 s to 32, assembly included | 1,905 s to 1,524 | 4e-9 |
+
+The first is one solve a state. The second is a reduction, a solve per
+slip unknown (1,276), of a body that contracts at 3e-4 and takes a second
+correction; its double run is the stored one, whose march was 110 s the
+slower for reasons that are not the card's, and its 8e-8 is the embedded
+pair choosing other steps (32,762 evaluations for 32,750), the mean
+afterslip being 1e-8 apart. The third run is mostly the coupling's sweeps
+and the march, which the card does not touch. The card's limit is its
+memory, 107,000 unknowns here: up to it a stepped body stays dense, past
+it the body is factored in blocks as before, and a matrix it has no room
+for is refused. Nothing else is on the card. Assembly is what a state now
+costs, and the kernels' closed forms want double precision.
+
 What this does not reach: a slip ON an interface (section 10) has no kernel
 of its own, all of its stiffness is the body's, and it stays on the dense
 reduction. Its stiffness is what a factorization of the body leaves when

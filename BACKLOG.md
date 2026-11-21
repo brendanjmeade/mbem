@@ -210,8 +210,29 @@ to 7e-7 in its slip under 16,092 boundary unknowns and to 3e-5 under
 44,085. Truncation is per block: against the matrix's norm a smooth
 density loses its far field.
 
+ON A CARD (2026-11-20). A dense matrix factored in single precision on a
+GPU, every solve refined in double (`la.lu`, `backend.lu = "gpu"`;
+`verify_stepper` [l], `verify_config` [m]): the dense backend's solve and
+reduction and the stepper's dense body all go through it. It is asked
+for and never looked for: the default is LAPACK's double on every machine,
+and a card asked for where none answers is refused. An RTX PRO 5000 factors at 28 Tflop/s in
+single (0.96 in double, under the host's 1.4): 2.0 s for 42 at 44,085
+unknowns, 28 s at 106,000. On the megathrust's body one correction takes
+4e-6 to 7e-12. Whole runs: the creeping reach on the Laplace route
+(31,179 unknowns) 404 s to 173, a slab's face stepped under friction
+(42,078) 1,939 s to 764, the reach on its kernel in the finer box (44,085)
+1,905 s to 1,524; results the same to 3e-10, 8e-8 and 4e-9.
+
 OPEN, in the order they bite:
 
+* **With a card, a dense state is its assembly.** 17 s of 32 at 44,085
+  unknowns, and 10 of 11.5 on the Laplace route at 31,179; then the
+  refinement's one product with the matrix (4.8 s for 1,939 right-hand
+  sides). The kernels are closed forms that cancel in the near field and
+  want double precision, which the card has not got; `mode="basis"`
+  (geometry once, a state by recombination) is unmeasured at these sizes
+  and costs nine matrices of memory. The card holds 107,000 unknowns and
+  one matrix: nothing is done out of core.
 * **The box's faces set the afterslip, and the ladder has two rungs.**
   The 17,564-element reach under friction, the plate's two faces and the
   substrate's width halved (`refine=2`: 44,085 boundary unknowns for

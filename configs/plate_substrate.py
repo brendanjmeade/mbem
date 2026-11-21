@@ -139,6 +139,14 @@ ladder, which a stepped afterslip needs as much as the reach's:
 
     ... --set edge_lower=1.25 --set refine=2 --set factor=blocks
 
+``lu`` is how a DENSE matrix is factored, on either backend (``la.lu``):
+``"gpu"`` makes the factors in single precision on a CUDA card and refines
+every solve in double, ``"single"`` does the same on the host, and left
+empty it is LAPACK's double. On a card a stepped body stays dense up to what
+the card holds:
+
+    ... --set edge_lower=1.25 --set refine=2 --set lu=gpu
+
 ``slab_depth`` greater than ``thickness`` makes the plate SUBDUCT: the
 footwall plate continues down the dip as an elastic slab to that depth, in
 the substrate that relaxes around it, within ``slab_half_len`` of mid-strike
@@ -195,7 +203,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              creep_stress: float = 1.0e-3, creep_n: float = 3.0,
              slip: float = 1.0, times_per_decade: int = 8,
              edge_lower: float = 0.0, eps_lower: float = 0.0,
-             factor: str = "") -> Run:
+             factor: str = "", lu: str = "") -> Run:
     if route not in ("laplace", "step"):
         raise ValueError(f"route {route!r}: 'laplace' or 'step'")
     if creep_law not in ("viscous", "power", "friction"):
@@ -276,7 +284,7 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
                         **({"slip_mag": 1.0e-3 * slip} if slip != 1.0
                            else {})),
             eps=eps),
-        backend=Backend(kind=backend),
+        backend=Backend(kind=backend, lu=lu or None),
         solve=Solve(),
         laplace=Laplace(rheology={"substrate": substrate},
                         s=laplace.s_grid(t_min, t_max, per_decade=per_decade),

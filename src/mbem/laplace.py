@@ -39,6 +39,14 @@ the transient is at the window's short end (``defaults``). That holds where
 the window reaches down to the transient's own time (Andrade's ``tau_A``):
 above it the spectrum has bent away from the power law, and a stress is off
 by 2-14 % (``rheology.warn_window``).
+
+A POWER LAW THAT STOPS (``rheology.ExtendedBurgers.band``: a spectrum that
+is ``rate^-alpha`` between two rates) is the same term with the amplitudes
+of the poles outside the band left out, each pole standing for its own
+share of the band. A band that runs on a few decades below the window and
+is fitted as if it had no end is 0.6-3 % off; one the window reaches below
+has no pole beyond the grid, and its tail is dropped: the plain fit, which
+is then the right one.
 """
 
 from __future__ import annotations
@@ -75,6 +83,39 @@ def window(s, pad: float = None) -> tuple:
     return 10.0 ** pad / max(s), 10.0 ** -pad / min(s)
 
 
+def _tail(a) -> tuple:
+    """``(exponent, fastest rate, slowest rate)`` of a tail given as an
+    exponent (a power law with no end) or with the band of its rates."""
+    a = (float(a), math.inf, 0.0) if np.ndim(a) == 0 else tuple(
+        float(x) for x in a) + (math.inf, 0.0)[len(a) - 1:]
+    if len(a) != 3 or not (0.0 < a[0] < 1.0 and 0.0 <= a[2] < a[1]):
+        raise ValueError(f"a tail is an exponent in (0, 1), or that and a "
+                         f"fastest and a slowest rate: {a}")
+    return a
+
+
+def _tail_shape(tail, tau0, step, k) -> tuple:
+    """``(w, rest)``: the amplitudes a tail gives the poles at ``step^k /
+    tau0`` beyond the grid, and what is left past the last of them.
+
+    With no end they are ``step^(-alpha k)`` and a geometric series. A band
+    gives each pole its share of ``tau^alpha`` between the band's ends
+    within the pole's own bin (half a step either side), in the same
+    measure: nothing outside the band, and the two agree inside it.
+    """
+    alpha, fast, slow = tail
+    if fast == math.inf and slow == 0.0:
+        w = step ** (-alpha * k)
+        return w, float(w[-1] / (step ** alpha - 1.0))
+    lo, hi = 1.0 / fast, (1.0 / slow if slow > 0.0 else math.inf)
+    top = tau0 * step ** (0.5 - k)                    # each bin, in tau
+    unit = tau0 ** alpha * (step ** (0.5 * alpha) - step ** (-0.5 * alpha))
+    w = np.clip(np.minimum(top, hi) ** alpha
+                - np.maximum(top / step, lo) ** alpha, 0.0, None) / unit
+    rest = max(min(top[-1] / step, hi) ** alpha - lo ** alpha, 0.0) / unit
+    return w, float(rest)
+
+
 class Prony:
     """The fit for one set of collocation points.
 
@@ -91,26 +132,34 @@ class Prony:
             raise ValueError("collocation points must be distinct")
         self.s = s
         self.secular = bool(secular)
-        self.tails = tuple(sorted({float(a) for a in tails}))
-        if any(not 0.0 < a < 1.0 for a in self.tails):
-            raise ValueError(f"a tail's exponent is in (0, 1): {self.tails}")
         tau = np.sort(1.0 / s)
         tau = tau[:-1] if secular else tau            # drop the slowest pole
-        self.tau = tau[len(self.tails):]              # a tail for a fast one
-        if self.tau.size < 1:
-            raise ValueError(f"{s.size} points leave no pole beside "
-                             f"{len(self.tails)} tail(s)")
         # the poles beyond the grid, on its own (geometric mean) spacing
         step = (s.max() / s.min()) ** (1.0 / (s.size - 1))
         k = np.arange(1, int(math.ceil(defaults.LAPLACE_TAIL_DECADES
                                        / math.log10(step))) + 1)
-        self._rate = step ** k / self.tau.min()       # (n_beyond,)
+        # A tail takes the place of a fast pole. One whose power law stops
+        # short of every pole beyond the grid is no tail of this fit, and
+        # without it the grid's own poles reach one place further: so again
+        live = sorted({_tail(a) for a in tails})
+        while True:
+            if tau.size - len(live) < 1:
+                raise ValueError(f"{s.size} points leave no pole beside "
+                                 f"{len(live)} tail(s)")
+            self.tau = tau[len(live):]                # a tail for a fast one
+            self._rate = step ** k / self.tau.min()   # (n_beyond,)
+            shape = [_tail_shape(a, self.tau.min(), step, k) for a in live]
+            keep = [bool(w.any() or rest) for w, rest in shape]
+            if all(keep):
+                break
+            live = [a for a, ok in zip(live, keep) if ok]
+        # as given: an exponent, or an exponent and the band of its rates
+        self.tails = tuple(a[0] if a[1:] == (math.inf, 0.0) else a
+                           for a in live)
         # (n_tails, n_beyond): each one's amplitudes, and what is left past
-        # the last of them, which relaxes at once (a geometric series)
-        self._w = np.array([step ** (-a * k) for a in self.tails]
-                           ).reshape(len(self.tails), k.size)
-        self._rest = np.array([w[-1] / (step ** a - 1.0)
-                               for w, a in zip(self._w, self.tails)])
+        # the last of them, which relaxes at once
+        self._w = np.array([w for w, _ in shape]).reshape(len(live), k.size)
+        self._rest = np.array([rest for _, rest in shape])
         rows = np.concatenate([[np.inf], s])
         m, nt = self.tau.size, len(self.tails)
         M = np.ones((rows.size, 1 + m + nt + int(secular)))

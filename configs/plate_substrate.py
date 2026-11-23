@@ -13,6 +13,8 @@ A vertical strike-slip fault unless ``dip`` and ``rake`` say otherwise.
     python -m mbem run configs/plate_substrate.py \
         --set t_max=100 --sweep andrade_alpha=0.3333,0            # Andrade
     python -m mbem run configs/plate_substrate.py \
+        --set t_max=100 --sweep band_strength=1,0             # extended Burgers
+    python -m mbem run configs/plate_substrate.py \
         --set dip=30 --set rake=90 --set rho_plate=2700 --set rho_substrate=3300 \
         --set edge_near=10 --set t_max=100 \
         --sweep refine=1,2 --sweep gravity=0,1                    # a thrust
@@ -59,6 +61,15 @@ fastest relaxation for a window to reach below: the fit is given the body's
 tail instead, by the figures here and by the stepper alike
 (``laplace.run_fit``). The tail is the body's only at times short of
 ``tau_A``, so keep ``t_min <= tau_A`` (the run warns otherwise).
+
+``band_strength > 0`` makes it an extended Burgers body
+(``rheology.ExtendedBurgers.band``): Kelvin elements cut from a power law of
+exponent ``band_alpha`` between the times ``tau_L`` and ``tau_H``, their
+compliance ``band_strength`` times the elastic one in all, on the same steady
+time. Between those two times it creeps as the Andrade body does, and at
+``tau_H`` its transient is over. A band that runs on below the window is
+fitted with a tail that stops where the band does; a window that reaches
+below ``tau_L`` needs none, and the fit drops it.
 
 ``rho_plate`` / ``rho_substrate`` (kg/m^3) turn gravity on: buoyancy on the
 free surface and on the interface (docs/viscoelastic.md, section 7). It leaves
@@ -190,7 +201,9 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
              fault_half_len: float = 0.0, eps_substrate: float = 1.5,
              mu_substrate: float = 30.0, tau_K: float = 0.0,
              kelvin: float = 1.0, andrade_alpha: float = 0.0,
-             tau_A: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
+             tau_A: float = 1.0, band_strength: float = 0.0,
+             band_alpha: float = 1.0 / 3.0, tau_L: float = 1.0e-9,
+             tau_H: float = 1.0, t_min: float = 0.1, t_max: float = 10.0,
              per_decade: int = 3, rho_plate: float = 0.0,
              rho_substrate: float = 0.0, gravity: float = 1.0,
              dip: float = 90.0, rake: float = 180.0, edge_near: float = 20.0,
@@ -221,17 +234,23 @@ def run_spec(half_x: float = 600.0, sides: str = "clamped",
     # is first order in, kept in one ratio
     edge_near, edge_interface, eps_substrate = (
         v / refine for v in (edge_near, edge_interface, eps_substrate))
-    if tau_K < 0.0 or andrade_alpha < 0.0:
-        raise ValueError(f"tau_K = {tau_K:g} and andrade_alpha = "
-                         f"{andrade_alpha:g} are zero (a Maxwell substrate) "
+    if tau_K < 0.0 or andrade_alpha < 0.0 or band_strength < 0.0:
+        raise ValueError(f"tau_K = {tau_K:g}, andrade_alpha = "
+                         f"{andrade_alpha:g} and band_strength = "
+                         f"{band_strength:g} are zero (a Maxwell substrate) "
                          f"or positive")
-    if tau_K > 0.0 and andrade_alpha > 0.0:
-        raise ValueError("tau_K is a Burgers substrate and andrade_alpha an "
-                         "Andrade one: give one of them")
+    if (tau_K > 0.0) + (andrade_alpha > 0.0) + (band_strength > 0.0) > 1:
+        raise ValueError("tau_K is a Burgers substrate, andrade_alpha an "
+                         "Andrade one and band_strength an extended Burgers "
+                         "one: give one of them")
     substrate = (rheology.Burgers(tau_M=1.0, tau_K=tau_K, kelvin=kelvin)
                  if tau_K > 0.0 else
                  rheology.Andrade(tau_M=1.0, tau_A=tau_A, alpha=andrade_alpha)
-                 if andrade_alpha > 0.0 else rheology.Maxwell(tau=1.0))
+                 if andrade_alpha > 0.0 else
+                 rheology.ExtendedBurgers.band(
+                     tau_M=1.0, strength=band_strength, alpha=band_alpha,
+                     tau_L=tau_L, tau_H=tau_H)
+                 if band_strength > 0.0 else rheology.Maxwell(tau=1.0))
     eps = dict(top="auto", sides_upper="auto", fault="auto",
                interface=eps_substrate, sides_lower=eps_substrate,
                base=eps_substrate)

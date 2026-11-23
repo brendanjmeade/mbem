@@ -47,6 +47,7 @@ $1/(1-2\nu)$ (CLAUDE.md rule 8); a relaxing region goes to $\nu\to1/2$.
 | Maxwell, $\tau_M=\eta/\mu$ | $\mu\,s/(s+1/\tau_M)$ | $\mu$ | $0$ |
 | Burgers | $1/\tilde\mu = 1/\mu_M + 1/(\eta_M s) + 1/(\mu_K+\eta_K s)$ | $\mu_M$ | $0$ |
 | Andrade, $\tau_A=(\mu\beta)^{-1/\alpha}$ | $1/\tilde\mu = \tfrac1\mu\big[1+\Gamma(1+\alpha)(\tau_As)^{-\alpha}+1/(\tau_Ms)\big]$ | $\mu$ | $0$ |
+| Extended Burgers, $\delta_i=\mu/\mu_i$ | $1/\tilde\mu = \tfrac1\mu\big[1+\sum_i\delta_i/(1+\tau_is)+1/(\tau_Ms)\big]$ | $\mu$ | $0$ |
 
 **Step data.** If every prescribed quantity is $d_0H(t)$, then
 $\tilde u(s)\equiv s\,\hat u(s)$ is the ELASTIC solution at moduli$(s)$ with
@@ -213,6 +214,34 @@ gates use takes it unchanged (the creep law comes back off the contour to
 2e-16). And the body has no fastest relaxation, which the fit of section 5
 must be told.
 
+Extended Burgers (`rheology.ExtendedBurgers`): a Maxwell element in series
+with ANY NUMBER of Kelvin elements,
+$\epsilon\,\mu/\sigma=1+\sum_i\delta_i(1-e^{-t/\tau_i})+t/\tau_M$, the general
+linear body with an elastic instant and a steady creep; with one element it
+is Burgers. With $n$ elements $\tilde\mu$ has $n+1$ poles and $g$ has $n+1$
+more, each set interlaced with the elements' own rates. `ExtendedBurgers.band`
+cuts the elements from a POWER LAW, the absorption band of the laboratory's
+model (Faul & Jackson 2005): retardation times between $\tau_L$ and $\tau_H$
+with density $\propto\tau^{\alpha-1}$, and a transient compliance
+$\Delta=\sum_i\delta_i$ times the elastic one in all. The elements are
+Gauss-Legendre nodes in $\log\tau$, four to a decade, which is the
+continuous band to 2.5e-5 of $\Delta$ in the creep function and 1.6e-7 in
+$\tilde\mu$ (equal steps of $\log\tau$ are second order at the band's two
+ends: 1e-3).
+
+**A band is Andrade with its two ends cut off.** Between $\tau_L$ and
+$\tau_H$ it creeps as $t^\alpha$, and is there the Andrade body of
+
+$$ \tau_A=\Big[\frac{\tau_H^\alpha-\tau_L^\alpha}
+   {\Delta\,\Gamma(1-\alpha)}\Big]^{1/\alpha} . $$
+
+Below $\tau_L$ it is elastic, at the modulus it is given, where an Andrade
+body has always relaxed something already. Above $\tau_H$ its transient is
+over, at a strain $\Delta$ times the elastic one, where Andrade's grows
+without end. Andrade is the limit $\tau_L\to0$, $\tau_H\to\infty$ at a fixed
+$\tau_A$: three numbers for the band's five. So a band has a fastest
+relaxation, and whether the fit of section 5 sees it depends on the window.
+
 A problem with prescribed slip and displacement relaxes to a finite state. A
 problem with a prescribed traction in a Maxwell, Burgers or Andrade region
 creeps forever (the $1/s$ term): a crack under a fixed stress drop never
@@ -297,6 +326,34 @@ So a run whose window stops above $\tau_A$ is warned of
 (`rheology.warn_window`, and its `report.json`), not refused, and unlike a
 Burgers transient the cure is the same: lower `t_min`.
 
+**A power law that stops** (`rheology.ExtendedBurgers.band`). A band that
+runs on below the window is, to the fit, the Andrade body it is there, and as
+it stands it is as far off. Its tail is the same one term with the poles
+outside the band left out, each pole beyond the grid standing for its own
+share of the band (`rheology.tails` gives the exponent and the band's two
+rates). Where the window reaches below the band no pole beyond the grid is
+inside it, the tail is dropped, and the fit is the plain one, which is then
+right. Same measure and window, $\tau_M=1$, three points a decade:
+
+| band: $\Delta$, $\alpha$, $\tau_H$ | $\tau_L$ | no tail | a tail with no end | its own | 4 a decade, its own |
+|---|---|---|---|---|---|
+| 1.59, 1/3, 10 ($\tau_A=1$) | 1e-9 | 7.7e-2 | 9.9e-4 | 1.1e-3 | 6.4e-4 |
+| | 1e-4 | 6.0e-2 | 2.1e-3 | 9.1e-4 | 5.6e-4 |
+| | 1e-2 | 7.0e-3 | 6.9e-3 | 6.9e-4 | 6.1e-5 |
+| | 0.1 | 1.9e-4 | | none: 1.9e-4 | 3.0e-5 |
+| 1.04, 0.274, 0.33 ($\tau_A=0.12$) | 1e-9 | 2.1e-1 | 7.0e-3 | 7.3e-3 | 4.0e-3 |
+| | 1e-2 | 3.6e-2 | 2.7e-2 | 9.6e-3 | 2.8e-3 |
+| | 0.1 | 1.7e-3 | | none: 1.7e-3 | 3.7e-4 |
+
+The first row is the Andrade table's first row: nine decades down, a band is
+Andrade to the fit. A band that stops a few decades below the window and is
+given a tail with no end is 0.6-3 % off. The second band is close to the
+laboratory's (a strength of one, its long end a third of $\tau_M$), strong
+enough that its $\tau_A$ is at the window's short end; from
+$t_{\min}=0.02$ it is 2.5e-3. The rule of the last paragraph is the band's
+too, with its own $\tau_A$ (`tail_from`), and a band the window reaches
+below is exempt from it.
+
 With the tail the fit also holds a hundred times BELOW the window, where the
 plain fit knows nothing: 5e-3 on the table's first row, 2e-4 to 3e-2 over
 the four. A rate, a creeping response and the periodic sums carry the tail
@@ -367,6 +424,17 @@ $10\,\tau$ where the Maxwell substrate has 0.0025 / 0.0071 / 0.021 / 0.045 /
 same from $10\,\tau$ on, as the image series inverted on the contour has it
 (4.90, 2.66, 1.54). Fitted WITHOUT the tail the same run is 8 % low at
 $0.1\,\tau$ and 6 % high at $0.3\,\tau$.
+
+An extended Burgers substrate (`--set band_strength=1.591 --set tau_H=10`: a
+band of exponent 1/3 from $10^{-9}$ to $10\,\tau$, which between its ends is
+the Andrade body above) at 600 km: 0.012 / 0.018 / 0.031 / 0.048 / 0.065 at
+the same five times, 1-3 % under the Andrade substrate's, and 4.8, 2.6 and
+1.5 times the Maxwell one's as the image series on the contour has it (4.83,
+2.60, 1.50). What a band adds is where its ends are. Ending at $\tau$
+(`tau_H=1`, strength 0.74, the same $\tau_A$) it is 5 / 9 / 11 / 7 % under
+the Andrade substrate at $0.1$ / $0.3$ / $1$ / $3\,\tau$. Starting a decade
+below the window (`tau_L=0.01`) it is 19 % and 9 % under it at $0.1$ and
+$0.3\,\tau$. All of them are the Maxwell substrate from $10\,\tau$ on.
 
 The postseismic part $u(t)-u(0^+)$ is the long-wavelength part and feels the
 box first. Within 8 km of the fault the total displacement is within 1.1 % at
@@ -1712,11 +1780,13 @@ further. (The two boxes also differ in their far mesh, 83 and 133 km.)
   limit's** (section 6): moving a limit that pushes to the slowest pole
   costs two to five times what is moved by the window's end, 0.3 % to 3 %
   for an Andrade body on three decades, and a correction that left the
-  window alone is not written. A spectrum
-  that is a BAND (an extended Burgers body, its Kelvin elements spread
-  between two times) has a fastest time and needs no tail if the window
-  reaches below it; where it does not, its tail is a power law cut off, and
-  that is not written.
+  window alone is not written. A band (`ExtendedBurgers.band`) inherits
+  both. A band that is over BEFORE the window, and strong, is the first of
+  them at its worst: its $\tau_A$ is far below the window's short end, the
+  run is warned, and the fit takes the whole band in one term of the wrong
+  shape (0.7 % at a strength of one, 3 % at three, 11 % at ten, with the
+  band's long end a decade and a half below the window). Its remedy is the
+  window, or a softer unrelaxed modulus with the band left out.
 
 *The floating plate.* As $\tilde\mu(s)\to0$ only the shear of the substrate
 holds a plate with free sides against a rigid horizontal translation. A

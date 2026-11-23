@@ -1065,6 +1065,21 @@ LAPLACE_TAIL_DECADES = 12.0
 # changes nothing at the default resolution; it is what keeps a much finer
 # grid from dividing by rounding.
 PRONY_RCOND = 1.0e-13
+# The Kelvin elements a power-law band is cut into
+# (rheology.ExtendedBurgers.band): Gauss-Legendre nodes in log tau to each
+# decade of the band. Against the continuous band, its creep function by
+# quadrature and its modulus in closed form (a hypergeometric function),
+# over the band's strength and over the unrelaxed modulus, worst of three
+# bands (three, nine and three decades wide; alpha 0.27 and 1/3):
+#     nodes a decade      2         3         4         6
+#     creep, J(t)       2.6e-3    2.7e-4    2.5e-5    2.1e-7
+#     mu(s), real s     6.6e-5    3.9e-6    1.6e-7    1.3e-10
+# The same number of elements in equal steps of log tau, each with its
+# share of the band, is second order at the band's two ends and no better
+# than 1.1e-3 and 1.6e-4 at four. 4 puts the elements two orders under the
+# fit in time; a band of nine decades is 36 terms in mu(s), which costs
+# nothing beside a solve.
+EXTENDED_BURGERS_PER_DECADE = 4
 
 # --- A solved fault stepped in time (stepper.py) -----------------------
 # The embedded Runge-Kutta pair ``march`` hands the faults to

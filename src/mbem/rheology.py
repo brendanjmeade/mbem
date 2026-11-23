@@ -131,6 +131,151 @@ class Andrade:
 
 
 @dataclass(frozen=True)
+class ExtendedBurgers:
+    """A Maxwell element in series with ANY NUMBER of Kelvin elements: the
+    general linear body with an elastic instant and a steady creep, its
+    transient whatever spectrum of retardation times the elements are,
+
+        strain / (stress / mu) = 1 + sum_i (1 - exp(-t / tau_i)) / kelvin_i
+                                   + t / tau_M
+        1/mu(s) = (1/mu) [1 + sum_i 1 / (kelvin_i (1 + tau_i s))
+                            + 1 / (tau_M s)]
+
+    ``tau_K`` and ``kelvin`` are ``Burgers``' two numbers as tuples, an
+    entry an element, and with one element it IS ``Burgers``. ``strength``
+    is the transient compliance over the elastic one, all of it. A fluid.
+
+    ``band`` cuts the elements from a POWER LAW between two times, the
+    absorption band the laboratory's extended Burgers model is (Faul &
+    Jackson 2005), and records it as ``power_law``, ``(alpha, tau_L,
+    tau_H)``. Between its ends that body creeps as ``Andrade`` does, as
+    ``t^alpha``; below ``tau_L`` it is elastic and above ``tau_H`` its
+    transient is over, at ``strength`` and no more.
+
+    A FASTEST RELAXATION, UNLESS THE WINDOW STOPS SHORT OF IT. A window that
+    reaches below the shortest ``tau_K`` is fitted as ``Burgers`` is. A band
+    that runs on below the window is to that fit ``Andrade``'s power law,
+    3-21 % off as it stands, and is fitted with a tail that STOPS where the
+    band does (``tail``; ``laplace.Prony`` drops it by itself where the
+    window reaches below). As for ``Andrade``, the tail is the spectrum
+    only at times short of ``tail_from``.
+    """
+    tau_M: float
+    tau_K: tuple
+    kelvin: tuple
+    power_law: tuple = None
+    kind: str = field(default="extended_burgers", init=False)
+
+    def __post_init__(self):
+        if not (self.tau_M > 0.0 and math.isfinite(self.tau_M)):
+            raise ValueError(f"ExtendedBurgers tau_M {self.tau_M} must be "
+                             f"positive")
+        for name in ("tau_K", "kelvin"):
+            v = tuple(float(x) for x in np.atleast_1d(getattr(self, name)))
+            if not v or any(not (x > 0.0 and math.isfinite(x)) for x in v):
+                raise ValueError(f"ExtendedBurgers {name} {v}: one positive "
+                                 f"number an element")
+            object.__setattr__(self, name, v)
+        if len(self.tau_K) != len(self.kelvin):
+            raise ValueError(
+                f"ExtendedBurgers: {len(self.tau_K)} times and "
+                f"{len(self.kelvin)} springs; an element is one of each")
+        if self.power_law is not None:
+            alpha, tau_L, tau_H = (float(x) for x in self.power_law)
+            if not (0.0 < alpha < 1.0 and 0.0 < tau_L < tau_H
+                    and math.isfinite(tau_H)):
+                raise ValueError(
+                    f"ExtendedBurgers power_law {self.power_law}: (alpha, "
+                    f"tau_L, tau_H) with alpha in (0, 1) and 0 < tau_L < "
+                    f"tau_H")
+            if not (tau_L <= min(self.tau_K) and max(self.tau_K) <= tau_H):
+                raise ValueError(
+                    f"ExtendedBurgers: elements from {min(self.tau_K):g} to "
+                    f"{max(self.tau_K):g} are not a band from {tau_L:g} to "
+                    f"{tau_H:g}")
+            object.__setattr__(self, "power_law", (alpha, tau_L, tau_H))
+
+    @classmethod
+    def band(cls, tau_M: float, strength: float, alpha: float, tau_L: float,
+             tau_H: float, per_decade: int = None) -> "ExtendedBurgers":
+        """Retardation times spread from ``tau_L`` to ``tau_H`` with density
+        proportional to ``tau^(alpha - 1)``, the transient compliance
+        ``strength`` times the elastic one in all:
+
+            strain / (stress / mu) = 1 + strength * integral of
+                D(tau) (1 - exp(-t / tau)) + t / tau_M,
+            D = alpha tau^(alpha - 1) / (tau_H^alpha - tau_L^alpha)
+
+        The elements are that integral by Gauss-Legendre in ``log tau``,
+        ``per_decade`` nodes to each decade of the band or part of one, so
+        they converge on the continuous band as fast as a quadrature does
+        (``defaults.EXTENDED_BURGERS_PER_DECADE`` and what it leaves), and
+        their compliances sum to ``strength`` exactly.
+        """
+        from . import defaults
+
+        n = (defaults.EXTENDED_BURGERS_PER_DECADE if per_decade is None
+             else int(per_decade))
+        if not (strength > 0.0 and math.isfinite(strength)):
+            raise ValueError(f"a band's strength {strength} must be positive")
+        if not (0.0 < alpha < 1.0 and 0.0 < tau_L < tau_H
+                and math.isfinite(tau_H) and n >= 1):
+            raise ValueError(
+                f"a band is alpha in (0, 1), 0 < tau_L < tau_H and at least "
+                f"one node a decade: got {alpha}, {tau_L}, {tau_H}, {n}")
+        lo, hi = math.log(tau_L), math.log(tau_H)
+        panels = max(1, math.ceil((hi - lo) / math.log(10.0) - 1.0e-9))
+        x, w = np.polynomial.legendre.leggauss(n)
+        edge = np.linspace(lo, hi, panels + 1)
+        half = 0.5 * (edge[1:] - edge[:-1])
+        tau = np.exp((half[:, None] * x[None, :]
+                      + 0.5 * (edge[1:] + edge[:-1])[:, None]).ravel())
+        part = (half[:, None] * w[None, :]).ravel() * tau ** alpha
+        return cls(tau_M=tau_M, tau_K=tuple(tau),
+                   kelvin=tuple(part.sum() / (strength * part)),
+                   power_law=(alpha, tau_L, tau_H))
+
+    @property
+    def strength(self) -> float:
+        """The transient compliance over the elastic one, every element's."""
+        return float(sum(1.0 / k for k in self.kelvin))
+
+    @property
+    def tail(self):
+        """``(alpha, 1 / tau_L, 1 / tau_H)``: the exponent of the power law
+        its relaxation spectrum is between those two RATES, to leading
+        order; None for elements that are no power law's."""
+        if self.power_law is None:
+            return None
+        alpha, tau_L, tau_H = self.power_law
+        return alpha, 1.0 / tau_L, 1.0 / tau_H
+
+    @property
+    def tail_from(self):
+        """The time below which ``tail`` is the spectrum: the ``tau_A`` of
+        the Andrade body the band is between its ends, where that power law
+        reaches the elastic strain."""
+        if self.power_law is None:
+            return None
+        alpha, tau_L, tau_H = self.power_law
+        return float(((tau_H ** alpha - tau_L ** alpha)
+                      / (self.strength * math.gamma(1.0 - alpha)))
+                     ** (1.0 / alpha))
+
+    @property
+    def tail_to(self):
+        """The time at which the power law STOPS, at its short end: a window
+        that reaches below it has no tail to be told of."""
+        return None if self.power_law is None else self.power_law[1]
+
+    def shear_ratio(self, s):
+        out = 1.0 + 1.0 / (self.tau_M * s)
+        for tau, k in zip(self.tau_K, self.kelvin):
+            out = out + 1.0 / (k * (1.0 + tau * s))
+        return 1.0 / out
+
+
+@dataclass(frozen=True)
 class ViscousFault:
     """A fault that resists its slip RATE: shear traction ``eta_f`` times the
     rate, the +n side dragging the other along. Stated as the shear zone it
@@ -255,6 +400,7 @@ class RateStrengtheningFault:
 
 
 KINDS = {"maxwell": Maxwell, "burgers": Burgers, "andrade": Andrade,
+         "extended_burgers": ExtendedBurgers,
          "viscous_fault": ViscousFault, "power_law_fault": PowerLawFault,
          "rate_strengthening_fault": RateStrengtheningFault}
 
@@ -271,13 +417,18 @@ def from_spec(spec):
 
 
 def tails(rheologies) -> tuple:
-    """The exponents of the power laws a body's relaxation spectrum ends in
-    at short times, sorted: one for every distinct ``tail`` among
-    ``rheologies`` (rheologies, or the dicts a dump holds), and none for a
-    body whose every relaxation has a fastest time. What the fit in time is
+    """The power laws a body's relaxation spectrum ends in at short times,
+    sorted: one for every distinct ``tail`` among ``rheologies``
+    (rheologies, or the dicts a dump holds), and none for a body whose every
+    relaxation has a fastest time. A tail is an exponent (``Andrade``: a
+    power law with no end) or ``(exponent, fastest rate, slowest rate)``
+    (``ExtendedBurgers.band``: one that stops). What the fit in time is
     given (``laplace.Prony(tails=...)``)."""
     found = {getattr(from_spec(r), "tail", None) for r in rheologies}
-    return tuple(sorted(float(a) for a in found if a is not None))
+    found = [float(a) if np.ndim(a) == 0 else tuple(float(x) for x in a)
+             for a in found if a is not None]
+    return tuple(sorted(found, key=lambda a: a if isinstance(a, tuple)
+                        else (a, math.inf, 0.0)))
 
 
 def warn_window(regions, s) -> list:
@@ -295,7 +446,10 @@ def warn_window(regions, s) -> list:
         the three          1.1e-3   6.5e-3   1.6e-2   3.5e-2   1.4e-1
         g(t), a displacement's    1.1e-4   3.5e-4   7.4e-4   1.4e-3   3.9e-3
     A warning and not a refusal: a displacement is still at the fit's own
-    error two decades past the rule, and a stress is not.
+    error two decades past the rule, and a stress is not. A band
+    (``ExtendedBurgers.band``) is that Andrade body between its ends and is
+    warned of by the same ``tau_A`` (``tail_from``), unless the window
+    reaches below the band (``tail_to``), where no tail is fitted.
     """
     import warnings
 
@@ -305,11 +459,15 @@ def warn_window(regions, s) -> list:
     said = []
     for name, rheo in regions.items():
         reach = getattr(rheo, "tail_from", None)
+        stop = getattr(rheo, "tail_to", None)
+        if stop is not None and stop >= t_min:
+            continue                  # the window reaches below it: no tail
         if reach is not None and reach < t_min * (1.0 - 1.0e-9):
             said.append(
-                f"region {name!r}: the transient time tau_A = {reach:g} is "
-                f"below the window's short end ({t_min:g}), where the fit's "
-                f"tail is the wrong shape. At alpha = 1/3 a stress is off "
+                f"region {name!r}: its power-law transient reaches the "
+                f"elastic strain at tau_A = {reach:g}, below the window's "
+                f"short end ({t_min:g}), where the fit's tail is the wrong "
+                f"shape. At alpha = 1/3 a stress is off "
                 f"through the window by 1.6 % with t_min at three times "
                 f"tau_A, 3.5 % at ten and 14 % at a hundred, a displacement "
                 f"by a tenth of that or less. Lay the window out from "
